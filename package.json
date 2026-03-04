@@ -3,6 +3,10 @@
   "version": "0.1.0",
   "description": "Phoenix Test-inspired fluent testing DSL for Playwright and React Testing Library",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/siraj-samsudeen/feather-testing-core"
+  },
   "keywords": [
     "testing",
     "playwright",
