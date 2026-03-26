@@ -1,6 +1,6 @@
 {
   "name": "feather-testing-core",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Phoenix Test-inspired fluent testing DSL for Playwright and React Testing Library",
   "license": "MIT",
   "repository": {
