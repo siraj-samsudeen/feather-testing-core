@@ -1,19 +1,74 @@
 # feather-testing-core
 
+A readable testing DSL that turns async test boilerplate into fluent, chainable steps.
+
 Part of the [Feather Framework](https://github.com/siraj-samsudeen/feather-framework) ecosystem.
 
-Phoenix Test-inspired fluent testing DSL for Playwright and React Testing Library.
+## The Core Idea
 
-Write browser tests that read like user stories:
+This DSL defines a universal vocabulary — `fillIn`, `clickButton`, `assertText`, and more — that can be backed by **any** test framework. Playwright and React Testing Library are just the first two adapters. You write your tests once in a fluent, chainable style; the adapter handles the framework-specific details.
 
+### Before / After — Playwright E2E
+
+**Before (Vanilla Playwright):**
 ```ts
-await session
-  .visit("/projects")
-  .clickLink("New Project")
-  .fillIn("Name", "My Project")
-  .submit()
-  .assertText("My Project");
+test("sign up", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByText("Hello, Anonymous!")).toBeVisible();
+  await page.getByText("Sign up instead").click();
+  await page.getByLabel("Email").fill("e2e@example.com");
+  await page.getByLabel("Password").fill("password123");
+  await page.getByRole("button", { name: "Sign up" }).click();
+  await expect(page.getByText("Hello! You are signed in.")).toBeVisible();
+});
 ```
+
+**After:**
+```ts
+test("sign up", async ({ session }) => {
+  await session
+    .visit("/")
+    .assertText("Hello, Anonymous!")
+    .click("Sign up instead")
+    .fillIn("Email", "e2e@example.com")
+    .fillIn("Password", "password123")
+    .clickButton("Sign up")
+    .assertText("Hello! You are signed in.");
+});
+```
+
+### Before / After — React Testing Library
+
+**Before (Vanilla RTL):**
+```ts
+test("form submission", async () => {
+  render(<App />);
+  const user = userEvent.setup();
+
+  await user.type(screen.getByLabelText("Email"), "test@example.com");
+  await user.type(screen.getByLabelText("Password"), "password123");
+  await user.click(screen.getByRole("button", { name: "Sign in" }));
+  expect(await screen.findByText("Hello! You are signed in.")).toBeInTheDocument();
+});
+```
+
+**After:**
+```ts
+test("form submission", async () => {
+  render(<App />);
+  const session = createSession();
+
+  await session
+    .fillIn("Email", "test@example.com")
+    .fillIn("Password", "password123")
+    .clickButton("Sign in")
+    .assertText("Hello! You are signed in.");
+});
+```
+
+### Same DSL, Any Backend
+
+Notice both examples use the **exact same methods** — `fillIn`, `clickButton`, `assertText`. The DSL is framework-agnostic. Playwright and React Testing Library are just the first two adapters. You can implement the `TestDriver` interface for any testing library and get the same fluent syntax.
 
 Inspired by [Phoenix Test](https://hexdocs.pm/phoenix_test/PhoenixTest.html) — Elixir's pipe-chain testing DSL.
 
