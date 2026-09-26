@@ -1,3 +1,4 @@
+import { stripVTControlCharacters } from "node:util";
 import { test, expect } from "./fixtures.js";
 import { PlaywrightDriver } from "../../src/playwright/driver.js";
 import { Session } from "../../src/session.js";
@@ -416,11 +417,17 @@ test.describe("PlaywrightDriver", () => {
       const target = await main.within(".target");
 
       await target.assertComputedStyle("color", "rgb(193, 95, 60)");
-      await expect(
-        target.assertComputedStyle("color", "rgb(0, 0, 0)", {
-          timeout: 100,
-        }),
-      ).rejects.toThrow();
+      const error = await target
+        .assertComputedStyle("color", "rgb(0, 0, 0)", { timeout: 100 })
+        .then(
+          () => null,
+          (cause: unknown) => cause as Error,
+        );
+      const message = stripVTControlCharacters(error?.message ?? "");
+      expect(message).toContain("toHaveCSS");
+      expect(message).toContain("locator('main').locator('.target')");
+      expect(message).toContain("rgb(0, 0, 0)");
+      expect(message).toContain("rgb(193, 95, 60)");
     });
   });
 
