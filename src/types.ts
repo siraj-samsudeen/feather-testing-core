@@ -48,6 +48,7 @@ export type UntilPredicate<TContext> = (
  */
 export interface TestDriver<TContext = unknown, TNative = unknown> {
   visit(path: string): Promise<void>;
+  reload(): Promise<void>;
   click(text: string): Promise<void>;
   clickLink(text: string): Promise<void>;
   clickButton(text: string): Promise<void>;

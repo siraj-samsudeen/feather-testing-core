@@ -973,6 +973,14 @@ describe("RTLDriver", () => {
       );
     });
 
+    it("reload() throws a browser-only verb error", async () => {
+      const driver = new RTLDriver();
+      await expect(driver.reload()).rejects.toBeInstanceOf(
+        BrowserOnlyVerbError,
+      );
+      await expect(driver.reload()).rejects.toThrow("reload()");
+    });
+
     it("assertPath() throws", async () => {
       const driver = new RTLDriver();
       await expect(driver.assertPath("/")).rejects.toThrow(

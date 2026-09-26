@@ -22,6 +22,7 @@ function createMockDriver(overrides?: Partial<TestDriver>): {
 
   const driver: TestDriver = {
     visit: vi.fn(handler("visit")),
+    reload: vi.fn(handler("reload")),
     click: vi.fn(handler("click")),
     clickLink: vi.fn(handler("clickLink")),
     clickButton: vi.fn(handler("clickButton")),
@@ -97,6 +98,7 @@ describe("Session", () => {
       // Each method should return `this`
       const result = session
         .visit("/")
+        .reload()
         .click("text")
         .clickLink("link")
         .clickButton("btn")
@@ -194,6 +196,7 @@ describe("Session", () => {
 
       await session
         .visit("/path")
+        .reload()
         .click("some text")
         .clickLink("my link")
         .clickButton("my button")
@@ -223,6 +226,7 @@ describe("Session", () => {
         .debug();
 
       expect(driver.visit).toHaveBeenCalledWith("/path");
+      expect(driver.reload).toHaveBeenCalledWith();
       expect(driver.click).toHaveBeenCalledWith("some text");
       expect(driver.clickLink).toHaveBeenCalledWith("my link");
       expect(driver.clickButton).toHaveBeenCalledWith("my button");

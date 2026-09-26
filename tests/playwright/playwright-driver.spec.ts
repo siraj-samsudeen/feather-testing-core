@@ -19,6 +19,44 @@ test.describe("PlaywrightDriver", () => {
     });
   });
 
+  test.describe("reload()", () => {
+    test("reloads the document while preserving URL and browser state", async ({
+      page,
+    }) => {
+      const driver = new PlaywrightDriver(page);
+      await driver.visit("/reload?mode=compact#section");
+      await page.evaluate(() => {
+        localStorage.setItem("auth-state", "signed-in");
+        document.cookie = "session=active; path=/";
+        const transient = document.createElement("p");
+        transient.id = "transient";
+        transient.textContent = "Only in this document";
+        document.body.append(transient);
+      });
+      const url = page.url();
+
+      await driver.reload();
+
+      expect(page.url()).toBe(url);
+      await expect(page.locator("#load-count")).toHaveText("Loads: 2");
+      await expect(page.locator("#storage")).toHaveText("Stored: signed-in");
+      await expect(page.locator("#cookie")).toContainText("session=active");
+      await expect(page.locator("#transient")).toHaveCount(0);
+    });
+
+    test("re-resolves a within scope against the reloaded document", async ({
+      page,
+    }) => {
+      const driver = new PlaywrightDriver(page);
+      await driver.visit("/reload");
+      const panel = await driver.within(".panel");
+
+      await panel.reload();
+
+      await panel.assertExactText("Loads: 2 Stored: missing Cookie:");
+    });
+  });
+
   test.describe("click()", () => {
     test("finds and clicks an element by text", async ({ page }) => {
       const driver = new PlaywrightDriver(page);

@@ -56,6 +56,10 @@ export class PlaywrightDriver
     await this.page.goto(path);
   }
 
+  async reload(): Promise<void> {
+    await this.page.reload();
+  }
+
   async click(text: string): Promise<void> {
     await this.scope.getByText(text, EXACT).click();
   }

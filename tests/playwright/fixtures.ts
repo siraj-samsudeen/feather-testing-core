@@ -180,6 +180,23 @@ export const pages: Record<string, string> = {
   </script>
 </body></html>`,
 
+  "/reload": `<!DOCTYPE html>
+<html><body>
+  <main class="panel">
+    <p id="load-count"></p>
+    <p id="storage"></p>
+    <p id="cookie"></p>
+  </main>
+  <script>
+    var count = Number(sessionStorage.getItem('load-count') || '0') + 1;
+    sessionStorage.setItem('load-count', String(count));
+    document.getElementById('load-count').textContent = 'Loads: ' + count;
+    document.getElementById('storage').textContent =
+      'Stored: ' + (localStorage.getItem('auth-state') || 'missing');
+    document.getElementById('cookie').textContent = 'Cookie: ' + document.cookie;
+  </script>
+</body></html>`,
+
   "/keys": `<!DOCTYPE html>
 <html><body>
   <label for="cmd">Command</label>

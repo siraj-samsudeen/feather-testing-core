@@ -156,6 +156,9 @@ Every method returns `this` for chaining. A single `await` at the start of the c
 | Method | Description |
 |--------|-------------|
 | `visit(path)` | Navigate to URL (Playwright only) |
+| `reload()` | Reload the current document while preserving its full URL and browser state (Playwright only) |
+
+`reload()` waits for the browser's load event, like Playwright's native reload. Inside `within()`, it still reloads the whole page; the existing scope is a locator recipe rather than a retained element handle, so subsequent scoped steps resolve against the new document. RTL throws `BrowserOnlyVerbError` because JSDOM has no document-navigation lifecycle.
 
 ### Interactions
 

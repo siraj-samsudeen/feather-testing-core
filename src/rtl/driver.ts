@@ -100,6 +100,13 @@ export class RTLDriver implements TestDriver<RTLStepContext, RTLQueries> {
     );
   }
 
+  async reload(): Promise<void> {
+    throw new BrowserOnlyVerbError(
+      "reload()",
+      "Render the component again explicitly, or run the persistence check in a Playwright spec.",
+    );
+  }
+
   async click(text: string): Promise<void> {
     const element = await this.container.findByText(
       text,

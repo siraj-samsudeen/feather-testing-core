@@ -84,6 +84,11 @@ export class Session<TContext = unknown, TNative = unknown>
     return this.enqueue(`visit('${path}')`, () => this.driver.visit(path));
   }
 
+  /** Reload the current browser document, preserving its full URL and state. */
+  reload(): this {
+    return this.enqueue("reload()", () => this.driver.reload());
+  }
+
   // --- Interactions ---
 
   click(text: string): this {
