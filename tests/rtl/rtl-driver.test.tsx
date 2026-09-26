@@ -262,6 +262,25 @@ function DisappearingApp() {
   );
 }
 
+function ExactTextApp({ delayed = false }: { delayed?: boolean }) {
+  const [total, setTotal] = useState("Total: 10");
+  useEffect(() => {
+    if (!delayed) return;
+    const id = setTimeout(() => setTotal("Total: 1"), 120);
+    return () => clearTimeout(id);
+  }, [delayed]);
+  return (
+    <div>
+      <section className="summary">
+        <div className="total">{total}</div>
+      </section>
+      <aside>
+        <div className="total">Total: 1</div>
+      </aside>
+    </div>
+  );
+}
+
 // --- Tests ---
 
 describe("RTLDriver", () => {
@@ -744,6 +763,157 @@ describe("RTLDriver", () => {
     });
   });
 
+  describe("assertExactText()", () => {
+    it("compares the current scope's whole text, not a numeric prefix", async () => {
+      render(<ExactTextApp />);
+      const summary = await new RTLDriver().within(".summary");
+      const total = await summary.within(".total");
+
+      const error = await total
+        .assertExactText("Total: 1", { timeout: 50 })
+        .then(
+          () => null,
+          (cause: unknown) => cause as Error,
+        );
+      expect(error).toBeInstanceOf(Error);
+      expect(error?.message).toContain("assertExactText('Total: 1')");
+      expect(error?.message).toContain("expected normalized text 'Total: 1'");
+      expect(error?.message).toContain("but found 'Total: 10'");
+      await total.assertExactText("Total: 10");
+    });
+
+    it("rejects extra surrounding text and preserves case", async () => {
+      render(<div className="total">Prefix Total: 1 suffix</div>);
+      const total = await new RTLDriver().within(".total");
+
+      await expect(
+        total.assertExactText("Total: 1", { timeout: 50 }),
+      ).rejects.toThrow();
+      await expect(
+        total.assertExactText("prefix total: 1 suffix", { timeout: 50 }),
+      ).rejects.toThrow();
+    });
+
+    it("normalizes whitespace on both sides", async () => {
+      render(
+        <div className="total">
+          {"\n  Total: "}
+          <strong>1</strong>
+          {"\t "}
+        </div>,
+      );
+      const total = await new RTLDriver().within(".total");
+
+      await total.assertExactText("  Total:   1  ");
+    });
+
+    it("does not use an equal element outside the current scope", async () => {
+      render(<ExactTextApp />);
+      const summary = await new RTLDriver().within(".summary");
+      const total = await summary.within(".total");
+
+      await expect(
+        total.assertExactText("Total: 1", { timeout: 50 }),
+      ).rejects.toThrow();
+    });
+
+    it("retries until the scoped element's text is equal", async () => {
+      render(<ExactTextApp delayed />);
+      const summary = await new RTLDriver().within(".summary");
+      const total = await summary.within(".total");
+
+      await total.assertExactText("Total: 1", { timeout: 1_000 });
+    });
+  });
+
+  describe("attribute and computed-style assertions", () => {
+    it("distinguishes presence, an empty value, and absence", async () => {
+      render(<div className="target" data-empty="" />);
+      const target = await new RTLDriver().within(".target");
+
+      await target.assertAttribute("data-empty");
+      await target.assertAttribute("data-empty", "");
+      await target.refuteAttribute("data-missing");
+      await expect(
+        target.refuteAttribute("data-empty", { timeout: 50 }),
+      ).rejects.toThrow();
+      await expect(
+        target.assertAttribute("data-missing", undefined, { timeout: 50 }),
+      ).rejects.toThrow();
+    });
+
+    it("reports wrong attribute values", async () => {
+      render(<div className="target" data-state="loading" />);
+      const target = await new RTLDriver().within(".target");
+
+      await expect(
+        target.assertAttribute("data-state", "ready", { timeout: 50 }),
+      ).rejects.toThrow(
+        "expected attribute 'data-state' to equal 'ready', but found 'loading'",
+      );
+    });
+
+    it("does not use a matching attribute outside the current scope", async () => {
+      render(
+        <div>
+          <main>
+            <div className="target" data-state="loading" />
+          </main>
+          <aside>
+            <div className="target" data-state="ready" />
+          </aside>
+        </div>,
+      );
+      const main = await new RTLDriver().within("main");
+      const target = await main.within(".target");
+
+      await expect(
+        target.assertAttribute("data-state", "ready", { timeout: 50 }),
+      ).rejects.toThrow();
+    });
+
+    it("retries until an attribute reaches the expected value", async () => {
+      function DelayedAttribute() {
+        const [state, setState] = useState("loading");
+        useEffect(() => {
+          const id = setTimeout(() => setState("ready"), 120);
+          return () => clearTimeout(id);
+        }, []);
+        return <div className="target" data-state={state} />;
+      }
+      render(<DelayedAttribute />);
+      const target = await new RTLDriver().within(".target");
+
+      await target.assertAttribute("data-state", "ready", { timeout: 1_000 });
+    });
+
+    it("declares computed style browser-only", async () => {
+      render(<div className="target" style={{ color: "red" }} />);
+      const target = await new RTLDriver().within(".target");
+
+      await expect(
+        target.assertComputedStyle("color", "rgb(255, 0, 0)"),
+      ).rejects.toBeInstanceOf(BrowserOnlyVerbError);
+    });
+  });
+
+  describe("horizontal layout assertions", () => {
+    it.each([
+      ["assertNoHorizontalOverflow", (driver: RTLDriver) => driver.assertNoHorizontalOverflow()],
+      ["assertHorizontalOverflow", (driver: RTLDriver) => driver.assertHorizontalOverflow()],
+      [
+        "assertHorizontallyContained",
+        (driver: RTLDriver) => driver.assertHorizontallyContained(".action"),
+      ],
+      ["scrollToHorizontalEnd", (driver: RTLDriver) => driver.scrollToHorizontalEnd()],
+    ])("declares %s browser-only", async (_name, invoke) => {
+      render(<div className="target" />);
+      const driver = new RTLDriver();
+
+      await expect(invoke(driver)).rejects.toBeInstanceOf(BrowserOnlyVerbError);
+    });
+  });
+
   describe("refuteText()", () => {
     it("passes when text is not present", async () => {
       render(<LinksApp />);
@@ -818,6 +988,14 @@ describe("RTLDriver", () => {
       await expect(driver.visit("/")).rejects.toThrow(
         "visit() is not available in the RTL adapter",
       );
+    });
+
+    it("reload() throws a browser-only verb error", async () => {
+      const driver = new RTLDriver();
+      await expect(driver.reload()).rejects.toBeInstanceOf(
+        BrowserOnlyVerbError,
+      );
+      await expect(driver.reload()).rejects.toThrow("reload()");
     });
 
     it("assertPath() throws", async () => {

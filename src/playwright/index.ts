@@ -8,7 +8,9 @@ export { PlaywrightDriver, type PlaywrightStepContext } from "./driver.js";
 export type {
   AssertHasOptions,
   AssertPathOptions,
+  AssertionOptions,
   DownloadOptions,
+  LayoutAssertionOptions,
   TestDriver,
   UntilOptions,
   UntilPredicate,

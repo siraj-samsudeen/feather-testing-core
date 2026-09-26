@@ -22,6 +22,7 @@ function createMockDriver(overrides?: Partial<TestDriver>): {
 
   const driver: TestDriver = {
     visit: vi.fn(handler("visit")),
+    reload: vi.fn(handler("reload")),
     click: vi.fn(handler("click")),
     clickLink: vi.fn(handler("clickLink")),
     clickButton: vi.fn(handler("clickButton")),
@@ -37,7 +38,15 @@ function createMockDriver(overrides?: Partial<TestDriver>): {
     pressKey: vi.fn(handler("pressKey")),
     hover: vi.fn(handler("hover")),
     assertText: vi.fn(handler("assertText")),
+    assertExactText: vi.fn(handler("assertExactText")),
     refuteText: vi.fn(handler("refuteText")),
+    assertAttribute: vi.fn(handler("assertAttribute")),
+    refuteAttribute: vi.fn(handler("refuteAttribute")),
+    assertComputedStyle: vi.fn(handler("assertComputedStyle")),
+    assertNoHorizontalOverflow: vi.fn(handler("assertNoHorizontalOverflow")),
+    assertHorizontalOverflow: vi.fn(handler("assertHorizontalOverflow")),
+    assertHorizontallyContained: vi.fn(handler("assertHorizontallyContained")),
+    scrollToHorizontalEnd: vi.fn(handler("scrollToHorizontalEnd")),
     assertValue: vi.fn(handler("assertValue")),
     assertChecked: vi.fn(handler("assertChecked")),
     refuteChecked: vi.fn(handler("refuteChecked")),
@@ -93,6 +102,7 @@ describe("Session", () => {
       // Each method should return `this`
       const result = session
         .visit("/")
+        .reload()
         .click("text")
         .clickLink("link")
         .clickButton("btn")
@@ -108,7 +118,15 @@ describe("Session", () => {
         .pressKey("Enter")
         .hover("text")
         .assertText("text")
+        .assertExactText("exact text")
         .refuteText("text")
+        .assertAttribute("data-state", "ready")
+        .refuteAttribute("disabled")
+        .assertComputedStyle("color", "rgb(0, 0, 0)")
+        .assertNoHorizontalOverflow()
+        .assertHorizontalOverflow()
+        .assertHorizontallyContained(".action")
+        .scrollToHorizontalEnd()
         .assertValue("label", "value")
         .assertChecked("label")
         .refuteChecked("label")
@@ -186,6 +204,7 @@ describe("Session", () => {
 
       await session
         .visit("/path")
+        .reload()
         .click("some text")
         .clickLink("my link")
         .clickButton("my button")
@@ -198,7 +217,18 @@ describe("Session", () => {
         .upload("Avatar", "avatar.png")
         .dropFile("#zone", "doc.pdf")
         .assertText("Hello")
+        .assertExactText("Exact total", { timeout: 250 })
         .refuteText("Goodbye")
+        .assertAttribute("data-state", "ready", { timeout: 250 })
+        .refuteAttribute("disabled", { timeout: 250 })
+        .assertComputedStyle("--color-brand", "#c15f3c", { timeout: 250 })
+        .assertNoHorizontalOverflow({ timeout: 250, tolerance: 2 })
+        .assertHorizontalOverflow({ timeout: 250, tolerance: 2 })
+        .assertHorizontallyContained(".action", {
+          timeout: 250,
+          tolerance: 2,
+        })
+        .scrollToHorizontalEnd({ timeout: 250, tolerance: 2 })
         .assertValue("Email", "a@b.com")
         .assertChecked("Newsletter")
         .refuteChecked("Ads")
@@ -211,6 +241,7 @@ describe("Session", () => {
         .debug();
 
       expect(driver.visit).toHaveBeenCalledWith("/path");
+      expect(driver.reload).toHaveBeenCalledWith();
       expect(driver.click).toHaveBeenCalledWith("some text");
       expect(driver.clickLink).toHaveBeenCalledWith("my link");
       expect(driver.clickButton).toHaveBeenCalledWith("my button");
@@ -223,7 +254,39 @@ describe("Session", () => {
       expect(driver.upload).toHaveBeenCalledWith("Avatar", "avatar.png");
       expect(driver.dropFile).toHaveBeenCalledWith("#zone", "doc.pdf");
       expect(driver.assertText).toHaveBeenCalledWith("Hello");
+      expect(driver.assertExactText).toHaveBeenCalledWith("Exact total", {
+        timeout: 250,
+      });
       expect(driver.refuteText).toHaveBeenCalledWith("Goodbye");
+      expect(driver.assertAttribute).toHaveBeenCalledWith(
+        "data-state",
+        "ready",
+        { timeout: 250 },
+      );
+      expect(driver.refuteAttribute).toHaveBeenCalledWith("disabled", {
+        timeout: 250,
+      });
+      expect(driver.assertComputedStyle).toHaveBeenCalledWith(
+        "--color-brand",
+        "#c15f3c",
+        { timeout: 250 },
+      );
+      expect(driver.assertNoHorizontalOverflow).toHaveBeenCalledWith({
+        timeout: 250,
+        tolerance: 2,
+      });
+      expect(driver.assertHorizontalOverflow).toHaveBeenCalledWith({
+        timeout: 250,
+        tolerance: 2,
+      });
+      expect(driver.assertHorizontallyContained).toHaveBeenCalledWith(
+        ".action",
+        { timeout: 250, tolerance: 2 },
+      );
+      expect(driver.scrollToHorizontalEnd).toHaveBeenCalledWith({
+        timeout: 250,
+        tolerance: 2,
+      });
       expect(driver.assertValue).toHaveBeenCalledWith("Email", "a@b.com");
       expect(driver.assertChecked).toHaveBeenCalledWith("Newsletter");
       expect(driver.refuteChecked).toHaveBeenCalledWith("Ads");

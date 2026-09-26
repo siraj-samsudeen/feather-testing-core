@@ -3,7 +3,9 @@ export { StepError, BrowserOnlyVerbError } from "./errors.js";
 export type {
   AssertHasOptions,
   AssertPathOptions,
+  AssertionOptions,
   DownloadOptions,
+  LayoutAssertionOptions,
   QueuedStep,
   TestDriver,
   UntilOptions,

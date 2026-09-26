@@ -156,6 +156,9 @@ Every method returns `this` for chaining. A single `await` at the start of the c
 | Method | Description |
 |--------|-------------|
 | `visit(path)` | Navigate to URL (Playwright only) |
+| `reload()` | Reload the current document while preserving its full URL and browser state (Playwright only) |
+
+`reload()` waits for the browser's load event, like Playwright's native reload. Inside `within()`, it still reloads the whole page; the existing scope is a locator recipe rather than a retained element handle, so subsequent scoped steps resolve against the new document. RTL throws `BrowserOnlyVerbError` because JSDOM has no document-navigation lifecycle.
 
 ### Interactions
 
@@ -173,6 +176,7 @@ Every method returns `this` for chaining. A single `await` at the start of the c
 | `dropFile(selector, path)` | Dispatch a `DataTransfer` drop of the file onto a drop area |
 | `pressKey(key)` | Press a key on the focused control — `'Enter'`, `'Escape'`, `'Control+A'` |
 | `hover(text)` | Hover the element with this text |
+| `scrollToHorizontalEnd(opts?)` | Scroll the current scope to its logical horizontal end (Playwright only) |
 
 `upload(label, path)` is the former name of `attachFile` and still works, deprecated.
 
@@ -182,7 +186,7 @@ Every interaction above names the control it wants, and that name is matched in 
 
 This matters because Playwright's bare-string matchers are case-insensitive *substring* matchers. Left as-is, a verb aimed at one control silently widens to any other control whose name merely contains the same text — and the run dies on a strict-mode violation that only appears when both are on screen at once, which turns a naming collision into an ordering-dependent flake. RTL matches whole strings by default, so with this both adapters answer the same question.
 
-Assertions are the deliberate exception: `assertText` / `refuteText` / `assertHas` ask *"does this text appear"*, so they stay substring matches. An exact `refuteText("Check")` would pass while *Checklist Run* is plainly on the page.
+Assertions are the deliberate exception: `assertText` / `refuteText` / `assertHas` ask *"does this text appear"*, so they stay substring matches. An exact `refuteText("Check")` would pass while *Checklist Run* is plainly on the page. Use `within(selector, ...)` with `assertExactText(text)` when equality of an element's complete text is the contract.
 
 To act on a control whose name is genuinely a prefix of another's, scope the lookup rather than loosening it:
 
@@ -221,6 +225,13 @@ In Playwright, `dropFile` reads the real file and dispatches a `drop` event with
 | Method | Description |
 |--------|-------------|
 | `assertText(text)` / `refuteText(text)` | Assert text is visible / not visible |
+| `assertExactText(text, opts?)` | Assert the current scope's complete text equals `text` |
+| `assertAttribute(name, value?, opts?)` | Assert the current scope has an attribute, optionally with an exact value |
+| `refuteAttribute(name, opts?)` | Assert the current scope does not have an attribute |
+| `assertComputedStyle(property, value, opts?)` | Assert browser-computed CSS on the current scope (Playwright only) |
+| `assertNoHorizontalOverflow(opts?)` | Assert the current scope fits horizontally (Playwright only) |
+| `assertHorizontalOverflow(opts?)` | Assert content is wider than the current scope (Playwright only) |
+| `assertHorizontallyContained(selector, opts?)` | Assert a descendant fits within the scope's horizontal bounds (Playwright only) |
 | `assertValue(label, value)` | Assert a field (by label or placeholder) has this value |
 | `assertChecked(label)` / `refuteChecked(label)` | Assert a checkbox is checked / not checked |
 | `assertSelected(label, optionLabel)` | Assert the select's currently selected option |
@@ -244,6 +255,53 @@ await session
 ```
 
 In Playwright these are backed by `toHaveValue` / `toBeChecked` / `toHaveText`, so they auto-retry. The RTL adapter polls the DOM with `waitFor` for the same retry semantics.
+
+#### Exact whole-element text
+
+Scope to the element whose complete text matters, then use `assertExactText`:
+
+```ts
+await session.within(".total", (total) =>
+  total.assertExactText("Total: 1", { timeout: 5000 }),
+);
+```
+
+This is case-sensitive equality, not substring matching: `Total: 1` rejects both `Total: 10` and `Prefix Total: 1 suffix`. Like Playwright's text assertions and Testing Library's default normalizer, it trims leading/trailing whitespace and collapses internal whitespace runs before comparison. It retries until equality or the optional timeout. `assertHas(..., { exact: true })` retains its existing exact-substring behavior.
+
+#### Attributes and computed style
+
+Attribute assertions also operate on the current scope and retry until the optional timeout:
+
+```ts
+await session.within("html", (root) =>
+  root
+    .assertAttribute("data-palette", "ivory")
+    .assertAttribute("data-ready")
+    .refuteAttribute("data-loading")
+    .assertComputedStyle("--color-brand", "#c15f3c"),
+);
+```
+
+Omitting the value checks presence regardless of value. Passing `""` requires a present, empty-valued attribute; `refuteAttribute` requires the attribute to be missing. Attribute assertions work in both adapters. `assertComputedStyle` uses the browser's computed CSS value and is Playwright-only; RTL throws `BrowserOnlyVerbError` because JSDOM cannot prove stylesheet rendering.
+
+#### Horizontal layout and inner scrolling
+
+Layout assertions distinguish a page that leaks past the viewport from wider content contained inside an inner region:
+
+```ts
+await session
+  .assertNoHorizontalOverflow()
+  .within("[data-testid='columns-table']", (table) =>
+    table.assertHorizontalOverflow().scrollToHorizontalEnd(),
+  )
+  .within("main", (main) =>
+    main.assertHorizontallyContained("a.list-view"),
+  );
+```
+
+The overflow assertions compare `scrollWidth` with `clientWidth`; they measure content dimensions, not whether CSS permits scrolling. This intentionally also detects clipped content under `overflow: hidden`. Containment requires exactly one matching descendant, then compares its bounding rectangle with the scope. Assertions retry while layout settles and report measured dimensions on failure. `opts.tolerance` defaults to 1 CSS pixel for rounding differences.
+
+`scrollToHorizontalEnd()` separately proves scrollability: it detects LTR/RTL direction, temporarily overrides smooth scrolling with an instant operation, and retries until the actual absolute offset reaches `scrollWidth - clientWidth`. A range of 1 px or less is rejected as no meaningful movement. Unscoped operations measure the document root; scoped operations measure that element. All four operations are Playwright-only and throw `BrowserOnlyVerbError` in RTL because JSDOM has no layout engine.
 
 #### Pair every refute with a positive assertion
 
@@ -580,6 +638,20 @@ export default [
 Deliberate exceptions stay possible and stay visible: an `eslint-disable-next-line` comment with a reason is exactly the annotation these rules are trying to force.
 
 **Why these five.** They are not style preferences. Each one is a way a suite goes green while proving nothing: a sleep passes on a slow machine and fails on a fast one, a conditional skip silently un-tests a spec for its entire life, `toBeTruthy()` accepts almost any value, a swallowed cleanup error surfaces three tests later as something else, and serial mode turns one failure into a wall of red that hides its own cause. `session.until()` exists so the first rule has an honest alternative to point at — see [the document set](docs/document-set.md) for why conventions belong in executable form rather than in a style guide nobody re-reads.
+
+## Upgrading to 0.5.0
+
+Version 0.5.0 extends the required `TestDriver` interface. Custom drivers must implement these new methods before upgrading:
+
+- `reload()`
+- `assertExactText(text, opts?)`
+- `assertAttribute(name, value?, opts?)` / `refuteAttribute(name, opts?)`
+- `assertComputedStyle(property, value, opts?)`
+- `assertNoHorizontalOverflow(opts?)` / `assertHorizontalOverflow(opts?)`
+- `assertHorizontallyContained(selector, opts?)`
+- `scrollToHorizontalEnd(opts?)`
+
+Implement capabilities the adapter can prove, but do not fake browser behavior or silently no-op. For operations the environment cannot support—commonly reload, computed CSS, layout geometry, and scrolling in non-browser adapters—reject with `BrowserOnlyVerbError`, naming the verb and directing the caller to a browser-backed spec. The built-in RTL adapter follows this pattern for JSDOM limitations.
 
 ## Releasing
 

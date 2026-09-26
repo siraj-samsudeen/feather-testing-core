@@ -4,7 +4,9 @@ import { type Page, type Locator, expect, test } from "@playwright/test";
 import type {
   AssertHasOptions,
   AssertPathOptions,
+  AssertionOptions,
   DownloadOptions,
+  LayoutAssertionOptions,
   TestDriver,
   UntilOptions,
   UntilPredicate,
@@ -43,8 +45,49 @@ export class PlaywrightDriver
     private scope: Page | Locator = page,
   ) {}
 
+  /** The element represented by the current scope; an unscoped page means body. */
+  private scopeElement(): Locator {
+    return this.scope === this.page
+      ? this.page.locator("body")
+      : (this.scope as Locator);
+  }
+
+  /** Page layout is measured on the document root; scopes use their element. */
+  private layoutElement(): Locator {
+    return this.scope === this.page
+      ? this.page.locator("html")
+      : (this.scope as Locator);
+  }
+
+  private async assertHorizontalOverflowState(
+    expected: boolean,
+    opts?: LayoutAssertionOptions,
+  ): Promise<void> {
+    const element = this.layoutElement();
+    const tolerance = opts?.tolerance ?? 1;
+    await expect
+      .poll(
+        async () => {
+          const { scrollWidth, clientWidth } = await element.evaluate((node) => ({
+            scrollWidth: node.scrollWidth,
+            clientWidth: node.clientWidth,
+          }));
+          const overflows = scrollWidth > clientWidth + tolerance;
+          return overflows === expected
+            ? null
+            : `scrollWidth=${scrollWidth}, clientWidth=${clientWidth}, tolerance=${tolerance}`;
+        },
+        { timeout: opts?.timeout },
+      )
+      .toBeNull();
+  }
+
   async visit(path: string): Promise<void> {
     await this.page.goto(path);
+  }
+
+  async reload(): Promise<void> {
+    await this.page.reload();
   }
 
   async click(text: string): Promise<void> {
@@ -197,8 +240,131 @@ export class PlaywrightDriver
     await expect(this.scope.getByText(text).first()).toBeVisible();
   }
 
+  async assertExactText(
+    text: string,
+    opts?: AssertionOptions,
+  ): Promise<void> {
+    await expect(this.scopeElement()).toHaveText(text, {
+      timeout: opts?.timeout,
+    });
+  }
+
   async refuteText(text: string): Promise<void> {
     await expect(this.scope.getByText(text)).toHaveCount(0);
+  }
+
+  async assertAttribute(
+    name: string,
+    value?: string,
+    opts?: AssertionOptions,
+  ): Promise<void> {
+    const assertion = expect(this.scopeElement());
+    if (value === undefined) {
+      await assertion.toHaveAttribute(name, { timeout: opts?.timeout });
+    } else {
+      await assertion.toHaveAttribute(name, value, { timeout: opts?.timeout });
+    }
+  }
+
+  async refuteAttribute(
+    name: string,
+    opts?: AssertionOptions,
+  ): Promise<void> {
+    await expect(this.scopeElement()).not.toHaveAttribute(name, {
+      timeout: opts?.timeout,
+    });
+  }
+
+  async assertComputedStyle(
+    property: string,
+    value: string,
+    opts?: AssertionOptions,
+  ): Promise<void> {
+    await expect(this.scopeElement()).toHaveCSS(property, value, {
+      timeout: opts?.timeout,
+    });
+  }
+
+  async assertNoHorizontalOverflow(
+    opts?: LayoutAssertionOptions,
+  ): Promise<void> {
+    await this.assertHorizontalOverflowState(false, opts);
+  }
+
+  async assertHorizontalOverflow(
+    opts?: LayoutAssertionOptions,
+  ): Promise<void> {
+    await this.assertHorizontalOverflowState(true, opts);
+  }
+
+  async assertHorizontallyContained(
+    selector: string,
+    opts?: LayoutAssertionOptions,
+  ): Promise<void> {
+    const element = this.layoutElement();
+    const tolerance = opts?.tolerance ?? 1;
+    await expect
+      .poll(
+        () =>
+          element.evaluate(
+            (scope, args) => {
+              const children = scope.querySelectorAll(args.selector);
+              if (children.length !== 1) {
+                return (
+                  `expected exactly one descendant '${args.selector}', ` +
+                  `but found ${children.length}`
+                );
+              }
+              const child = children[0];
+              const scopeBounds = scope.getBoundingClientRect();
+              const childBounds = child.getBoundingClientRect();
+              const contained =
+                childBounds.left >= scopeBounds.left - args.tolerance &&
+                childBounds.right <= scopeBounds.right + args.tolerance;
+              return contained
+                ? null
+                : `child left=${childBounds.left}, child right=${childBounds.right}, ` +
+                    `scope left=${scopeBounds.left}, scope right=${scopeBounds.right}, ` +
+                    `tolerance=${args.tolerance}`;
+            },
+            { selector, tolerance },
+          ),
+        { timeout: opts?.timeout },
+      )
+      .toBeNull();
+  }
+
+  async scrollToHorizontalEnd(
+    opts?: LayoutAssertionOptions,
+  ): Promise<void> {
+    const element = this.layoutElement();
+    const tolerance = opts?.tolerance ?? 1;
+    await expect
+      .poll(
+        () =>
+          element.evaluate((node, allowedDifference) => {
+            const maximum = node.scrollWidth - node.clientWidth;
+            const direction = getComputedStyle(node).direction;
+            node.scrollTo({
+              left: direction === "rtl" ? -maximum : maximum,
+              behavior: "instant",
+            });
+
+            const distance = Math.abs(node.scrollLeft);
+            if (maximum <= allowedDifference) {
+              return (
+                `expected horizontal range greater than ${allowedDifference}, but ` +
+                `maximum=${maximum}, scrollLeft=${node.scrollLeft}, direction=${direction}`
+              );
+            }
+            return Math.abs(distance - maximum) <= allowedDifference
+              ? null
+              : `expected horizontal endpoint within ${allowedDifference}px, but ` +
+                  `maximum=${maximum}, scrollLeft=${node.scrollLeft}, direction=${direction}`;
+          }, tolerance),
+        { timeout: opts?.timeout },
+      )
+      .toBeNull();
   }
 
   async assertValue(label: string, value: string): Promise<void> {

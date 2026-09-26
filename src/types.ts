@@ -5,6 +5,16 @@ export interface AssertHasOptions {
   timeout?: number;
 }
 
+export interface AssertionOptions {
+  /** Overall budget in ms. Defaults to the adapter's own assertion timeout. */
+  timeout?: number;
+}
+
+export interface LayoutAssertionOptions extends AssertionOptions {
+  /** Allowed rounding difference in CSS pixels. Defaults to 1. */
+  tolerance?: number;
+}
+
 export interface AssertPathOptions {
   queryParams?: Record<string, string>;
 }
@@ -41,6 +51,7 @@ export type UntilPredicate<TContext> = (
  */
 export interface TestDriver<TContext = unknown, TNative = unknown> {
   visit(path: string): Promise<void>;
+  reload(): Promise<void>;
   click(text: string): Promise<void>;
   clickLink(text: string): Promise<void>;
   clickButton(text: string): Promise<void>;
@@ -59,7 +70,29 @@ export interface TestDriver<TContext = unknown, TNative = unknown> {
   assertHas(selector: string, opts?: AssertHasOptions): Promise<void>;
   refuteHas(selector: string, opts?: AssertHasOptions): Promise<void>;
   assertText(text: string): Promise<void>;
+  assertExactText(
+    text: string,
+    opts?: AssertionOptions,
+  ): Promise<void>;
   refuteText(text: string): Promise<void>;
+  assertAttribute(
+    name: string,
+    value?: string,
+    opts?: AssertionOptions,
+  ): Promise<void>;
+  refuteAttribute(name: string, opts?: AssertionOptions): Promise<void>;
+  assertComputedStyle(
+    property: string,
+    value: string,
+    opts?: AssertionOptions,
+  ): Promise<void>;
+  assertNoHorizontalOverflow(opts?: LayoutAssertionOptions): Promise<void>;
+  assertHorizontalOverflow(opts?: LayoutAssertionOptions): Promise<void>;
+  assertHorizontallyContained(
+    selector: string,
+    opts?: LayoutAssertionOptions,
+  ): Promise<void>;
+  scrollToHorizontalEnd(opts?: LayoutAssertionOptions): Promise<void>;
   assertValue(label: string, value: string): Promise<void>;
   assertChecked(label: string): Promise<void>;
   refuteChecked(label: string): Promise<void>;

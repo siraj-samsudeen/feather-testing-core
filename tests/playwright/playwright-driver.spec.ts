@@ -1,3 +1,4 @@
+import { stripVTControlCharacters } from "node:util";
 import { test, expect } from "./fixtures.js";
 import { PlaywrightDriver } from "../../src/playwright/driver.js";
 import { Session } from "../../src/session.js";
@@ -16,6 +17,44 @@ test.describe("PlaywrightDriver", () => {
       const driver = new PlaywrightDriver(page);
       await driver.visit("/about");
       await expect(page.locator("h1")).toHaveText("About");
+    });
+  });
+
+  test.describe("reload()", () => {
+    test("reloads the document while preserving URL and browser state", async ({
+      page,
+    }) => {
+      const driver = new PlaywrightDriver(page);
+      await driver.visit("/reload?mode=compact#section");
+      await page.evaluate(() => {
+        localStorage.setItem("auth-state", "signed-in");
+        document.cookie = "session=active; path=/";
+        const transient = document.createElement("p");
+        transient.id = "transient";
+        transient.textContent = "Only in this document";
+        document.body.append(transient);
+      });
+      const url = page.url();
+
+      await driver.reload();
+
+      expect(page.url()).toBe(url);
+      await expect(page.locator("#load-count")).toHaveText("Loads: 2");
+      await expect(page.locator("#storage")).toHaveText("Stored: signed-in");
+      await expect(page.locator("#cookie")).toContainText("session=active");
+      await expect(page.locator("#transient")).toHaveCount(0);
+    });
+
+    test("re-resolves a within scope against the reloaded document", async ({
+      page,
+    }) => {
+      const driver = new PlaywrightDriver(page);
+      await driver.visit("/reload");
+      const panel = await driver.within(".panel");
+
+      await panel.reload();
+
+      await panel.assertExactText("Loads: 2 Stored: missing Cookie:");
     });
   });
 
@@ -229,6 +268,338 @@ test.describe("PlaywrightDriver", () => {
         driver.refuteText("Welcome to the home page"),
       ).rejects.toThrow();
     });
+  });
+
+  test.describe("assertExactText()", () => {
+    test("compares the current scope's whole text, not a numeric prefix", async ({
+      page,
+    }) => {
+      await page.setContent('<div class="total">Total: 10</div>');
+      const scoped = await new PlaywrightDriver(page).within(".total");
+
+      const error = await scoped
+        .assertExactText("Total: 1", { timeout: 100 })
+        .then(
+          () => null,
+          (cause: unknown) => cause as Error,
+        );
+      expect(error).toBeInstanceOf(Error);
+      expect(error?.message).toContain("toHaveText");
+      expect(error?.message).toContain("locator('.total')");
+      expect(error?.message).toContain("Total: 1");
+      expect(error?.message).toContain("Total: 10");
+      await scoped.assertExactText("Total: 10");
+    });
+
+    test("rejects extra surrounding text and preserves case", async ({ page }) => {
+      await page.setContent('<div class="total">Prefix Total: 1 suffix</div>');
+      const scoped = await new PlaywrightDriver(page).within(".total");
+
+      await expect(
+        scoped.assertExactText("Total: 1", { timeout: 100 }),
+      ).rejects.toThrow();
+      await expect(
+        scoped.assertExactText("prefix total: 1 suffix", { timeout: 100 }),
+      ).rejects.toThrow();
+    });
+
+    test("normalizes whitespace on both sides", async ({ page }) => {
+      await page.setContent(
+        '<div class="total">\n  Total: <strong>1</strong>\t </div>',
+      );
+      const scoped = await new PlaywrightDriver(page).within(".total");
+
+      await scoped.assertExactText("  Total:   1  ");
+    });
+
+    test("uses only the current scope", async ({ page }) => {
+      await page.setContent(`
+        <section class="summary"><div class="total">Total: 10</div></section>
+        <aside><div class="total">Total: 1</div></aside>
+      `);
+      const summary = await new PlaywrightDriver(page).within(".summary");
+      const total = await summary.within(".total");
+
+      await expect(
+        total.assertExactText("Total: 1", { timeout: 100 }),
+      ).rejects.toThrow();
+    });
+
+    test("retries until the scoped element's text is equal", async ({ page }) => {
+      await page.setContent('<div class="total">Total: 10</div>');
+      await page.locator(".total").evaluate((element) => {
+        setTimeout(() => {
+          element.textContent = "Total: 1";
+        }, 100);
+      });
+      const scoped = await new PlaywrightDriver(page).within(".total");
+
+      await scoped.assertExactText("Total: 1", { timeout: 1_000 });
+    });
+  });
+
+  test.describe("attribute and computed-style assertions", () => {
+    test("distinguishes presence, an empty value, and absence", async ({ page }) => {
+      await page.setContent('<div class="target" data-empty></div>');
+      const target = await new PlaywrightDriver(page).within(".target");
+
+      await target.assertAttribute("data-empty");
+      await target.assertAttribute("data-empty", "");
+      await target.refuteAttribute("data-missing");
+      await expect(
+        target.refuteAttribute("data-empty", { timeout: 100 }),
+      ).rejects.toThrow();
+      await expect(
+        target.assertAttribute("data-missing", undefined, { timeout: 100 }),
+      ).rejects.toThrow();
+    });
+
+    test("reports wrong attribute values", async ({ page }) => {
+      await page.setContent('<div class="target" data-state="loading"></div>');
+      const target = await new PlaywrightDriver(page).within(".target");
+
+      const error = await target
+        .assertAttribute("data-state", "ready", { timeout: 100 })
+        .then(
+          () => null,
+          (cause: unknown) => cause as Error,
+        );
+      expect(error?.message).toContain("data-state");
+      expect(error?.message).toContain("ready");
+      expect(error?.message).toContain("loading");
+    });
+
+    test("does not use a matching attribute outside the current scope", async ({
+      page,
+    }) => {
+      await page.setContent(`
+        <main><div class="target" data-state="loading"></div></main>
+        <aside><div class="target" data-state="ready"></div></aside>
+      `);
+      const main = await new PlaywrightDriver(page).within("main");
+      const target = await main.within(".target");
+
+      await expect(
+        target.assertAttribute("data-state", "ready", { timeout: 100 }),
+      ).rejects.toThrow();
+    });
+
+    test("retries attribute and computed-style updates", async ({ page }) => {
+      await page.setContent(`
+        <style>.target { --color-brand: #111111; }</style>
+        <div class="target" data-state="loading"></div>
+        <script>
+          setTimeout(() => {
+            const target = document.querySelector('.target');
+            target.setAttribute('data-state', 'ready');
+            target.style.setProperty('--color-brand', '#c15f3c');
+          }, 100);
+        </script>
+      `);
+      const target = await new PlaywrightDriver(page).within(".target");
+
+      await target.assertAttribute("data-state", "ready", { timeout: 1_000 });
+      await target.assertComputedStyle("--color-brand", "#c15f3c", {
+        timeout: 1_000,
+      });
+    });
+
+    test("reads computed style from the scoped element", async ({ page }) => {
+      await page.setContent(`
+        <style>
+          main .target { color: rgb(193, 95, 60); }
+          aside .target { color: rgb(0, 0, 0); }
+        </style>
+        <main><div class="target">Main</div></main>
+        <aside><div class="target">Aside</div></aside>
+      `);
+      const main = await new PlaywrightDriver(page).within("main");
+      const target = await main.within(".target");
+
+      await target.assertComputedStyle("color", "rgb(193, 95, 60)");
+      const error = await target
+        .assertComputedStyle("color", "rgb(0, 0, 0)", { timeout: 100 })
+        .then(
+          () => null,
+          (cause: unknown) => cause as Error,
+        );
+      const message = stripVTControlCharacters(error?.message ?? "");
+      expect(message).toContain("toHaveCSS");
+      expect(message).toContain("locator('main').locator('.target')");
+      expect(message).toContain("rgb(0, 0, 0)");
+      expect(message).toContain("rgb(193, 95, 60)");
+    });
+  });
+
+  test.describe("horizontal layout assertions", () => {
+    test("measures content overflow independently of scrollability", async ({
+      page,
+    }) => {
+      await page.setViewportSize({ width: 400, height: 600 });
+      await page.setContent(`
+        <style>
+          html, body { margin: 0; }
+          .area, .clipped { width: 300px; }
+          .area { overflow-x: auto; }
+          .clipped { overflow-x: hidden; }
+          .table { width: 900px; height: 20px; }
+        </style>
+        <main><div class="area"><div class="table"></div></div></main>
+        <div class="clipped"><div class="table"></div></div>
+      `);
+      const driver = new PlaywrightDriver(page);
+      const area = await driver.within(".area");
+      const clipped = await driver.within(".clipped");
+
+      await driver.assertNoHorizontalOverflow();
+      await area.assertHorizontalOverflow();
+      await clipped.assertHorizontalOverflow();
+    });
+
+    test("fails with measured dimensions for an overflowing page", async ({
+      page,
+    }) => {
+      await page.setViewportSize({ width: 400, height: 600 });
+      await page.setContent(`
+        <style>html, body { margin: 0; }</style>
+        <div style="width: 900px">Wide</div>
+      `);
+      const driver = new PlaywrightDriver(page);
+
+      const error = await driver
+        .assertNoHorizontalOverflow({ timeout: 100 })
+        .then(
+          () => null,
+          (cause: unknown) => cause as Error,
+        );
+      expect(error?.message).toContain("scrollWidth=900");
+      expect(error?.message).toContain("clientWidth=400");
+      expect(error?.message).toContain("tolerance=1");
+    });
+
+    test("retries while layout settles", async ({ page }) => {
+      await page.setContent(`
+        <div class="area" style="width: 300px; overflow: hidden">
+          <div class="content" style="width: 900px">Content</div>
+        </div>
+        <script>
+          setTimeout(() => {
+            document.querySelector('.content').style.width = '200px';
+          }, 100);
+        </script>
+      `);
+      const area = await new PlaywrightDriver(page).within(".area");
+
+      await area.assertNoHorizontalOverflow({ timeout: 1_000 });
+    });
+
+    test("checks descendant bounds within the current scope", async ({ page }) => {
+      await page.setContent(`
+        <style>
+          .region { position: relative; width: 200px; height: 50px; overflow: hidden; }
+          .safe .action { position: absolute; left: 140px; width: 50px; }
+          .clipped .action { position: absolute; left: 180px; width: 50px; }
+        </style>
+        <main class="region safe"><button class="action">Safe</button></main>
+        <aside class="region clipped"><button class="action">Clipped</button></aside>
+      `);
+      const driver = new PlaywrightDriver(page);
+      const main = await driver.within("main");
+      const aside = await driver.within("aside");
+
+      await main.assertHorizontallyContained(".action");
+      const error = await aside
+        .assertHorizontallyContained(".action", { timeout: 100 })
+        .then(
+          () => null,
+          (cause: unknown) => cause as Error,
+        );
+      expect(error?.message).toContain("child right=");
+      expect(error?.message).toContain("scope right=");
+    });
+
+    test("requires exactly one descendant when checking containment", async ({
+      page,
+    }) => {
+      await page.setContent(`
+        <div class="region" style="position: relative; width: 200px">
+          <button class="action">Inside</button>
+          <button class="action" style="position: absolute; left: 250px">Outside</button>
+        </div>
+      `);
+      const region = await new PlaywrightDriver(page).within(".region");
+
+      const error = await region
+        .assertHorizontallyContained(".action", { timeout: 100 })
+        .then(
+          () => null,
+          (cause: unknown) => cause as Error,
+        );
+      expect(error?.message).toContain("exactly one descendant '.action'");
+      expect(error?.message).toContain("found 2");
+    });
+
+    for (const { name, direction, smooth, sign } of [
+      { name: "LTR", direction: "ltr", smooth: false, sign: 1 },
+      { name: "RTL", direction: "rtl", smooth: false, sign: -1 },
+      {
+        name: "stylesheet-smooth LTR",
+        direction: "ltr",
+        smooth: true,
+        sign: 1,
+      },
+    ]) {
+      test(`scrolls ${name} content to its logical endpoint`, async ({ page }) => {
+        await page.setContent(`
+          <style>${smooth ? ".area { scroll-behavior: smooth !important; }" : ""}</style>
+          <div class="area" style="width: 300px; overflow-x: auto; direction: ${direction}">
+            <div style="width: 900px; height: 20px"></div>
+          </div>
+        `);
+        const locator = page.locator(".area");
+        const originalStyle = await locator.getAttribute("style");
+        const area = await new PlaywrightDriver(page).within(".area");
+
+        await area.assertHorizontalOverflow();
+        await area.scrollToHorizontalEnd({ timeout: 1_000 });
+
+        const measurement = await locator.evaluate((element) => ({
+          scrollLeft: element.scrollLeft,
+          maximum: element.scrollWidth - element.clientWidth,
+          behavior: getComputedStyle(element).scrollBehavior,
+          inlineStyle: element.getAttribute("style"),
+        }));
+        expect(measurement.scrollLeft).toBe(sign * measurement.maximum);
+        expect(measurement.maximum).toBe(600);
+        expect(measurement.behavior).toBe(smooth ? "smooth" : "auto");
+        expect(measurement.inlineStyle).toBe(originalStyle);
+      });
+    }
+
+    for (const { name, contentWidth, maximum } of [
+      { name: "no overflow", contentWidth: 300, maximum: 0 },
+      { name: "only one pixel of movement", contentWidth: 301, maximum: 1 },
+    ]) {
+      test(`rejects ${name}`, async ({ page }) => {
+        await page.setContent(`
+          <div class="area" style="width: 300px; overflow-x: auto">
+            <div style="width: ${contentWidth}px; height: 20px"></div>
+          </div>
+        `);
+        const area = await new PlaywrightDriver(page).within(".area");
+
+        const error = await area
+          .scrollToHorizontalEnd({ timeout: 100 })
+          .then(
+            () => null,
+            (cause: unknown) => cause as Error,
+          );
+        expect(error?.message).toContain(`maximum=${maximum}`);
+        expect(error?.message).toContain(
+          "expected horizontal range greater than 1",
+        );
+      });
+    }
   });
 
   test.describe("assertHas() / refuteHas()", () => {

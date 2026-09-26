@@ -1,5 +1,6 @@
 import {
   fireEvent,
+  getDefaultNormalizer,
   screen,
   waitFor,
   within as rtlWithin,
@@ -7,6 +8,7 @@ import {
 import userEvent, { type UserEvent } from "@testing-library/user-event";
 import type {
   AssertHasOptions,
+  AssertionOptions,
   DownloadOptions,
   TestDriver,
   UntilOptions,
@@ -94,6 +96,13 @@ export class RTLDriver implements TestDriver<RTLStepContext, RTLQueries> {
   async visit(): Promise<void> {
     throw new Error(
       "visit() is not available in the RTL adapter. Render the desired component directly.",
+    );
+  }
+
+  async reload(): Promise<void> {
+    throw new BrowserOnlyVerbError(
+      "reload()",
+      "Render the component again explicitly, or run the persistence check in a Playwright spec.",
     );
   }
 
@@ -263,6 +272,25 @@ export class RTLDriver implements TestDriver<RTLStepContext, RTLQueries> {
     await this.container.findByText(text, undefined, this.waitOpts());
   }
 
+  async assertExactText(
+    text: string,
+    opts?: AssertionOptions,
+  ): Promise<void> {
+    const normalize = getDefaultNormalizer();
+    const expected = normalize(text);
+    await waitFor(
+      () => {
+        const actual = normalize(this.rootElement().textContent ?? "");
+        if (actual !== expected) {
+          throw new Error(
+            `assertExactText('${text}'): expected normalized text '${expected}', but found '${actual}'.`,
+          );
+        }
+      },
+      opts?.timeout === undefined ? this.waitOpts() : { timeout: opts.timeout },
+    );
+  }
+
   async refuteText(text: string): Promise<void> {
     await waitFor(() => {
       const el = this.container.queryByText(text);
@@ -272,6 +300,75 @@ export class RTLDriver implements TestDriver<RTLStepContext, RTLQueries> {
         );
       }
     }, this.waitOpts());
+  }
+
+  async assertAttribute(
+    name: string,
+    value?: string,
+    opts?: AssertionOptions,
+  ): Promise<void> {
+    await waitFor(
+      () => {
+        const element = this.rootElement();
+        const actual = element.getAttribute(name);
+        if (value === undefined ? !element.hasAttribute(name) : actual !== value) {
+          const expected =
+            value === undefined ? "to be present" : `to equal '${value}'`;
+          const found = actual === null ? "<missing>" : `'${actual}'`;
+          throw new Error(
+            `assertAttribute('${name}'): expected attribute '${name}' ${expected}, but found ${found}.`,
+          );
+        }
+      },
+      opts?.timeout === undefined ? this.waitOpts() : { timeout: opts.timeout },
+    );
+  }
+
+  async refuteAttribute(
+    name: string,
+    opts?: AssertionOptions,
+  ): Promise<void> {
+    await waitFor(
+      () => {
+        const element = this.rootElement();
+        if (element.hasAttribute(name)) {
+          throw new Error(
+            `refuteAttribute('${name}'): expected attribute '${name}' to be absent, but found '${element.getAttribute(name) ?? ""}'.`,
+          );
+        }
+      },
+      opts?.timeout === undefined ? this.waitOpts() : { timeout: opts.timeout },
+    );
+  }
+
+  async assertComputedStyle(): Promise<void> {
+    throw new BrowserOnlyVerbError(
+      "assertComputedStyle()",
+      "Run this assertion in a Playwright spec so a browser can apply stylesheets and compute CSS.",
+    );
+  }
+
+  private browserOnlyLayout(verb: string): never {
+    throw new BrowserOnlyVerbError(
+      `${verb}()`,
+      "Run this layout operation in a Playwright spec; JSDOM does not calculate browser geometry.",
+    );
+  }
+
+  async assertNoHorizontalOverflow(): Promise<void> {
+    this.browserOnlyLayout("assertNoHorizontalOverflow");
+  }
+
+  async assertHorizontalOverflow(): Promise<void> {
+    this.browserOnlyLayout("assertHorizontalOverflow");
+  }
+
+  async assertHorizontallyContained(): Promise<void> {
+    this.browserOnlyLayout("assertHorizontallyContained");
+  }
+
+  async scrollToHorizontalEnd(): Promise<void> {
+    this.browserOnlyLayout("scrollToHorizontalEnd");
   }
 
   async assertValue(label: string, value: string): Promise<void> {
