@@ -5,6 +5,7 @@ import type {
   AssertExactTextOptions,
   AssertHasOptions,
   AssertPathOptions,
+  AssertionOptions,
   DownloadOptions,
   TestDriver,
   UntilOptions,
@@ -43,6 +44,13 @@ export class PlaywrightDriver
     private page: Page,
     private scope: Page | Locator = page,
   ) {}
+
+  /** The element represented by the current scope; an unscoped page means body. */
+  private scopeElement(): Locator {
+    return this.scope === this.page
+      ? this.page.locator("body")
+      : (this.scope as Locator);
+  }
 
   async visit(path: string): Promise<void> {
     await this.page.goto(path);
@@ -202,15 +210,45 @@ export class PlaywrightDriver
     text: string,
     opts?: AssertExactTextOptions,
   ): Promise<void> {
-    const element =
-      this.scope === this.page
-        ? this.page.locator("body")
-        : (this.scope as Locator);
-    await expect(element).toHaveText(text, { timeout: opts?.timeout });
+    await expect(this.scopeElement()).toHaveText(text, {
+      timeout: opts?.timeout,
+    });
   }
 
   async refuteText(text: string): Promise<void> {
     await expect(this.scope.getByText(text)).toHaveCount(0);
+  }
+
+  async assertAttribute(
+    name: string,
+    value?: string,
+    opts?: AssertionOptions,
+  ): Promise<void> {
+    const assertion = expect(this.scopeElement());
+    if (value === undefined) {
+      await assertion.toHaveAttribute(name, { timeout: opts?.timeout });
+    } else {
+      await assertion.toHaveAttribute(name, value, { timeout: opts?.timeout });
+    }
+  }
+
+  async refuteAttribute(
+    name: string,
+    opts?: AssertionOptions,
+  ): Promise<void> {
+    await expect(this.scopeElement()).not.toHaveAttribute(name, {
+      timeout: opts?.timeout,
+    });
+  }
+
+  async assertComputedStyle(
+    property: string,
+    value: string,
+    opts?: AssertionOptions,
+  ): Promise<void> {
+    await expect(this.scopeElement()).toHaveCSS(property, value, {
+      timeout: opts?.timeout,
+    });
   }
 
   async assertValue(label: string, value: string): Promise<void> {

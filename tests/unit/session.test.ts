@@ -39,6 +39,9 @@ function createMockDriver(overrides?: Partial<TestDriver>): {
     assertText: vi.fn(handler("assertText")),
     assertExactText: vi.fn(handler("assertExactText")),
     refuteText: vi.fn(handler("refuteText")),
+    assertAttribute: vi.fn(handler("assertAttribute")),
+    refuteAttribute: vi.fn(handler("refuteAttribute")),
+    assertComputedStyle: vi.fn(handler("assertComputedStyle")),
     assertValue: vi.fn(handler("assertValue")),
     assertChecked: vi.fn(handler("assertChecked")),
     refuteChecked: vi.fn(handler("refuteChecked")),
@@ -111,6 +114,9 @@ describe("Session", () => {
         .assertText("text")
         .assertExactText("exact text")
         .refuteText("text")
+        .assertAttribute("data-state", "ready")
+        .refuteAttribute("disabled")
+        .assertComputedStyle("color", "rgb(0, 0, 0)")
         .assertValue("label", "value")
         .assertChecked("label")
         .refuteChecked("label")
@@ -202,6 +208,9 @@ describe("Session", () => {
         .assertText("Hello")
         .assertExactText("Exact total", { timeout: 250 })
         .refuteText("Goodbye")
+        .assertAttribute("data-state", "ready", { timeout: 250 })
+        .refuteAttribute("disabled", { timeout: 250 })
+        .assertComputedStyle("--color-brand", "#c15f3c", { timeout: 250 })
         .assertValue("Email", "a@b.com")
         .assertChecked("Newsletter")
         .refuteChecked("Ads")
@@ -230,6 +239,19 @@ describe("Session", () => {
         timeout: 250,
       });
       expect(driver.refuteText).toHaveBeenCalledWith("Goodbye");
+      expect(driver.assertAttribute).toHaveBeenCalledWith(
+        "data-state",
+        "ready",
+        { timeout: 250 },
+      );
+      expect(driver.refuteAttribute).toHaveBeenCalledWith("disabled", {
+        timeout: 250,
+      });
+      expect(driver.assertComputedStyle).toHaveBeenCalledWith(
+        "--color-brand",
+        "#c15f3c",
+        { timeout: 250 },
+      );
       expect(driver.assertValue).toHaveBeenCalledWith("Email", "a@b.com");
       expect(driver.assertChecked).toHaveBeenCalledWith("Newsletter");
       expect(driver.refuteChecked).toHaveBeenCalledWith("Ads");

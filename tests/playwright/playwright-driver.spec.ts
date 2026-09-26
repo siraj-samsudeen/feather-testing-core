@@ -299,6 +299,93 @@ test.describe("PlaywrightDriver", () => {
     });
   });
 
+  test.describe("attribute and computed-style assertions", () => {
+    test("distinguishes presence, an empty value, and absence", async ({ page }) => {
+      await page.setContent('<div class="target" data-empty></div>');
+      const target = await new PlaywrightDriver(page).within(".target");
+
+      await target.assertAttribute("data-empty");
+      await target.assertAttribute("data-empty", "");
+      await target.refuteAttribute("data-missing");
+      await expect(
+        target.refuteAttribute("data-empty", { timeout: 100 }),
+      ).rejects.toThrow();
+      await expect(
+        target.assertAttribute("data-missing", undefined, { timeout: 100 }),
+      ).rejects.toThrow();
+    });
+
+    test("reports wrong attribute values", async ({ page }) => {
+      await page.setContent('<div class="target" data-state="loading"></div>');
+      const target = await new PlaywrightDriver(page).within(".target");
+
+      const error = await target
+        .assertAttribute("data-state", "ready", { timeout: 100 })
+        .then(
+          () => null,
+          (cause: unknown) => cause as Error,
+        );
+      expect(error?.message).toContain("data-state");
+      expect(error?.message).toContain("ready");
+      expect(error?.message).toContain("loading");
+    });
+
+    test("does not use a matching attribute outside the current scope", async ({
+      page,
+    }) => {
+      await page.setContent(`
+        <main><div class="target" data-state="loading"></div></main>
+        <aside><div class="target" data-state="ready"></div></aside>
+      `);
+      const main = await new PlaywrightDriver(page).within("main");
+      const target = await main.within(".target");
+
+      await expect(
+        target.assertAttribute("data-state", "ready", { timeout: 100 }),
+      ).rejects.toThrow();
+    });
+
+    test("retries attribute and computed-style updates", async ({ page }) => {
+      await page.setContent(`
+        <style>.target { --color-brand: #111111; }</style>
+        <div class="target" data-state="loading"></div>
+        <script>
+          setTimeout(() => {
+            const target = document.querySelector('.target');
+            target.setAttribute('data-state', 'ready');
+            target.style.setProperty('--color-brand', '#c15f3c');
+          }, 100);
+        </script>
+      `);
+      const target = await new PlaywrightDriver(page).within(".target");
+
+      await target.assertAttribute("data-state", "ready", { timeout: 1_000 });
+      await target.assertComputedStyle("--color-brand", "#c15f3c", {
+        timeout: 1_000,
+      });
+    });
+
+    test("reads computed style from the scoped element", async ({ page }) => {
+      await page.setContent(`
+        <style>
+          main .target { color: rgb(193, 95, 60); }
+          aside .target { color: rgb(0, 0, 0); }
+        </style>
+        <main><div class="target">Main</div></main>
+        <aside><div class="target">Aside</div></aside>
+      `);
+      const main = await new PlaywrightDriver(page).within("main");
+      const target = await main.within(".target");
+
+      await target.assertComputedStyle("color", "rgb(193, 95, 60)");
+      await expect(
+        target.assertComputedStyle("color", "rgb(0, 0, 0)", {
+          timeout: 100,
+        }),
+      ).rejects.toThrow();
+    });
+  });
+
   test.describe("assertHas() / refuteHas()", () => {
     test("assertHas passes when element exists", async ({ page }) => {
       const driver = new PlaywrightDriver(page);

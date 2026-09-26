@@ -222,6 +222,9 @@ In Playwright, `dropFile` reads the real file and dispatches a `drop` event with
 |--------|-------------|
 | `assertText(text)` / `refuteText(text)` | Assert text is visible / not visible |
 | `assertExactText(text, opts?)` | Assert the current scope's complete text equals `text` |
+| `assertAttribute(name, value?, opts?)` | Assert the current scope has an attribute, optionally with an exact value |
+| `refuteAttribute(name, opts?)` | Assert the current scope does not have an attribute |
+| `assertComputedStyle(property, value, opts?)` | Assert browser-computed CSS on the current scope (Playwright only) |
 | `assertValue(label, value)` | Assert a field (by label or placeholder) has this value |
 | `assertChecked(label)` / `refuteChecked(label)` | Assert a checkbox is checked / not checked |
 | `assertSelected(label, optionLabel)` | Assert the select's currently selected option |
@@ -257,6 +260,22 @@ await session.within(".total", (total) =>
 ```
 
 This is case-sensitive equality, not substring matching: `Total: 1` rejects both `Total: 10` and `Prefix Total: 1 suffix`. Like Playwright's text assertions and Testing Library's default normalizer, it trims leading/trailing whitespace and collapses internal whitespace runs before comparison. It retries until equality or the optional timeout. `assertHas(..., { exact: true })` retains its existing exact-substring behavior.
+
+#### Attributes and computed style
+
+Attribute assertions also operate on the current scope and retry until the optional timeout:
+
+```ts
+await session.within("html", (root) =>
+  root
+    .assertAttribute("data-palette", "ivory")
+    .assertAttribute("data-ready")
+    .refuteAttribute("data-loading")
+    .assertComputedStyle("--color-brand", "#c15f3c"),
+);
+```
+
+Omitting the value checks presence regardless of value. Passing `""` requires a present, empty-valued attribute; `refuteAttribute` requires the attribute to be missing. Attribute assertions work in both adapters. `assertComputedStyle` uses the browser's computed CSS value and is Playwright-only; RTL throws `BrowserOnlyVerbError` because JSDOM cannot prove stylesheet rendering.
 
 #### Pair every refute with a positive assertion
 

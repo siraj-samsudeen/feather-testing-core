@@ -9,6 +9,7 @@ import userEvent, { type UserEvent } from "@testing-library/user-event";
 import type {
   AssertExactTextOptions,
   AssertHasOptions,
+  AssertionOptions,
   DownloadOptions,
   TestDriver,
   UntilOptions,
@@ -293,6 +294,52 @@ export class RTLDriver implements TestDriver<RTLStepContext, RTLQueries> {
         );
       }
     }, this.waitOpts());
+  }
+
+  async assertAttribute(
+    name: string,
+    value?: string,
+    opts?: AssertionOptions,
+  ): Promise<void> {
+    await waitFor(
+      () => {
+        const element = this.rootElement();
+        const actual = element.getAttribute(name);
+        if (value === undefined ? !element.hasAttribute(name) : actual !== value) {
+          const expected =
+            value === undefined ? "to be present" : `to equal '${value}'`;
+          const found = actual === null ? "<missing>" : `'${actual}'`;
+          throw new Error(
+            `assertAttribute('${name}'): expected attribute '${name}' ${expected}, but found ${found}.`,
+          );
+        }
+      },
+      opts?.timeout === undefined ? this.waitOpts() : { timeout: opts.timeout },
+    );
+  }
+
+  async refuteAttribute(
+    name: string,
+    opts?: AssertionOptions,
+  ): Promise<void> {
+    await waitFor(
+      () => {
+        const element = this.rootElement();
+        if (element.hasAttribute(name)) {
+          throw new Error(
+            `refuteAttribute('${name}'): expected attribute '${name}' to be absent, but found '${element.getAttribute(name) ?? ""}'.`,
+          );
+        }
+      },
+      opts?.timeout === undefined ? this.waitOpts() : { timeout: opts.timeout },
+    );
+  }
+
+  async assertComputedStyle(): Promise<void> {
+    throw new BrowserOnlyVerbError(
+      "assertComputedStyle()",
+      "Run this assertion in a Playwright spec so a browser can apply stylesheets and compute CSS.",
+    );
   }
 
   async assertValue(label: string, value: string): Promise<void> {

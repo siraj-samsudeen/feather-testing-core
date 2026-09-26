@@ -4,6 +4,7 @@ export type {
   AssertExactTextOptions,
   AssertHasOptions,
   AssertPathOptions,
+  AssertionOptions,
   DownloadOptions,
   QueuedStep,
   TestDriver,

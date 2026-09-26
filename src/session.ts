@@ -2,6 +2,7 @@ import type {
   AssertExactTextOptions,
   AssertHasOptions,
   AssertPathOptions,
+  AssertionOptions,
   DownloadOptions,
   QueuedStep,
   TestDriver,
@@ -183,6 +184,37 @@ export class Session<TContext = unknown, TNative = unknown>
   refuteText(text: string): this {
     return this.enqueue(`refuteText('${text}')`, () =>
       this.driver.refuteText(text),
+    );
+  }
+
+  /** Assert that the current scope has `name`, optionally with an exact value. */
+  assertAttribute(
+    name: string,
+    value?: string,
+    opts?: AssertionOptions,
+  ): this {
+    const expectation = value === undefined ? "present" : `'${value}'`;
+    return this.enqueue(`assertAttribute('${name}', ${expectation})`, () =>
+      this.driver.assertAttribute(name, value, opts),
+    );
+  }
+
+  /** Assert that the current scope does not have attribute `name`. */
+  refuteAttribute(name: string, opts?: AssertionOptions): this {
+    return this.enqueue(`refuteAttribute('${name}')`, () =>
+      this.driver.refuteAttribute(name, opts),
+    );
+  }
+
+  /** Assert a browser-computed CSS property on the current scope. */
+  assertComputedStyle(
+    property: string,
+    value: string,
+    opts?: AssertionOptions,
+  ): this {
+    return this.enqueue(
+      `assertComputedStyle('${property}', '${value}')`,
+      () => this.driver.assertComputedStyle(property, value, opts),
     );
   }
 

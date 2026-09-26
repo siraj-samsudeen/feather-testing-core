@@ -5,10 +5,12 @@ export interface AssertHasOptions {
   timeout?: number;
 }
 
-export interface AssertExactTextOptions {
+export interface AssertionOptions {
   /** Overall budget in ms. Defaults to the adapter's own assertion timeout. */
   timeout?: number;
 }
+
+export interface AssertExactTextOptions extends AssertionOptions {}
 
 export interface AssertPathOptions {
   queryParams?: Record<string, string>;
@@ -69,6 +71,17 @@ export interface TestDriver<TContext = unknown, TNative = unknown> {
     opts?: AssertExactTextOptions,
   ): Promise<void>;
   refuteText(text: string): Promise<void>;
+  assertAttribute(
+    name: string,
+    value?: string,
+    opts?: AssertionOptions,
+  ): Promise<void>;
+  refuteAttribute(name: string, opts?: AssertionOptions): Promise<void>;
+  assertComputedStyle(
+    property: string,
+    value: string,
+    opts?: AssertionOptions,
+  ): Promise<void>;
   assertValue(label: string, value: string): Promise<void>;
   assertChecked(label: string): Promise<void>;
   refuteChecked(label: string): Promise<void>;

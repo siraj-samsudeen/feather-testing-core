@@ -826,6 +826,77 @@ describe("RTLDriver", () => {
     });
   });
 
+  describe("attribute and computed-style assertions", () => {
+    it("distinguishes presence, an empty value, and absence", async () => {
+      render(<div className="target" data-empty="" />);
+      const target = await new RTLDriver().within(".target");
+
+      await target.assertAttribute("data-empty");
+      await target.assertAttribute("data-empty", "");
+      await target.refuteAttribute("data-missing");
+      await expect(
+        target.refuteAttribute("data-empty", { timeout: 50 }),
+      ).rejects.toThrow();
+      await expect(
+        target.assertAttribute("data-missing", undefined, { timeout: 50 }),
+      ).rejects.toThrow();
+    });
+
+    it("reports wrong attribute values", async () => {
+      render(<div className="target" data-state="loading" />);
+      const target = await new RTLDriver().within(".target");
+
+      await expect(
+        target.assertAttribute("data-state", "ready", { timeout: 50 }),
+      ).rejects.toThrow(
+        "expected attribute 'data-state' to equal 'ready', but found 'loading'",
+      );
+    });
+
+    it("does not use a matching attribute outside the current scope", async () => {
+      render(
+        <div>
+          <main>
+            <div className="target" data-state="loading" />
+          </main>
+          <aside>
+            <div className="target" data-state="ready" />
+          </aside>
+        </div>,
+      );
+      const main = await new RTLDriver().within("main");
+      const target = await main.within(".target");
+
+      await expect(
+        target.assertAttribute("data-state", "ready", { timeout: 50 }),
+      ).rejects.toThrow();
+    });
+
+    it("retries until an attribute reaches the expected value", async () => {
+      function DelayedAttribute() {
+        const [state, setState] = useState("loading");
+        useEffect(() => {
+          const id = setTimeout(() => setState("ready"), 120);
+          return () => clearTimeout(id);
+        }, []);
+        return <div className="target" data-state={state} />;
+      }
+      render(<DelayedAttribute />);
+      const target = await new RTLDriver().within(".target");
+
+      await target.assertAttribute("data-state", "ready", { timeout: 1_000 });
+    });
+
+    it("declares computed style browser-only", async () => {
+      render(<div className="target" style={{ color: "red" }} />);
+      const target = await new RTLDriver().within(".target");
+
+      await expect(
+        target.assertComputedStyle("color", "rgb(255, 0, 0)"),
+      ).rejects.toBeInstanceOf(BrowserOnlyVerbError);
+    });
+  });
+
   describe("refuteText()", () => {
     it("passes when text is not present", async () => {
       render(<LinksApp />);

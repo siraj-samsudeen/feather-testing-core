@@ -9,6 +9,7 @@ export type {
   AssertExactTextOptions,
   AssertHasOptions,
   AssertPathOptions,
+  AssertionOptions,
   DownloadOptions,
   TestDriver,
   UntilOptions,

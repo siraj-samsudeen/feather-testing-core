@@ -11,6 +11,7 @@ export {
 export type {
   AssertExactTextOptions,
   AssertHasOptions,
+  AssertionOptions,
   DownloadOptions,
   TestDriver,
   UntilOptions,
