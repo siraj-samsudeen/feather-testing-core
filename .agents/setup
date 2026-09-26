@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$repo_root"
+
+run_step() {
+  local label="$1"
+  shift
+  local started_at=$SECONDS
+
+  printf '\n==> %s\n' "$label"
+  "$@"
+  printf '<== %s (%ss)\n' "$label" "$((SECONDS - started_at))"
+}
+
+ensure_node() {
+  if command -v node >/dev/null 2>&1 && [[ "$(node --version)" == v24.* ]]; then
+    return
+  fi
+
+  if ! command -v mise >/dev/null 2>&1; then
+    curl https://mise.run | sh
+    export PATH="$HOME/.local/bin:$PATH"
+  fi
+
+  mise install
+  export PATH="$(mise where node)/bin:$PATH"
+}
+
+persist_toolchain() {
+  local profile_marker="# feather-testing-core mise activation"
+  local mise_path
+
+  if ! mise_path="$(command -v mise)"; then
+    return
+  fi
+
+  if grep -Fqx "$profile_marker" "$HOME/.bash_profile" 2>/dev/null; then
+    return
+  fi
+
+  cat >> "$HOME/.bash_profile" <<EOF
+
+$profile_marker
+if [[ "\${PWD}" == "$repo_root" ]]; then
+  eval "\$("$mise_path" activate bash)"
+fi
+EOF
+}
+
+browser_launches() {
+  node --input-type=module <<'EOF'
+import { chromium } from "@playwright/test";
+
+const browser = await chromium.launch({ headless: true });
+await browser.close();
+EOF
+}
+
+ensure_browser_dependencies() {
+  if browser_launches >/dev/null 2>&1; then
+    return
+  fi
+
+  if [[ "$(uname -s)" != Linux ]]; then
+    printf 'Chromium was installed but could not launch.\n' >&2
+    browser_launches
+    return 1
+  fi
+
+  npx playwright install-deps chromium
+  browser_launches
+}
+
+run_step "Ensure Node.js 24" ensure_node
+run_step "Persist repository toolchain" persist_toolchain
+run_step "Install npm dependencies" npm ci --no-audit --no-fund
+run_step "Install Playwright Chromium" npx playwright install chromium
+run_step "Verify Chromium system dependencies" ensure_browser_dependencies
+
+printf '\nOrb setup complete.\n'
