@@ -769,9 +769,16 @@ describe("RTLDriver", () => {
       const summary = await new RTLDriver().within(".summary");
       const total = await summary.within(".total");
 
-      await expect(
-        total.assertExactText("Total: 1", { timeout: 50 }),
-      ).rejects.toThrow();
+      const error = await total
+        .assertExactText("Total: 1", { timeout: 50 })
+        .then(
+          () => null,
+          (cause: unknown) => cause as Error,
+        );
+      expect(error).toBeInstanceOf(Error);
+      expect(error?.message).toContain("assertExactText('Total: 1')");
+      expect(error?.message).toContain("expected normalized text 'Total: 1'");
+      expect(error?.message).toContain("but found 'Total: 10'");
       await total.assertExactText("Total: 10");
     });
 

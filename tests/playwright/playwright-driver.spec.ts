@@ -238,9 +238,17 @@ test.describe("PlaywrightDriver", () => {
       await page.setContent('<div class="total">Total: 10</div>');
       const scoped = await new PlaywrightDriver(page).within(".total");
 
-      await expect(
-        scoped.assertExactText("Total: 1", { timeout: 100 }),
-      ).rejects.toThrow();
+      const error = await scoped
+        .assertExactText("Total: 1", { timeout: 100 })
+        .then(
+          () => null,
+          (cause: unknown) => cause as Error,
+        );
+      expect(error).toBeInstanceOf(Error);
+      expect(error?.message).toContain("toHaveText");
+      expect(error?.message).toContain("locator('.total')");
+      expect(error?.message).toContain("Total: 1");
+      expect(error?.message).toContain("Total: 10");
       await scoped.assertExactText("Total: 10");
     });
 
