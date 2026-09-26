@@ -581,6 +581,16 @@ Deliberate exceptions stay possible and stay visible: an `eslint-disable-next-li
 
 **Why these five.** They are not style preferences. Each one is a way a suite goes green while proving nothing: a sleep passes on a slow machine and fails on a fast one, a conditional skip silently un-tests a spec for its entire life, `toBeTruthy()` accepts almost any value, a swallowed cleanup error surfaces three tests later as something else, and serial mode turns one failure into a wall of red that hides its own cause. `session.until()` exists so the first rule has an honest alternative to point at — see [the document set](docs/document-set.md) for why conventions belong in executable form rather than in a style guide nobody re-reads.
 
+## Releasing
+
+Releases are manual and publish exactly the version committed to `main`:
+
+1. Run `npm version <version> --no-git-tag-version` so `package.json` and `package-lock.json` contain the intended new version.
+2. Run `npm run lint` and `npm run test:all`, then commit and merge the version change to `main`.
+3. In GitHub Actions, open **Publish to npm**, choose **Run workflow**, select `main`, and run it.
+
+The workflow refuses non-`main` refs, mismatched lockfile versions, versions already present on npm, and registry lookup failures. It never changes or commits a version. Ordinary pushes and merges do not run it.
+
 ## Documentation
 
 - [The document set](docs/document-set.md) — the minimal set of documents a project needs, what each one answers, and why hand-maintained cross-reference matrices lose to generated reports plus CI checks.
