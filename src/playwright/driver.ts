@@ -2,7 +2,6 @@ import { readFile } from "node:fs/promises";
 import { basename } from "node:path";
 import { type Page, type Locator, expect, test } from "@playwright/test";
 import type {
-  AssertExactTextOptions,
   AssertHasOptions,
   AssertPathOptions,
   AssertionOptions,
@@ -243,7 +242,7 @@ export class PlaywrightDriver
 
   async assertExactText(
     text: string,
-    opts?: AssertExactTextOptions,
+    opts?: AssertionOptions,
   ): Promise<void> {
     await expect(this.scopeElement()).toHaveText(text, {
       timeout: opts?.timeout,
@@ -309,8 +308,14 @@ export class PlaywrightDriver
         () =>
           element.evaluate(
             (scope, args) => {
-              const child = scope.querySelector(args.selector);
-              if (!child) return `descendant '${args.selector}' not found`;
+              const children = scope.querySelectorAll(args.selector);
+              if (children.length !== 1) {
+                return (
+                  `expected exactly one descendant '${args.selector}', ` +
+                  `but found ${children.length}`
+                );
+              }
+              const child = children[0];
               const scopeBounds = scope.getBoundingClientRect();
               const childBounds = child.getBoundingClientRect();
               const contained =
@@ -329,22 +334,40 @@ export class PlaywrightDriver
       .toBeNull();
   }
 
-  async scrollToHorizontalEnd(): Promise<void> {
-    const measurement = await this.layoutElement().evaluate((element) => {
-      element.scrollLeft = element.scrollWidth;
-      return {
-        scrollLeft: element.scrollLeft,
-        scrollWidth: element.scrollWidth,
-        clientWidth: element.clientWidth,
-      };
-    });
-    if (Math.abs(measurement.scrollLeft) < 1) {
-      throw new Error(
-        "scrollToHorizontalEnd(): expected nonzero horizontal movement, but " +
-          `scrollLeft=${measurement.scrollLeft}, scrollWidth=${measurement.scrollWidth}, ` +
-          `clientWidth=${measurement.clientWidth}.`,
-      );
-    }
+  async scrollToHorizontalEnd(
+    opts?: LayoutAssertionOptions,
+  ): Promise<void> {
+    const element = this.layoutElement();
+    const tolerance = opts?.tolerance ?? 1;
+    await expect
+      .poll(
+        () =>
+          element.evaluate((node, allowedDifference) => {
+            const maximum = node.scrollWidth - node.clientWidth;
+            const direction = getComputedStyle(node).direction;
+            const originalBehavior = node.style.scrollBehavior;
+            node.style.scrollBehavior = "auto";
+            node.scrollTo({
+              left: direction === "rtl" ? -maximum : maximum,
+              behavior: "auto",
+            });
+            node.style.scrollBehavior = originalBehavior;
+
+            const distance = Math.abs(node.scrollLeft);
+            if (maximum <= allowedDifference) {
+              return (
+                `expected horizontal range greater than ${allowedDifference}, but ` +
+                `maximum=${maximum}, scrollLeft=${node.scrollLeft}, direction=${direction}`
+              );
+            }
+            return Math.abs(distance - maximum) <= allowedDifference
+              ? null
+              : `expected horizontal endpoint within ${allowedDifference}px, but ` +
+                  `maximum=${maximum}, scrollLeft=${node.scrollLeft}, direction=${direction}`;
+          }, tolerance),
+        { timeout: opts?.timeout },
+      )
+      .toBeNull();
   }
 
   async assertValue(label: string, value: string): Promise<void> {

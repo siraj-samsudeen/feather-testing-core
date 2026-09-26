@@ -176,7 +176,7 @@ Every method returns `this` for chaining. A single `await` at the start of the c
 | `dropFile(selector, path)` | Dispatch a `DataTransfer` drop of the file onto a drop area |
 | `pressKey(key)` | Press a key on the focused control — `'Enter'`, `'Escape'`, `'Control+A'` |
 | `hover(text)` | Hover the element with this text |
-| `scrollToHorizontalEnd()` | Scroll the current scope to its horizontal end (Playwright only) |
+| `scrollToHorizontalEnd(opts?)` | Scroll the current scope to its logical horizontal end (Playwright only) |
 
 `upload(label, path)` is the former name of `attachFile` and still works, deprecated.
 
@@ -230,7 +230,7 @@ In Playwright, `dropFile` reads the real file and dispatches a `drop` event with
 | `refuteAttribute(name, opts?)` | Assert the current scope does not have an attribute |
 | `assertComputedStyle(property, value, opts?)` | Assert browser-computed CSS on the current scope (Playwright only) |
 | `assertNoHorizontalOverflow(opts?)` | Assert the current scope fits horizontally (Playwright only) |
-| `assertHorizontalOverflow(opts?)` | Assert the current scope has inner horizontal overflow (Playwright only) |
+| `assertHorizontalOverflow(opts?)` | Assert content is wider than the current scope (Playwright only) |
 | `assertHorizontallyContained(selector, opts?)` | Assert a descendant fits within the scope's horizontal bounds (Playwright only) |
 | `assertValue(label, value)` | Assert a field (by label or placeholder) has this value |
 | `assertChecked(label)` / `refuteChecked(label)` | Assert a checkbox is checked / not checked |
@@ -286,7 +286,7 @@ Omitting the value checks presence regardless of value. Passing `""` requires a 
 
 #### Horizontal layout and inner scrolling
 
-Layout assertions distinguish a page that leaks past the viewport from a deliberately scrollable inner region:
+Layout assertions distinguish a page that leaks past the viewport from wider content contained inside an inner region:
 
 ```ts
 await session
@@ -299,7 +299,9 @@ await session
   );
 ```
 
-The overflow assertions compare `scrollWidth` with `clientWidth`; containment compares the descendant and scope bounding rectangles. They retry while layout settles and report measured dimensions on failure. `opts.tolerance` defaults to 1 CSS pixel for rounding differences. `scrollToHorizontalEnd()` fails unless the region reaches a nonzero horizontal scroll position. Unscoped assertions measure the document root; scoped assertions measure that element. All four operations are Playwright-only and throw `BrowserOnlyVerbError` in RTL because JSDOM has no layout engine.
+The overflow assertions compare `scrollWidth` with `clientWidth`; they measure content dimensions, not whether CSS permits scrolling. This intentionally also detects clipped content under `overflow: hidden`. Containment requires exactly one matching descendant, then compares its bounding rectangle with the scope. Assertions retry while layout settles and report measured dimensions on failure. `opts.tolerance` defaults to 1 CSS pixel for rounding differences.
+
+`scrollToHorizontalEnd()` separately proves scrollability: it detects LTR/RTL direction, temporarily overrides smooth scrolling with an instant operation, and retries until the actual absolute offset reaches `scrollWidth - clientWidth`. A range of 1 px or less is rejected as no meaningful movement. Unscoped operations measure the document root; scoped operations measure that element. All four operations are Playwright-only and throw `BrowserOnlyVerbError` in RTL because JSDOM has no layout engine.
 
 #### Pair every refute with a positive assertion
 

@@ -228,7 +228,7 @@ describe("Session", () => {
           timeout: 250,
           tolerance: 2,
         })
-        .scrollToHorizontalEnd()
+        .scrollToHorizontalEnd({ timeout: 250, tolerance: 2 })
         .assertValue("Email", "a@b.com")
         .assertChecked("Newsletter")
         .refuteChecked("Ads")
@@ -283,7 +283,10 @@ describe("Session", () => {
         ".action",
         { timeout: 250, tolerance: 2 },
       );
-      expect(driver.scrollToHorizontalEnd).toHaveBeenCalledWith();
+      expect(driver.scrollToHorizontalEnd).toHaveBeenCalledWith({
+        timeout: 250,
+        tolerance: 2,
+      });
       expect(driver.assertValue).toHaveBeenCalledWith("Email", "a@b.com");
       expect(driver.assertChecked).toHaveBeenCalledWith("Newsletter");
       expect(driver.refuteChecked).toHaveBeenCalledWith("Ads");

@@ -6,7 +6,6 @@ export { Session } from "../session.js";
 export { StepError, BrowserOnlyVerbError } from "../errors.js";
 export { PlaywrightDriver, type PlaywrightStepContext } from "./driver.js";
 export type {
-  AssertExactTextOptions,
   AssertHasOptions,
   AssertPathOptions,
   AssertionOptions,

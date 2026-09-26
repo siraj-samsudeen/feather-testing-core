@@ -7,7 +7,6 @@ import {
 } from "@testing-library/react";
 import userEvent, { type UserEvent } from "@testing-library/user-event";
 import type {
-  AssertExactTextOptions,
   AssertHasOptions,
   AssertionOptions,
   DownloadOptions,
@@ -275,7 +274,7 @@ export class RTLDriver implements TestDriver<RTLStepContext, RTLQueries> {
 
   async assertExactText(
     text: string,
-    opts?: AssertExactTextOptions,
+    opts?: AssertionOptions,
   ): Promise<void> {
     const normalize = getDefaultNormalizer();
     const expected = normalize(text);

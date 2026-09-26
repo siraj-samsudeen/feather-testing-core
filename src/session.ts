@@ -1,5 +1,4 @@
 import type {
-  AssertExactTextOptions,
   AssertHasOptions,
   AssertPathOptions,
   AssertionOptions,
@@ -181,7 +180,7 @@ export class Session<TContext = unknown, TNative = unknown>
   }
 
   /** Assert that the current scope's complete normalized text equals `text`. */
-  assertExactText(text: string, opts?: AssertExactTextOptions): this {
+  assertExactText(text: string, opts?: AssertionOptions): this {
     return this.enqueue(`assertExactText('${text}')`, () =>
       this.driver.assertExactText(text, opts),
     );
@@ -231,7 +230,7 @@ export class Session<TContext = unknown, TNative = unknown>
     );
   }
 
-  /** Assert that the current scope has horizontally scrollable content. */
+  /** Assert that content is wider than the current scope. */
   assertHorizontalOverflow(opts?: LayoutAssertionOptions): this {
     return this.enqueue("assertHorizontalOverflow()", () =>
       this.driver.assertHorizontalOverflow(opts),
@@ -249,9 +248,9 @@ export class Session<TContext = unknown, TNative = unknown>
   }
 
   /** Scroll the current scope to its real horizontal end. */
-  scrollToHorizontalEnd(): this {
+  scrollToHorizontalEnd(opts?: LayoutAssertionOptions): this {
     return this.enqueue("scrollToHorizontalEnd()", () =>
-      this.driver.scrollToHorizontalEnd(),
+      this.driver.scrollToHorizontalEnd(opts),
     );
   }
 

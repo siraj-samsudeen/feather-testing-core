@@ -10,8 +10,6 @@ export interface AssertionOptions {
   timeout?: number;
 }
 
-export interface AssertExactTextOptions extends AssertionOptions {}
-
 export interface LayoutAssertionOptions extends AssertionOptions {
   /** Allowed rounding difference in CSS pixels. Defaults to 1. */
   tolerance?: number;
@@ -74,7 +72,7 @@ export interface TestDriver<TContext = unknown, TNative = unknown> {
   assertText(text: string): Promise<void>;
   assertExactText(
     text: string,
-    opts?: AssertExactTextOptions,
+    opts?: AssertionOptions,
   ): Promise<void>;
   refuteText(text: string): Promise<void>;
   assertAttribute(
@@ -94,7 +92,7 @@ export interface TestDriver<TContext = unknown, TNative = unknown> {
     selector: string,
     opts?: LayoutAssertionOptions,
   ): Promise<void>;
-  scrollToHorizontalEnd(): Promise<void>;
+  scrollToHorizontalEnd(opts?: LayoutAssertionOptions): Promise<void>;
   assertValue(label: string, value: string): Promise<void>;
   assertChecked(label: string): Promise<void>;
   refuteChecked(label: string): Promise<void>;
