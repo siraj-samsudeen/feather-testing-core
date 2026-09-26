@@ -345,13 +345,10 @@ export class PlaywrightDriver
           element.evaluate((node, allowedDifference) => {
             const maximum = node.scrollWidth - node.clientWidth;
             const direction = getComputedStyle(node).direction;
-            const originalBehavior = node.style.scrollBehavior;
-            node.style.scrollBehavior = "auto";
             node.scrollTo({
               left: direction === "rtl" ? -maximum : maximum,
-              behavior: "auto",
+              behavior: "instant",
             });
-            node.style.scrollBehavior = originalBehavior;
 
             const distance = Math.abs(node.scrollLeft);
             if (maximum <= allowedDifference) {

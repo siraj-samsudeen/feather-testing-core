@@ -542,27 +542,37 @@ test.describe("PlaywrightDriver", () => {
     for (const { name, direction, smooth, sign } of [
       { name: "LTR", direction: "ltr", smooth: false, sign: 1 },
       { name: "RTL", direction: "rtl", smooth: false, sign: -1 },
-      { name: "smooth LTR", direction: "ltr", smooth: true, sign: 1 },
+      {
+        name: "stylesheet-smooth LTR",
+        direction: "ltr",
+        smooth: true,
+        sign: 1,
+      },
     ]) {
       test(`scrolls ${name} content to its logical endpoint`, async ({ page }) => {
-      await page.setContent(`
-        <div class="area" style="width: 300px; overflow-x: auto; direction: ${direction}; scroll-behavior: ${smooth ? "smooth" : "auto"}">
-          <div style="width: 900px; height: 20px"></div>
-        </div>
-      `);
-      const area = await new PlaywrightDriver(page).within(".area");
+        await page.setContent(`
+          <style>${smooth ? ".area { scroll-behavior: smooth !important; }" : ""}</style>
+          <div class="area" style="width: 300px; overflow-x: auto; direction: ${direction}">
+            <div style="width: 900px; height: 20px"></div>
+          </div>
+        `);
+        const locator = page.locator(".area");
+        const originalStyle = await locator.getAttribute("style");
+        const area = await new PlaywrightDriver(page).within(".area");
 
-      await area.assertHorizontalOverflow();
-      await area.scrollToHorizontalEnd({ timeout: 1_000 });
+        await area.assertHorizontalOverflow();
+        await area.scrollToHorizontalEnd({ timeout: 1_000 });
 
-      const measurement = await page.locator(".area").evaluate((element) => ({
-        scrollLeft: element.scrollLeft,
-        maximum: element.scrollWidth - element.clientWidth,
-        behavior: getComputedStyle(element).scrollBehavior,
-      }));
-      expect(measurement.scrollLeft).toBe(sign * measurement.maximum);
-      expect(measurement.maximum).toBe(600);
-      expect(measurement.behavior).toBe(smooth ? "smooth" : "auto");
+        const measurement = await locator.evaluate((element) => ({
+          scrollLeft: element.scrollLeft,
+          maximum: element.scrollWidth - element.clientWidth,
+          behavior: getComputedStyle(element).scrollBehavior,
+          inlineStyle: element.getAttribute("style"),
+        }));
+        expect(measurement.scrollLeft).toBe(sign * measurement.maximum);
+        expect(measurement.maximum).toBe(600);
+        expect(measurement.behavior).toBe(smooth ? "smooth" : "auto");
+        expect(measurement.inlineStyle).toBe(originalStyle);
       });
     }
 
