@@ -20,12 +20,33 @@ ensure_node() {
   fi
 
   if ! command -v mise >/dev/null 2>&1; then
-    printf 'Node.js 24 is required, but neither it nor mise is installed.\n' >&2
-    return 1
+    curl https://mise.run | sh
+    export PATH="$HOME/.local/bin:$PATH"
   fi
 
   mise install
   export PATH="$(mise where node)/bin:$PATH"
+}
+
+persist_toolchain() {
+  local profile_marker="# feather-testing-core mise activation"
+  local mise_path
+
+  if ! mise_path="$(command -v mise)"; then
+    return
+  fi
+
+  if grep -Fqx "$profile_marker" "$HOME/.bash_profile" 2>/dev/null; then
+    return
+  fi
+
+  cat >> "$HOME/.bash_profile" <<EOF
+
+$profile_marker
+if [[ "\${PWD}" == "$repo_root" ]]; then
+  eval "\$("$mise_path" activate bash)"
+fi
+EOF
 }
 
 browser_launches() {
@@ -53,6 +74,7 @@ ensure_browser_dependencies() {
 }
 
 run_step "Ensure Node.js 24" ensure_node
+run_step "Persist repository toolchain" persist_toolchain
 run_step "Install npm dependencies" npm ci --no-audit --no-fund
 run_step "Install Playwright Chromium" npx playwright install chromium
 run_step "Verify Chromium system dependencies" ensure_browser_dependencies
