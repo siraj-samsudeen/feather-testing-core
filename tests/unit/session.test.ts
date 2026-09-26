@@ -37,6 +37,7 @@ function createMockDriver(overrides?: Partial<TestDriver>): {
     pressKey: vi.fn(handler("pressKey")),
     hover: vi.fn(handler("hover")),
     assertText: vi.fn(handler("assertText")),
+    assertExactText: vi.fn(handler("assertExactText")),
     refuteText: vi.fn(handler("refuteText")),
     assertValue: vi.fn(handler("assertValue")),
     assertChecked: vi.fn(handler("assertChecked")),
@@ -108,6 +109,7 @@ describe("Session", () => {
         .pressKey("Enter")
         .hover("text")
         .assertText("text")
+        .assertExactText("exact text")
         .refuteText("text")
         .assertValue("label", "value")
         .assertChecked("label")
@@ -198,6 +200,7 @@ describe("Session", () => {
         .upload("Avatar", "avatar.png")
         .dropFile("#zone", "doc.pdf")
         .assertText("Hello")
+        .assertExactText("Exact total", { timeout: 250 })
         .refuteText("Goodbye")
         .assertValue("Email", "a@b.com")
         .assertChecked("Newsletter")
@@ -223,6 +226,9 @@ describe("Session", () => {
       expect(driver.upload).toHaveBeenCalledWith("Avatar", "avatar.png");
       expect(driver.dropFile).toHaveBeenCalledWith("#zone", "doc.pdf");
       expect(driver.assertText).toHaveBeenCalledWith("Hello");
+      expect(driver.assertExactText).toHaveBeenCalledWith("Exact total", {
+        timeout: 250,
+      });
       expect(driver.refuteText).toHaveBeenCalledWith("Goodbye");
       expect(driver.assertValue).toHaveBeenCalledWith("Email", "a@b.com");
       expect(driver.assertChecked).toHaveBeenCalledWith("Newsletter");

@@ -262,6 +262,25 @@ function DisappearingApp() {
   );
 }
 
+function ExactTextApp({ delayed = false }: { delayed?: boolean }) {
+  const [total, setTotal] = useState("Total: 10");
+  useEffect(() => {
+    if (!delayed) return;
+    const id = setTimeout(() => setTotal("Total: 1"), 120);
+    return () => clearTimeout(id);
+  }, [delayed]);
+  return (
+    <div>
+      <section className="summary">
+        <div className="total">{total}</div>
+      </section>
+      <aside>
+        <div className="total">Total: 1</div>
+      </aside>
+    </div>
+  );
+}
+
 // --- Tests ---
 
 describe("RTLDriver", () => {
@@ -741,6 +760,62 @@ describe("RTLDriver", () => {
       render(<LinksApp />);
       const driver = new RTLDriver();
       await expect(driver.assertText("Not here")).rejects.toThrow();
+    });
+  });
+
+  describe("assertExactText()", () => {
+    it("compares the current scope's whole text, not a numeric prefix", async () => {
+      render(<ExactTextApp />);
+      const summary = await new RTLDriver().within(".summary");
+      const total = await summary.within(".total");
+
+      await expect(
+        total.assertExactText("Total: 1", { timeout: 50 }),
+      ).rejects.toThrow();
+      await total.assertExactText("Total: 10");
+    });
+
+    it("rejects extra surrounding text and preserves case", async () => {
+      render(<div className="total">Prefix Total: 1 suffix</div>);
+      const total = await new RTLDriver().within(".total");
+
+      await expect(
+        total.assertExactText("Total: 1", { timeout: 50 }),
+      ).rejects.toThrow();
+      await expect(
+        total.assertExactText("prefix total: 1 suffix", { timeout: 50 }),
+      ).rejects.toThrow();
+    });
+
+    it("normalizes whitespace on both sides", async () => {
+      render(
+        <div className="total">
+          {"\n  Total: "}
+          <strong>1</strong>
+          {"\t "}
+        </div>,
+      );
+      const total = await new RTLDriver().within(".total");
+
+      await total.assertExactText("  Total:   1  ");
+    });
+
+    it("does not use an equal element outside the current scope", async () => {
+      render(<ExactTextApp />);
+      const summary = await new RTLDriver().within(".summary");
+      const total = await summary.within(".total");
+
+      await expect(
+        total.assertExactText("Total: 1", { timeout: 50 }),
+      ).rejects.toThrow();
+    });
+
+    it("retries until the scoped element's text is equal", async () => {
+      render(<ExactTextApp delayed />);
+      const summary = await new RTLDriver().within(".summary");
+      const total = await summary.within(".total");
+
+      await total.assertExactText("Total: 1", { timeout: 1_000 });
     });
   });
 

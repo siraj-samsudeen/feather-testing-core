@@ -1,4 +1,5 @@
 import type {
+  AssertExactTextOptions,
   AssertHasOptions,
   AssertPathOptions,
   DownloadOptions,
@@ -169,6 +170,13 @@ export class Session<TContext = unknown, TNative = unknown>
   assertText(text: string): this {
     return this.enqueue(`assertText('${text}')`, () =>
       this.driver.assertText(text),
+    );
+  }
+
+  /** Assert that the current scope's complete normalized text equals `text`. */
+  assertExactText(text: string, opts?: AssertExactTextOptions): this {
+    return this.enqueue(`assertExactText('${text}')`, () =>
+      this.driver.assertExactText(text, opts),
     );
   }
 

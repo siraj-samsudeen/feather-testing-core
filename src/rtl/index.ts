@@ -9,6 +9,7 @@ export {
   type RTLStepContext,
 } from "./driver.js";
 export type {
+  AssertExactTextOptions,
   AssertHasOptions,
   DownloadOptions,
   TestDriver,

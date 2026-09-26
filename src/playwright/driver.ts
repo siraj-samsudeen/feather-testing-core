@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { basename } from "node:path";
 import { type Page, type Locator, expect, test } from "@playwright/test";
 import type {
+  AssertExactTextOptions,
   AssertHasOptions,
   AssertPathOptions,
   DownloadOptions,
@@ -195,6 +196,17 @@ export class PlaywrightDriver
 
   async assertText(text: string): Promise<void> {
     await expect(this.scope.getByText(text).first()).toBeVisible();
+  }
+
+  async assertExactText(
+    text: string,
+    opts?: AssertExactTextOptions,
+  ): Promise<void> {
+    const element =
+      this.scope === this.page
+        ? this.page.locator("body")
+        : (this.scope as Locator);
+    await expect(element).toHaveText(text, { timeout: opts?.timeout });
   }
 
   async refuteText(text: string): Promise<void> {

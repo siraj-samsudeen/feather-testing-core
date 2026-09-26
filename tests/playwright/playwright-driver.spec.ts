@@ -231,6 +231,66 @@ test.describe("PlaywrightDriver", () => {
     });
   });
 
+  test.describe("assertExactText()", () => {
+    test("compares the current scope's whole text, not a numeric prefix", async ({
+      page,
+    }) => {
+      await page.setContent('<div class="total">Total: 10</div>');
+      const scoped = await new PlaywrightDriver(page).within(".total");
+
+      await expect(
+        scoped.assertExactText("Total: 1", { timeout: 100 }),
+      ).rejects.toThrow();
+      await scoped.assertExactText("Total: 10");
+    });
+
+    test("rejects extra surrounding text and preserves case", async ({ page }) => {
+      await page.setContent('<div class="total">Prefix Total: 1 suffix</div>');
+      const scoped = await new PlaywrightDriver(page).within(".total");
+
+      await expect(
+        scoped.assertExactText("Total: 1", { timeout: 100 }),
+      ).rejects.toThrow();
+      await expect(
+        scoped.assertExactText("prefix total: 1 suffix", { timeout: 100 }),
+      ).rejects.toThrow();
+    });
+
+    test("normalizes whitespace on both sides", async ({ page }) => {
+      await page.setContent(
+        '<div class="total">\n  Total: <strong>1</strong>\t </div>',
+      );
+      const scoped = await new PlaywrightDriver(page).within(".total");
+
+      await scoped.assertExactText("  Total:   1  ");
+    });
+
+    test("uses only the current scope", async ({ page }) => {
+      await page.setContent(`
+        <section class="summary"><div class="total">Total: 10</div></section>
+        <aside><div class="total">Total: 1</div></aside>
+      `);
+      const summary = await new PlaywrightDriver(page).within(".summary");
+      const total = await summary.within(".total");
+
+      await expect(
+        total.assertExactText("Total: 1", { timeout: 100 }),
+      ).rejects.toThrow();
+    });
+
+    test("retries until the scoped element's text is equal", async ({ page }) => {
+      await page.setContent('<div class="total">Total: 10</div>');
+      await page.locator(".total").evaluate((element) => {
+        setTimeout(() => {
+          element.textContent = "Total: 1";
+        }, 100);
+      });
+      const scoped = await new PlaywrightDriver(page).within(".total");
+
+      await scoped.assertExactText("Total: 1", { timeout: 1_000 });
+    });
+  });
+
   test.describe("assertHas() / refuteHas()", () => {
     test("assertHas passes when element exists", async ({ page }) => {
       const driver = new PlaywrightDriver(page);

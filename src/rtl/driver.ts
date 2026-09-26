@@ -1,11 +1,13 @@
 import {
   fireEvent,
+  getDefaultNormalizer,
   screen,
   waitFor,
   within as rtlWithin,
 } from "@testing-library/react";
 import userEvent, { type UserEvent } from "@testing-library/user-event";
 import type {
+  AssertExactTextOptions,
   AssertHasOptions,
   DownloadOptions,
   TestDriver,
@@ -261,6 +263,25 @@ export class RTLDriver implements TestDriver<RTLStepContext, RTLQueries> {
 
   async assertText(text: string): Promise<void> {
     await this.container.findByText(text, undefined, this.waitOpts());
+  }
+
+  async assertExactText(
+    text: string,
+    opts?: AssertExactTextOptions,
+  ): Promise<void> {
+    const normalize = getDefaultNormalizer();
+    const expected = normalize(text);
+    await waitFor(
+      () => {
+        const actual = normalize(this.rootElement().textContent ?? "");
+        if (actual !== expected) {
+          throw new Error(
+            `assertExactText('${text}'): expected normalized text '${expected}', but found '${actual}'.`,
+          );
+        }
+      },
+      opts?.timeout === undefined ? this.waitOpts() : { timeout: opts.timeout },
+    );
   }
 
   async refuteText(text: string): Promise<void> {

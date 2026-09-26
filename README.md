@@ -182,7 +182,7 @@ Every interaction above names the control it wants, and that name is matched in 
 
 This matters because Playwright's bare-string matchers are case-insensitive *substring* matchers. Left as-is, a verb aimed at one control silently widens to any other control whose name merely contains the same text — and the run dies on a strict-mode violation that only appears when both are on screen at once, which turns a naming collision into an ordering-dependent flake. RTL matches whole strings by default, so with this both adapters answer the same question.
 
-Assertions are the deliberate exception: `assertText` / `refuteText` / `assertHas` ask *"does this text appear"*, so they stay substring matches. An exact `refuteText("Check")` would pass while *Checklist Run* is plainly on the page.
+Assertions are the deliberate exception: `assertText` / `refuteText` / `assertHas` ask *"does this text appear"*, so they stay substring matches. An exact `refuteText("Check")` would pass while *Checklist Run* is plainly on the page. Use `within(selector, ...)` with `assertExactText(text)` when equality of an element's complete text is the contract.
 
 To act on a control whose name is genuinely a prefix of another's, scope the lookup rather than loosening it:
 
@@ -221,6 +221,7 @@ In Playwright, `dropFile` reads the real file and dispatches a `drop` event with
 | Method | Description |
 |--------|-------------|
 | `assertText(text)` / `refuteText(text)` | Assert text is visible / not visible |
+| `assertExactText(text, opts?)` | Assert the current scope's complete text equals `text` |
 | `assertValue(label, value)` | Assert a field (by label or placeholder) has this value |
 | `assertChecked(label)` / `refuteChecked(label)` | Assert a checkbox is checked / not checked |
 | `assertSelected(label, optionLabel)` | Assert the select's currently selected option |
@@ -244,6 +245,18 @@ await session
 ```
 
 In Playwright these are backed by `toHaveValue` / `toBeChecked` / `toHaveText`, so they auto-retry. The RTL adapter polls the DOM with `waitFor` for the same retry semantics.
+
+#### Exact whole-element text
+
+Scope to the element whose complete text matters, then use `assertExactText`:
+
+```ts
+await session.within(".total", (total) =>
+  total.assertExactText("Total: 1", { timeout: 5000 }),
+);
+```
+
+This is case-sensitive equality, not substring matching: `Total: 1` rejects both `Total: 10` and `Prefix Total: 1 suffix`. Like Playwright's text assertions and Testing Library's default normalizer, it trims leading/trailing whitespace and collapses internal whitespace runs before comparison. It retries until equality or the optional timeout. `assertHas(..., { exact: true })` retains its existing exact-substring behavior.
 
 #### Pair every refute with a positive assertion
 
