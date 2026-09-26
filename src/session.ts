@@ -4,6 +4,7 @@ import type {
   AssertPathOptions,
   AssertionOptions,
   DownloadOptions,
+  LayoutAssertionOptions,
   QueuedStep,
   TestDriver,
   UntilOptions,
@@ -220,6 +221,37 @@ export class Session<TContext = unknown, TNative = unknown>
     return this.enqueue(
       `assertComputedStyle('${property}', '${value}')`,
       () => this.driver.assertComputedStyle(property, value, opts),
+    );
+  }
+
+  /** Assert that the current scope fits horizontally without overflow. */
+  assertNoHorizontalOverflow(opts?: LayoutAssertionOptions): this {
+    return this.enqueue("assertNoHorizontalOverflow()", () =>
+      this.driver.assertNoHorizontalOverflow(opts),
+    );
+  }
+
+  /** Assert that the current scope has horizontally scrollable content. */
+  assertHorizontalOverflow(opts?: LayoutAssertionOptions): this {
+    return this.enqueue("assertHorizontalOverflow()", () =>
+      this.driver.assertHorizontalOverflow(opts),
+    );
+  }
+
+  /** Assert that a descendant's horizontal bounds fit the current scope. */
+  assertHorizontallyContained(
+    selector: string,
+    opts?: LayoutAssertionOptions,
+  ): this {
+    return this.enqueue(`assertHorizontallyContained('${selector}')`, () =>
+      this.driver.assertHorizontallyContained(selector, opts),
+    );
+  }
+
+  /** Scroll the current scope to its real horizontal end. */
+  scrollToHorizontalEnd(): this {
+    return this.enqueue("scrollToHorizontalEnd()", () =>
+      this.driver.scrollToHorizontalEnd(),
     );
   }
 

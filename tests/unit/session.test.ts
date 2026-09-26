@@ -43,6 +43,10 @@ function createMockDriver(overrides?: Partial<TestDriver>): {
     assertAttribute: vi.fn(handler("assertAttribute")),
     refuteAttribute: vi.fn(handler("refuteAttribute")),
     assertComputedStyle: vi.fn(handler("assertComputedStyle")),
+    assertNoHorizontalOverflow: vi.fn(handler("assertNoHorizontalOverflow")),
+    assertHorizontalOverflow: vi.fn(handler("assertHorizontalOverflow")),
+    assertHorizontallyContained: vi.fn(handler("assertHorizontallyContained")),
+    scrollToHorizontalEnd: vi.fn(handler("scrollToHorizontalEnd")),
     assertValue: vi.fn(handler("assertValue")),
     assertChecked: vi.fn(handler("assertChecked")),
     refuteChecked: vi.fn(handler("refuteChecked")),
@@ -119,6 +123,10 @@ describe("Session", () => {
         .assertAttribute("data-state", "ready")
         .refuteAttribute("disabled")
         .assertComputedStyle("color", "rgb(0, 0, 0)")
+        .assertNoHorizontalOverflow()
+        .assertHorizontalOverflow()
+        .assertHorizontallyContained(".action")
+        .scrollToHorizontalEnd()
         .assertValue("label", "value")
         .assertChecked("label")
         .refuteChecked("label")
@@ -214,6 +222,13 @@ describe("Session", () => {
         .assertAttribute("data-state", "ready", { timeout: 250 })
         .refuteAttribute("disabled", { timeout: 250 })
         .assertComputedStyle("--color-brand", "#c15f3c", { timeout: 250 })
+        .assertNoHorizontalOverflow({ timeout: 250, tolerance: 2 })
+        .assertHorizontalOverflow({ timeout: 250, tolerance: 2 })
+        .assertHorizontallyContained(".action", {
+          timeout: 250,
+          tolerance: 2,
+        })
+        .scrollToHorizontalEnd()
         .assertValue("Email", "a@b.com")
         .assertChecked("Newsletter")
         .refuteChecked("Ads")
@@ -256,6 +271,19 @@ describe("Session", () => {
         "#c15f3c",
         { timeout: 250 },
       );
+      expect(driver.assertNoHorizontalOverflow).toHaveBeenCalledWith({
+        timeout: 250,
+        tolerance: 2,
+      });
+      expect(driver.assertHorizontalOverflow).toHaveBeenCalledWith({
+        timeout: 250,
+        tolerance: 2,
+      });
+      expect(driver.assertHorizontallyContained).toHaveBeenCalledWith(
+        ".action",
+        { timeout: 250, tolerance: 2 },
+      );
+      expect(driver.scrollToHorizontalEnd).toHaveBeenCalledWith();
       expect(driver.assertValue).toHaveBeenCalledWith("Email", "a@b.com");
       expect(driver.assertChecked).toHaveBeenCalledWith("Newsletter");
       expect(driver.refuteChecked).toHaveBeenCalledWith("Ads");

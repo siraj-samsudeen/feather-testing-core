@@ -11,6 +11,7 @@ export type {
   AssertPathOptions,
   AssertionOptions,
   DownloadOptions,
+  LayoutAssertionOptions,
   TestDriver,
   UntilOptions,
   UntilPredicate,

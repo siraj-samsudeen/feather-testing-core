@@ -7,6 +7,7 @@ import type {
   AssertPathOptions,
   AssertionOptions,
   DownloadOptions,
+  LayoutAssertionOptions,
   TestDriver,
   UntilOptions,
   UntilPredicate,
@@ -50,6 +51,36 @@ export class PlaywrightDriver
     return this.scope === this.page
       ? this.page.locator("body")
       : (this.scope as Locator);
+  }
+
+  /** Page layout is measured on the document root; scopes use their element. */
+  private layoutElement(): Locator {
+    return this.scope === this.page
+      ? this.page.locator("html")
+      : (this.scope as Locator);
+  }
+
+  private async assertHorizontalOverflowState(
+    expected: boolean,
+    opts?: LayoutAssertionOptions,
+  ): Promise<void> {
+    const element = this.layoutElement();
+    const tolerance = opts?.tolerance ?? 1;
+    await expect
+      .poll(
+        async () => {
+          const { scrollWidth, clientWidth } = await element.evaluate((node) => ({
+            scrollWidth: node.scrollWidth,
+            clientWidth: node.clientWidth,
+          }));
+          const overflows = scrollWidth > clientWidth + tolerance;
+          return overflows === expected
+            ? null
+            : `scrollWidth=${scrollWidth}, clientWidth=${clientWidth}, tolerance=${tolerance}`;
+        },
+        { timeout: opts?.timeout },
+      )
+      .toBeNull();
   }
 
   async visit(path: string): Promise<void> {
@@ -253,6 +284,67 @@ export class PlaywrightDriver
     await expect(this.scopeElement()).toHaveCSS(property, value, {
       timeout: opts?.timeout,
     });
+  }
+
+  async assertNoHorizontalOverflow(
+    opts?: LayoutAssertionOptions,
+  ): Promise<void> {
+    await this.assertHorizontalOverflowState(false, opts);
+  }
+
+  async assertHorizontalOverflow(
+    opts?: LayoutAssertionOptions,
+  ): Promise<void> {
+    await this.assertHorizontalOverflowState(true, opts);
+  }
+
+  async assertHorizontallyContained(
+    selector: string,
+    opts?: LayoutAssertionOptions,
+  ): Promise<void> {
+    const element = this.layoutElement();
+    const tolerance = opts?.tolerance ?? 1;
+    await expect
+      .poll(
+        () =>
+          element.evaluate(
+            (scope, args) => {
+              const child = scope.querySelector(args.selector);
+              if (!child) return `descendant '${args.selector}' not found`;
+              const scopeBounds = scope.getBoundingClientRect();
+              const childBounds = child.getBoundingClientRect();
+              const contained =
+                childBounds.left >= scopeBounds.left - args.tolerance &&
+                childBounds.right <= scopeBounds.right + args.tolerance;
+              return contained
+                ? null
+                : `child left=${childBounds.left}, child right=${childBounds.right}, ` +
+                    `scope left=${scopeBounds.left}, scope right=${scopeBounds.right}, ` +
+                    `tolerance=${args.tolerance}`;
+            },
+            { selector, tolerance },
+          ),
+        { timeout: opts?.timeout },
+      )
+      .toBeNull();
+  }
+
+  async scrollToHorizontalEnd(): Promise<void> {
+    const measurement = await this.layoutElement().evaluate((element) => {
+      element.scrollLeft = element.scrollWidth;
+      return {
+        scrollLeft: element.scrollLeft,
+        scrollWidth: element.scrollWidth,
+        clientWidth: element.clientWidth,
+      };
+    });
+    if (Math.abs(measurement.scrollLeft) < 1) {
+      throw new Error(
+        "scrollToHorizontalEnd(): expected nonzero horizontal movement, but " +
+          `scrollLeft=${measurement.scrollLeft}, scrollWidth=${measurement.scrollWidth}, ` +
+          `clientWidth=${measurement.clientWidth}.`,
+      );
+    }
   }
 
   async assertValue(label: string, value: string): Promise<void> {

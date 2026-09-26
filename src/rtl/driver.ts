@@ -349,6 +349,29 @@ export class RTLDriver implements TestDriver<RTLStepContext, RTLQueries> {
     );
   }
 
+  private browserOnlyLayout(verb: string): never {
+    throw new BrowserOnlyVerbError(
+      `${verb}()`,
+      "Run this layout operation in a Playwright spec; JSDOM does not calculate browser geometry.",
+    );
+  }
+
+  async assertNoHorizontalOverflow(): Promise<void> {
+    this.browserOnlyLayout("assertNoHorizontalOverflow");
+  }
+
+  async assertHorizontalOverflow(): Promise<void> {
+    this.browserOnlyLayout("assertHorizontalOverflow");
+  }
+
+  async assertHorizontallyContained(): Promise<void> {
+    this.browserOnlyLayout("assertHorizontallyContained");
+  }
+
+  async scrollToHorizontalEnd(): Promise<void> {
+    this.browserOnlyLayout("scrollToHorizontalEnd");
+  }
+
   async assertValue(label: string, value: string): Promise<void> {
     const field = await this.findField(label);
     await waitFor(() => {

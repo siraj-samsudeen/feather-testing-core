@@ -12,6 +12,11 @@ export interface AssertionOptions {
 
 export interface AssertExactTextOptions extends AssertionOptions {}
 
+export interface LayoutAssertionOptions extends AssertionOptions {
+  /** Allowed rounding difference in CSS pixels. Defaults to 1. */
+  tolerance?: number;
+}
+
 export interface AssertPathOptions {
   queryParams?: Record<string, string>;
 }
@@ -83,6 +88,13 @@ export interface TestDriver<TContext = unknown, TNative = unknown> {
     value: string,
     opts?: AssertionOptions,
   ): Promise<void>;
+  assertNoHorizontalOverflow(opts?: LayoutAssertionOptions): Promise<void>;
+  assertHorizontalOverflow(opts?: LayoutAssertionOptions): Promise<void>;
+  assertHorizontallyContained(
+    selector: string,
+    opts?: LayoutAssertionOptions,
+  ): Promise<void>;
+  scrollToHorizontalEnd(): Promise<void>;
   assertValue(label: string, value: string): Promise<void>;
   assertChecked(label: string): Promise<void>;
   refuteChecked(label: string): Promise<void>;

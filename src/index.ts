@@ -6,6 +6,7 @@ export type {
   AssertPathOptions,
   AssertionOptions,
   DownloadOptions,
+  LayoutAssertionOptions,
   QueuedStep,
   TestDriver,
   UntilOptions,

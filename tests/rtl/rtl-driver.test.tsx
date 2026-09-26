@@ -897,6 +897,23 @@ describe("RTLDriver", () => {
     });
   });
 
+  describe("horizontal layout assertions", () => {
+    it.each([
+      ["assertNoHorizontalOverflow", (driver: RTLDriver) => driver.assertNoHorizontalOverflow()],
+      ["assertHorizontalOverflow", (driver: RTLDriver) => driver.assertHorizontalOverflow()],
+      [
+        "assertHorizontallyContained",
+        (driver: RTLDriver) => driver.assertHorizontallyContained(".action"),
+      ],
+      ["scrollToHorizontalEnd", (driver: RTLDriver) => driver.scrollToHorizontalEnd()],
+    ])("declares %s browser-only", async (_name, invoke) => {
+      render(<div className="target" />);
+      const driver = new RTLDriver();
+
+      await expect(invoke(driver)).rejects.toBeInstanceOf(BrowserOnlyVerbError);
+    });
+  });
+
   describe("refuteText()", () => {
     it("passes when text is not present", async () => {
       render(<LinksApp />);

@@ -424,6 +424,107 @@ test.describe("PlaywrightDriver", () => {
     });
   });
 
+  test.describe("horizontal layout assertions", () => {
+    test("distinguishes page overflow from contained inner overflow", async ({
+      page,
+    }) => {
+      await page.setViewportSize({ width: 400, height: 600 });
+      await page.setContent(`
+        <style>
+          html, body { margin: 0; }
+          .area { width: 300px; overflow-x: auto; }
+          .table { width: 900px; height: 20px; }
+        </style>
+        <main><div class="area"><div class="table"></div></div></main>
+      `);
+      const driver = new PlaywrightDriver(page);
+      const area = await driver.within(".area");
+
+      await driver.assertNoHorizontalOverflow();
+      await area.assertHorizontalOverflow();
+    });
+
+    test("fails with measured dimensions for an overflowing page", async ({
+      page,
+    }) => {
+      await page.setViewportSize({ width: 400, height: 600 });
+      await page.setContent(`
+        <style>html, body { margin: 0; }</style>
+        <div style="width: 900px">Wide</div>
+      `);
+      const driver = new PlaywrightDriver(page);
+
+      const error = await driver
+        .assertNoHorizontalOverflow({ timeout: 100 })
+        .then(
+          () => null,
+          (cause: unknown) => cause as Error,
+        );
+      expect(error?.message).toContain("scrollWidth=900");
+      expect(error?.message).toContain("clientWidth=400");
+      expect(error?.message).toContain("tolerance=1");
+    });
+
+    test("retries while layout settles", async ({ page }) => {
+      await page.setContent(`
+        <div class="area" style="width: 300px; overflow: hidden">
+          <div class="content" style="width: 900px">Content</div>
+        </div>
+        <script>
+          setTimeout(() => {
+            document.querySelector('.content').style.width = '200px';
+          }, 100);
+        </script>
+      `);
+      const area = await new PlaywrightDriver(page).within(".area");
+
+      await area.assertNoHorizontalOverflow({ timeout: 1_000 });
+    });
+
+    test("checks descendant bounds within the current scope", async ({ page }) => {
+      await page.setContent(`
+        <style>
+          .region { position: relative; width: 200px; height: 50px; overflow: hidden; }
+          .safe .action { position: absolute; left: 140px; width: 50px; }
+          .clipped .action { position: absolute; left: 180px; width: 50px; }
+        </style>
+        <main class="region safe"><button class="action">Safe</button></main>
+        <aside class="region clipped"><button class="action">Clipped</button></aside>
+      `);
+      const driver = new PlaywrightDriver(page);
+      const main = await driver.within("main");
+      const aside = await driver.within("aside");
+
+      await main.assertHorizontallyContained(".action");
+      const error = await aside
+        .assertHorizontallyContained(".action", { timeout: 100 })
+        .then(
+          () => null,
+          (cause: unknown) => cause as Error,
+        );
+      expect(error?.message).toContain("child right=");
+      expect(error?.message).toContain("scope right=");
+    });
+
+    test("scrolls an overflowing inner region to a nonzero end position", async ({
+      page,
+    }) => {
+      await page.setContent(`
+        <div class="area" style="width: 300px; overflow-x: auto">
+          <div style="width: 900px; height: 20px"></div>
+        </div>
+      `);
+      const area = await new PlaywrightDriver(page).within(".area");
+
+      await area.assertHorizontalOverflow();
+      await area.scrollToHorizontalEnd();
+
+      expect(
+        await page.locator(".area").evaluate((element) => element.scrollLeft),
+      ).toBeGreaterThan(0);
+    });
+  });
+
   test.describe("assertHas() / refuteHas()", () => {
     test("assertHas passes when element exists", async ({ page }) => {
       const driver = new PlaywrightDriver(page);
