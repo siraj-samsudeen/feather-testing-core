@@ -275,6 +275,28 @@ export const pages: Record<string, string> = {
   </script>
 </body></html>`,
 
+  "/sign-in": `<!DOCTYPE html>
+<html><body>
+  <form action="/">
+    <label for="email">Email</label>
+    <input id="email" name="email" type="email" />
+
+    <label for="password">Password</label>
+    <input id="password" name="password" type="password" />
+
+    <label for="login-code">Login code</label>
+    <input id="login-code" name="login-code" type="password" />
+
+    <label for="recovery">Recovery phrase</label>
+    <input id="recovery" name="recovery" />
+
+    <label for="locked-code">Locked code</label>
+    <input id="locked-code" type="password" disabled />
+
+    <button type="submit">Log in</button>
+  </form>
+</body></html>`,
+
   "/upload": `<!DOCTYPE html>
 <html><body>
   <form>

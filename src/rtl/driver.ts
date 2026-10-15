@@ -15,6 +15,7 @@ import type {
   UntilPredicate,
 } from "../types.js";
 import { BrowserOnlyVerbError } from "../errors.js";
+import { HIDDEN_VALUE } from "../secrets.js";
 
 /** The scoped query object raw() callbacks receive in the RTL adapter. */
 export type RTLQueries = ReturnType<typeof rtlWithin>;
@@ -49,6 +50,8 @@ export class RTLDriver implements TestDriver<RTLStepContext, RTLQueries> {
   protected root: HTMLElement;
   protected container: ReturnType<typeof rtlWithin>;
   protected lastFormElement: HTMLFormElement | null = null;
+  /** The field the most recent fillIn() found; null if it found none. */
+  protected lastFilledField: HTMLElement | null = null;
   /** Per-lookup timeout in ms; undefined leaves RTL's own default in place. */
   protected timeout: number | undefined;
 
@@ -134,10 +137,19 @@ export class RTLDriver implements TestDriver<RTLStepContext, RTLQueries> {
   }
 
   async fillIn(label: string, value: string): Promise<void> {
+    this.lastFilledField = null;
     const input = await this.findField(label);
+    this.lastFilledField = input;
     await this.user.clear(input);
     if (value) await this.user.type(input, value);
     this.lastFormElement = input.closest("form");
+  }
+
+  async lastFilledFieldIsPassword(): Promise<boolean> {
+    return (
+      this.lastFilledField instanceof HTMLInputElement &&
+      this.lastFilledField.type === "password"
+    );
   }
 
   async selectOption(label: string, option: string): Promise<void> {
@@ -504,8 +516,19 @@ export class RTLDriver implements TestDriver<RTLStepContext, RTLQueries> {
     return this.scoped(element as HTMLElement);
   }
 
+  /**
+   * Prints a copy of the DOM with password values hidden: React writes a
+   * controlled input's value into its `value` attribute, which the print
+   * would otherwise show.
+   */
   async debug(): Promise<void> {
-    screen.debug(this.rootElement());
+    const copy = this.rootElement().cloneNode(true) as HTMLElement;
+    for (const input of copy.querySelectorAll('input[type="password"]')) {
+      if (input.hasAttribute("value")) {
+        input.setAttribute("value", HIDDEN_VALUE);
+      }
+    }
+    screen.debug(copy);
   }
 }
 

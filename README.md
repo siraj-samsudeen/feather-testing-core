@@ -167,7 +167,7 @@ Every method returns `this` for chaining. A single `await` at the start of the c
 | `click(text)` | Find any element by text and click it |
 | `clickLink(text)` | Click `<a>` by accessible name |
 | `clickButton(text)` | Click `<button>` by accessible name |
-| `fillIn(label, value)` | Fill input by label or placeholder |
+| `fillIn(label, value, opts?)` | Fill input by label or placeholder. Secret values show as `'••••••'` in reports; `{ sensitive: true }` hides any other value (see [Secrets in failure reports](#secrets-in-failure-reports)) |
 | `selectOption(label, option)` | Select dropdown option by label |
 | `check(label)` / `uncheck(label)` | Toggle checkbox by label |
 | `choose(label)` | Select radio button by label |
@@ -518,13 +518,32 @@ Chain:
     [ok] assertText('Hello, Anonymous!')
     [ok] fillIn('Email', 'e2e@example.com')
 >>> [FAILED] clickButton('Sign up')
-    [skipped] fillIn('Password', 'password123')
+    [skipped] fillIn('Password', '••••••')
     [skipped] assertText('Hello! You are signed in.')
 ```
 
 The session keeps a history of executed steps, so when you break a flow into multiple chains (multiple `await`s), the `StepError` still shows the full walk — steps from earlier chains appear as `[ok]` above the failing chain.
 
 With the Playwright adapter, each queued step is also wrapped in `test.step()`, so chains appear as named steps in the trace viewer and HTML report.
+
+### Secrets in failure reports
+
+The chain prints the value each `fillIn` typed, because an ordinary value helps you debug. A secret value is shown as `'••••••'` instead — always six dots, so its length is hidden too. A value counts as secret when:
+
+| Rule | Example | Known |
+|------|---------|-------|
+| The label looks secret: it contains `password`, `passcode`, `secret`, `token` or `api key` (also `api_key`, `apikey`), or the whole word `pin` or `otp`, in any case | `fillIn('Password:', pw)` | before the step runs |
+| You mark it sensitive | `fillIn('Recovery phrase', phrase, { sensitive: true })` | before the step runs |
+| The field turns out to be a password field (`type="password"`), whatever its label | `fillIn('Login code', code)` | once the step has run |
+
+The real value is still typed; only what is printed changes. The hidden form is used in the chain, in `Failed at:`, and in the cause when the fill itself failed (Playwright's call log repeats the value as `fill("…")`, so the session replaces it there too). The RTL adapter's `debug()` also prints password inputs' values as `'••••••'`.
+
+Two limits to know about:
+
+- The first two rules also keep the value out of the Playwright `test.step()` title. The third can't: the title is written before the step runs, so a password field with an ordinary-looking label gets its value in the title. Name the field's label, or pass `{ sensitive: true }`, when that matters.
+- Playwright's own trace and HTML report record every action with its arguments, including its own `Fill "…"` step, whatever this library does. Treat traces and HTML reports from runs that type real credentials as secret, or sign in with throwaway test accounts.
+
+A custom `TestDriver` can take part in the third rule by implementing the optional `lastFilledFieldIsPassword()`: answer at once, without waiting, whether the field the most recent `fillIn()` targeted is a password field. Without it, the label rule and `{ sensitive: true }` still apply.
 
 ## RTL Adapter Limitations
 
@@ -545,7 +564,7 @@ The verbs JSDOM *can* honestly do, it does: `attachFile` synthesizes a `File` fr
 |--------|----------------------|
 | `findField(label)` | The single label-addressed lookup. Every labelled verb — `fillIn`, `selectOption`, `check`, `uncheck`, `upload`, `assertValue`, `assertChecked`, `assertSelected`, `assertOptions` — goes through it, so one override retargets them all |
 | `scoped(element)` | Factory used by `within()`, so a scoped session keeps your driver's behaviour |
-| `user`, `root`, `container`, `lastFormElement`, `timeout` | Shared state the built-in verbs read and write |
+| `user`, `root`, `container`, `lastFormElement`, `lastFilledField`, `timeout` | Shared state the built-in verbs read and write |
 
 ```ts
 class WrapperLabelDriver extends RTLDriver {

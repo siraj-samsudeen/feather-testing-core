@@ -1218,3 +1218,104 @@ test.describe("raw()", () => {
       );
   });
 });
+
+test.describe("secrets in failure reports", () => {
+  // Obviously fake values: none of these is a real credential.
+  const FAKE_SECRET = "fake-secret-value-123";
+  const HIDDEN = "••••••";
+
+  /** Records the title each step is wrapped in (Playwright's test.step). */
+  class TitleRecordingDriver extends PlaywrightDriver {
+    titles: string[] = [];
+
+    override async wrapStep(name: string, fn: () => Promise<void>) {
+      this.titles.push(name);
+      return super.wrapStep(name, fn);
+    }
+  }
+
+  /**
+   * Sign in, leaving the sign-in page, then fail on a later step — the shape
+   * of the chain that leaked a password into a CI log.
+   */
+  async function signInFailure(driver: PlaywrightDriver): Promise<StepError> {
+    const error = await new Session(driver)
+      .visit("/sign-in")
+      .fillIn("Email", "someone@example.com")
+      .fillIn("Password", FAKE_SECRET)
+      .fillIn("Login code", FAKE_SECRET)
+      .fillIn("Recovery phrase", FAKE_SECRET, { sensitive: true })
+      .clickButton("Log in")
+      .step("a later step fails", async () => {
+        throw new Error("boom");
+      })
+      .then(
+        () => null,
+        (e: unknown) => e,
+      );
+    expect(error).toBeInstanceOf(StepError);
+    return error as StepError;
+  }
+
+  test("never prints a secret value in the chain", async ({ page }) => {
+    const error = await signInFailure(new PlaywrightDriver(page));
+
+    expect(error.message).not.toContain(FAKE_SECRET);
+    expect(error.message).toContain(`[ok] fillIn('Password', '${HIDDEN}')`);
+    expect(error.message).toContain(`[ok] fillIn('Login code', '${HIDDEN}')`);
+    expect(error.message).toContain(
+      `[ok] fillIn('Recovery phrase', '${HIDDEN}')`,
+    );
+  });
+
+  test("keeps showing ordinary values", async ({ page }) => {
+    const error = await signInFailure(new PlaywrightDriver(page));
+
+    expect(error.message).toContain(
+      "[ok] fillIn('Email', 'someone@example.com')",
+    );
+  });
+
+  test("hides secret-looking and sensitive values in test.step titles", async ({
+    page,
+  }) => {
+    const driver = new TitleRecordingDriver(page);
+    await signInFailure(driver);
+
+    expect(driver.titles).toContain("fillIn('Email', 'someone@example.com')");
+    expect(driver.titles).toContain(`fillIn('Password', '${HIDDEN}')`);
+    expect(driver.titles).toContain(`fillIn('Recovery phrase', '${HIDDEN}')`);
+  });
+
+  test("hides the value when filling a password field fails, cause included", async ({
+    page,
+  }) => {
+    page.setDefaultTimeout(500);
+    const error = await new Session(new PlaywrightDriver(page))
+      .visit("/sign-in")
+      .fillIn("Locked code", FAKE_SECRET)
+      .then(
+        () => null,
+        (e: unknown) => e,
+      );
+
+    expect(error).toBeInstanceOf(StepError);
+    const stepError = error as StepError;
+    expect(stepError.message).toContain(
+      `>>> [FAILED] fillIn('Locked code', '${HIDDEN}')`,
+    );
+    expect(stepError.message).not.toContain(FAKE_SECRET);
+    expect((stepError.cause as Error).message).not.toContain(FAKE_SECRET);
+    expect(String((stepError.cause as Error).stack)).not.toContain(FAKE_SECRET);
+  });
+
+  test("still types the real value", async ({ page }) => {
+    await new Session(new PlaywrightDriver(page))
+      .visit("/sign-in")
+      .fillIn("Login code", FAKE_SECRET)
+      .fillIn("Recovery phrase", FAKE_SECRET, { sensitive: true });
+
+    await expect(page.getByLabel("Login code")).toHaveValue(FAKE_SECRET);
+    await expect(page.getByLabel("Recovery phrase")).toHaveValue(FAKE_SECRET);
+  });
+});
