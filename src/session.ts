@@ -3,6 +3,7 @@ import type {
   AssertPathOptions,
   AssertionOptions,
   DownloadOptions,
+  FillInOptions,
   LayoutAssertionOptions,
   QueuedStep,
   TestDriver,
@@ -10,6 +11,7 @@ import type {
   UntilPredicate,
 } from "./types.js";
 import { StepError } from "./errors.js";
+import { HIDDEN_VALUE, hideValueInError, labelLooksSecret } from "./secrets.js";
 
 /**
  * Verbs that take a human description exist so a failure names intent rather
@@ -107,10 +109,56 @@ export class Session<TContext = unknown, TNative = unknown>
     );
   }
 
-  fillIn(label: string, value: string): this {
-    return this.enqueue(`fillIn('${label}', '${value}')`, () =>
-      this.driver.fillIn(label, value),
-    );
+  /**
+   * Fill a field. The step's name shows the value, which helps debugging,
+   * unless the value is a secret: then it shows '••••••' instead.
+   *
+   * A value counts as secret when `opts.sensitive` is set, when the label
+   * looks secret ("Password", "API key", "PIN", ...), or when the driver
+   * reports that the field turned out to be a password field. The first two
+   * are known before the step runs, so they also keep the value out of
+   * Playwright's test.step title; the last is only known once it has run.
+   */
+  fillIn(label: string, value: string, opts?: FillInOptions): this {
+    const nameShowingValue = `fillIn('${label}', '${value}')`;
+    const nameHidingValue = `fillIn('${label}', '${HIDDEN_VALUE}')`;
+    const knownSecret = opts?.sensitive === true || labelLooksSecret(label);
+
+    const step: QueuedStep = {
+      name: knownSecret ? nameHidingValue : nameShowingValue,
+      index: this.stepIndex++,
+      action: async () => {
+        try {
+          await this.driver.fillIn(label, value);
+        } catch (error) {
+          if (await this.lastFilledFieldIsPassword()) {
+            step.name = nameHidingValue;
+          }
+          if (step.name === nameHidingValue) {
+            throw hideValueInError(error, value);
+          }
+          throw error;
+        }
+        if (await this.lastFilledFieldIsPassword()) {
+          step.name = nameHidingValue;
+        }
+      },
+    };
+    this.steps.push(step);
+    return this;
+  }
+
+  /** Ask the driver whether the field just filled is a password field. */
+  private async lastFilledFieldIsPassword(): Promise<boolean> {
+    if (!this.driver.lastFilledFieldIsPassword) {
+      return false;
+    }
+    try {
+      return await this.driver.lastFilledFieldIsPassword();
+    } catch {
+      // The driver could not tell, so err on the side of hiding the value.
+      return true;
+    }
   }
 
   selectOption(label: string, option: string): this {

@@ -12,6 +12,7 @@ export type {
   AssertHasOptions,
   AssertionOptions,
   DownloadOptions,
+  FillInOptions,
   LayoutAssertionOptions,
   TestDriver,
   UntilOptions,

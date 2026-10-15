@@ -15,6 +15,15 @@ export interface LayoutAssertionOptions extends AssertionOptions {
   tolerance?: number;
 }
 
+export interface FillInOptions {
+  /**
+   * Show the value as '••••••' in failure reports and step titles. Values
+   * typed into a password field, or into a field whose label looks secret,
+   * are hidden without it; use this for any other value that must not leak.
+   */
+  sensitive?: boolean;
+}
+
 export interface AssertPathOptions {
   queryParams?: Record<string, string>;
 }
@@ -56,6 +65,15 @@ export interface TestDriver<TContext = unknown, TNative = unknown> {
   clickLink(text: string): Promise<void>;
   clickButton(text: string): Promise<void>;
   fillIn(label: string, value: string): Promise<void>;
+  /**
+   * Optional: whether the field the most recent fillIn() targeted is a
+   * password field (type="password"). The session asks right after every
+   * fillIn(), whether it passed or failed, and hides the typed value in
+   * failure reports when the answer is yes. It must answer at once, without
+   * waiting for anything. A driver without it relies on the label check and
+   * the `sensitive` option alone.
+   */
+  lastFilledFieldIsPassword?(): Promise<boolean>;
   selectOption(label: string, option: string): Promise<void>;
   check(label: string): Promise<void>;
   uncheck(label: string): Promise<void>;

@@ -39,6 +39,8 @@ export class PlaywrightDriver
   implements TestDriver<PlaywrightStepContext, Page>
 {
   private lastFormLocator: Locator | null = null;
+  /** The field the most recent fillIn() targeted, found or not. */
+  private lastFilledField: Locator | null = null;
 
   constructor(
     private page: Page,
@@ -118,8 +120,25 @@ export class PlaywrightDriver
 
   async fillIn(label: string, value: string): Promise<void> {
     const field = this.fieldByLabelOrPlaceholder(label);
+    this.lastFilledField = field;
     await field.fill(value);
     this.lastFormLocator = this.scope.locator("form", { has: field });
+  }
+
+  /**
+   * evaluateAll() looks at whatever matches right now and never waits, so a
+   * field that was never found simply counts as not a password field.
+   */
+  async lastFilledFieldIsPassword(): Promise<boolean> {
+    if (!this.lastFilledField) {
+      return false;
+    }
+    return this.lastFilledField.evaluateAll((elements) =>
+      elements.some(
+        (element) =>
+          element instanceof HTMLInputElement && element.type === "password",
+      ),
+    );
   }
 
   async selectOption(label: string, option: string): Promise<void> {

@@ -281,6 +281,31 @@ function ExactTextApp({ delayed = false }: { delayed?: boolean }) {
   );
 }
 
+/** A sign-in form whose second password field has a label that does not look secret. */
+function SignInApp() {
+  const [loginCode, setLoginCode] = useState("");
+  return (
+    <form>
+      <label htmlFor="email">Email</label>
+      <input id="email" type="email" />
+
+      <label htmlFor="password">Password</label>
+      <input id="password" type="password" />
+
+      <label htmlFor="login-code">Login code</label>
+      <input
+        id="login-code"
+        type="password"
+        value={loginCode}
+        onChange={(e) => setLoginCode(e.target.value)}
+      />
+
+      <label htmlFor="recovery">Recovery phrase</label>
+      <input id="recovery" />
+    </form>
+  );
+}
+
 // --- Tests ---
 
 describe("RTLDriver", () => {
@@ -1211,5 +1236,99 @@ describe("toKeyboardSyntax()", () => {
 
   it("rejects a prefix that is not a modifier", () => {
     expect(() => toKeyboardSyntax("Bogus+a")).toThrow("is not a modifier");
+  });
+});
+
+describe("RTLDriver — secrets in failure reports", () => {
+  // Obviously fake values: none of these is a real credential.
+  const FAKE_SECRET = "fake-secret-value-123";
+  const HIDDEN = "••••••";
+
+  /** Fill the sign-in form, then fail on a later step, and return the error. */
+  async function signInFailure(): Promise<StepError> {
+    render(<SignInApp />);
+    const error = await createSession()
+      .fillIn("Email", "someone@example.com")
+      .fillIn("Password", FAKE_SECRET)
+      .fillIn("Login code", FAKE_SECRET)
+      .fillIn("Recovery phrase", FAKE_SECRET, { sensitive: true })
+      .step("a later step fails", async () => {
+        throw new Error("boom");
+      })
+      .then(
+        () => null,
+        (e: unknown) => e,
+      );
+    expect(error).toBeInstanceOf(StepError);
+    return error as StepError;
+  }
+
+  it("never prints a secret value in the chain", async () => {
+    const error = await signInFailure();
+
+    expect(error.message).not.toContain(FAKE_SECRET);
+  });
+
+  it("hides the value of a field whose label looks secret", async () => {
+    const error = await signInFailure();
+
+    expect(error.message).toContain(`[ok] fillIn('Password', '${HIDDEN}')`);
+  });
+
+  it("hides the value of a password field whose label does not look secret", async () => {
+    const error = await signInFailure();
+
+    expect(error.message).toContain(`[ok] fillIn('Login code', '${HIDDEN}')`);
+  });
+
+  it("hides a value marked sensitive", async () => {
+    const error = await signInFailure();
+
+    expect(error.message).toContain(
+      `[ok] fillIn('Recovery phrase', '${HIDDEN}')`,
+    );
+  });
+
+  it("keeps showing ordinary values", async () => {
+    const error = await signInFailure();
+
+    expect(error.message).toContain(
+      "[ok] fillIn('Email', 'someone@example.com')",
+    );
+  });
+
+  it("still types the real value", async () => {
+    render(<SignInApp />);
+    await createSession()
+      .fillIn("Login code", FAKE_SECRET)
+      .fillIn("Recovery phrase", FAKE_SECRET, { sensitive: true });
+
+    expect(screen.getByLabelText("Login code")).toHaveProperty(
+      "value",
+      FAKE_SECRET,
+    );
+    expect(screen.getByLabelText("Recovery phrase")).toHaveProperty(
+      "value",
+      FAKE_SECRET,
+    );
+  });
+
+  it("debug() does not print the value of a password field", async () => {
+    render(<SignInApp />);
+    const driver = new RTLDriver();
+    await driver.fillIn("Login code", FAKE_SECRET);
+    const printed: string[] = [];
+    const spy = vi
+      .spyOn(console, "log")
+      .mockImplementation((...args: unknown[]) => {
+        printed.push(args.map(String).join(" "));
+      });
+
+    await driver.debug();
+    spy.mockRestore();
+
+    const output = printed.join("\n");
+    expect(output).toContain("Login code");
+    expect(output).not.toContain(FAKE_SECRET);
   });
 });

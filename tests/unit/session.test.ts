@@ -742,3 +742,189 @@ describe("Session", () => {
     });
   });
 });
+
+describe("secrets in failure reports", () => {
+  // Obviously fake values: none of these is a real credential.
+  const FAKE_SECRET = "fake-secret-value-123";
+  const HIDDEN = "••••••";
+
+  /** Run the chain, expect it to fail, and return the StepError. */
+  async function failureOf(chain: PromiseLike<void>): Promise<StepError> {
+    const error = await Promise.resolve(chain).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(error).toBeInstanceOf(StepError);
+    return error as StepError;
+  }
+
+  /** A driver whose assertPath fails, like the sign-in chain that leaked. */
+  function driverFailingAtAssertPath(overrides?: Partial<TestDriver>) {
+    return createMockDriver({
+      assertPath: vi.fn(async () => {
+        throw new Error("expected path '/home', got '/login'");
+      }),
+      ...overrides,
+    }).driver;
+  }
+
+  it("hides the value typed into a field whose label looks secret", async () => {
+    const session = new Session(driverFailingAtAssertPath());
+
+    const error = await failureOf(
+      session
+        .visit("/login")
+        .fillIn("Username:", "fake-user")
+        .fillIn("Password:", FAKE_SECRET)
+        .clickButton("Log in")
+        .assertPath("/home"),
+    );
+
+    expect(error.message).not.toContain(FAKE_SECRET);
+    expect(error.message).toContain(`[ok] fillIn('Password:', '${HIDDEN}')`);
+  });
+
+  it.each([
+    "Password",
+    "Confirm password",
+    "Passcode",
+    "Client secret",
+    "Access token",
+    "API key",
+    "api_key",
+    "PIN",
+    "OTP",
+  ])("treats the label %s as secret, whatever its case", async (label) => {
+    const session = new Session(driverFailingAtAssertPath());
+
+    const error = await failureOf(
+      session.fillIn(label, FAKE_SECRET).assertPath("/home"),
+    );
+
+    expect(error.message).not.toContain(FAKE_SECRET);
+    expect(error.message).toContain(`fillIn('${label}', '${HIDDEN}')`);
+  });
+
+  it.each(["Email", "Shipping address", "Pincode", "Footprint"])(
+    "does not treat the label %s as secret",
+    async (label) => {
+      const session = new Session(driverFailingAtAssertPath());
+
+      const error = await failureOf(
+        session.fillIn(label, "ordinary value").assertPath("/home"),
+      );
+
+      expect(error.message).toContain(`fillIn('${label}', 'ordinary value')`);
+    },
+  );
+
+  it("hides the value when the driver reports a password field, whatever its label", async () => {
+    const driver = driverFailingAtAssertPath({
+      lastFilledFieldIsPassword: vi.fn(async () => true),
+    });
+    const session = new Session(driver);
+
+    const error = await failureOf(
+      session.fillIn("Login code", FAKE_SECRET).assertPath("/home"),
+    );
+
+    expect(error.message).not.toContain(FAKE_SECRET);
+    expect(error.message).toContain(`[ok] fillIn('Login code', '${HIDDEN}')`);
+  });
+
+  it("hides the value, in the chain and the cause, when filling a password field fails", async () => {
+    const driver = createMockDriver({
+      fillIn: vi.fn(async (_label: string, value: string) => {
+        // Playwright's call log echoes the value like this.
+        throw new Error(`locator.fill: Timeout\nCall log:\n  - fill("${value}")`);
+      }),
+      lastFilledFieldIsPassword: vi.fn(async () => true),
+    }).driver;
+    const session = new Session(driver);
+
+    const error = await failureOf(session.fillIn("Login code", FAKE_SECRET));
+
+    expect(error.message).not.toContain(FAKE_SECRET);
+    expect(error.message).toContain(`[FAILED] fillIn('Login code', '${HIDDEN}')`);
+    expect(String((error.cause as Error).message)).not.toContain(FAKE_SECRET);
+    expect(String((error.cause as Error).stack)).not.toContain(FAKE_SECRET);
+  });
+
+  it("hides the value when the driver cannot tell whether the field is a password field", async () => {
+    const driver = driverFailingAtAssertPath({
+      lastFilledFieldIsPassword: vi.fn(async () => {
+        throw new Error("page closed");
+      }),
+    });
+    const session = new Session(driver);
+
+    const error = await failureOf(
+      session.fillIn("Login code", FAKE_SECRET).assertPath("/home"),
+    );
+
+    expect(error.message).not.toContain(FAKE_SECRET);
+  });
+
+  it("hides any value marked sensitive", async () => {
+    const session = new Session(driverFailingAtAssertPath());
+
+    const error = await failureOf(
+      session
+        .fillIn("Recovery phrase", FAKE_SECRET, { sensitive: true })
+        .assertPath("/home"),
+    );
+
+    expect(error.message).not.toContain(FAKE_SECRET);
+    expect(error.message).toContain(`fillIn('Recovery phrase', '${HIDDEN}')`);
+  });
+
+  it("still types the real value", async () => {
+    const { driver, calls } = createMockDriver();
+    const session = new Session(driver);
+
+    await session
+      .fillIn("Password", FAKE_SECRET)
+      .fillIn("Recovery phrase", FAKE_SECRET, { sensitive: true });
+
+    expect(calls).toEqual([
+      `fillIn("Password", "${FAKE_SECRET}")`,
+      `fillIn("Recovery phrase", "${FAKE_SECRET}")`,
+    ]);
+  });
+
+  it("keeps showing ordinary values, which help debugging", async () => {
+    const driver = driverFailingAtAssertPath({
+      lastFilledFieldIsPassword: vi.fn(async () => false),
+    });
+    const session = new Session(driver);
+
+    const error = await failureOf(
+      session.fillIn("Email", "someone@example.com").assertPath("/home"),
+    );
+
+    expect(error.message).toContain(
+      "[ok] fillIn('Email', 'someone@example.com')",
+    );
+  });
+
+  it("hides the value in the step title a driver wraps the step in", async () => {
+    const titles: string[] = [];
+    const { driver } = createMockDriver();
+    driver.wrapStep = vi.fn(async (name: string, fn: () => Promise<void>) => {
+      titles.push(name);
+      await fn();
+    });
+    const session = new Session(driver);
+
+    await session
+      .fillIn("Email", "someone@example.com")
+      .fillIn("Password", FAKE_SECRET)
+      .fillIn("Recovery phrase", FAKE_SECRET, { sensitive: true });
+
+    expect(titles).toEqual([
+      "fillIn('Email', 'someone@example.com')",
+      `fillIn('Password', '${HIDDEN}')`,
+      `fillIn('Recovery phrase', '${HIDDEN}')`,
+    ]);
+  });
+});
