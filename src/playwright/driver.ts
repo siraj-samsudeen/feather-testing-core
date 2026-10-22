@@ -32,8 +32,10 @@ export interface StepEvent {
 export interface PlaywrightSessionOptions {
   /**
    * Budget in ms for every assertion, every wait (until, assertPath, ...) and
-   * every action (fillIn, click, ...) in this session. A per-call timeout,
-   * such as `assertHas(sel, { timeout })`, still wins.
+   * every action (fillIn, click, ...) in this session; page loads use
+   * `navigationTimeout`. A per-call timeout, such as
+   * `assertHas(sel, { timeout })`, still wins. 0 means no limit (Playwright's
+   * meaning of 0).
    *
    * Default: inside the Playwright Test runner, Playwright's own configured
    * timeouts (expect.timeout, actionTimeout) — unchanged from earlier
@@ -43,6 +45,13 @@ export interface PlaywrightSessionOptions {
    */
   timeout?: number;
   /**
+   * Budget in ms for page loads: visit(), reload(), and the new page after a
+   * submit or click that navigates. Default: Playwright's own navigation
+   * timeout (30 s unless configured), so a slow-starting dev server is not
+   * cut short by the shorter `timeout`. 0 means no limit.
+   */
+  navigationTimeout?: number;
+  /**
    * Called as each step starts, passes or fails: a stand-in for test.step()
    * when there is no Playwright Test runner, e.g. to log progress. It is also
    * called inside the runner. The name hides a value typed into a password
@@ -51,6 +60,19 @@ export interface PlaywrightSessionOptions {
    */
   onStep?: (event: StepEvent) => void;
 }
+
+/**
+ * How long a page that signalled it is leaving (a navigating form submission
+ * or `beforeunload`) gets to actually start a main-frame navigation before
+ * the wait is dropped. Only spent when the signal came but no request did.
+ */
+const NAVIGATION_START_GRACE_MS = 500;
+
+/**
+ * How long after a main-frame navigation fails to wait for a newer one that
+ * replaced it, before treating the failure as the end of the navigation.
+ */
+const SUPERSEDED_NAVIGATION_GRACE_MS = 250;
 
 /** The session timeout used outside the Playwright Test runner. */
 export const DEFAULT_TIMEOUT_OUTSIDE_RUNNER = 4000;
@@ -108,83 +130,187 @@ export class PlaywrightDriver
     if (this.options.timeout !== undefined) {
       return this.options.timeout;
     }
-    return insidePlaywrightRunner() ? undefined : DEFAULT_TIMEOUT_OUTSIDE_RUNNER;
+    return this.insideRunner() ? undefined : DEFAULT_TIMEOUT_OUTSIDE_RUNNER;
+  }
+
+  private insideRunnerCache: boolean | undefined;
+
+  /**
+   * Whether a Playwright Test runner test is running, asked once per driver
+   * on first use (a driver lives inside one test).
+   */
+  private insideRunner(): boolean {
+    this.insideRunnerCache ??= insidePlaywrightRunner();
+    return this.insideRunnerCache;
   }
 
   /**
-   * Run an action that may submit a form or otherwise leave the page. When it
-   * starts a navigation (e.g. POST, then a 303 redirect to a GET), wait until
-   * the NEW document has loaded, so the next step never reads the page that
-   * was just left. When it starts none (a form handled by JavaScript), return
-   * as soon as the action does — nothing is slept.
-   *
-   * Playwright's actions do not wait for the navigation they start, so the
-   * page itself is watched: before the action it is marked, and listeners
-   * note a form submission nobody prevented and a `beforeunload`. After the
-   * action, a page that is already a new document, or that noted either
-   * signal, is waited for. A navigation that ends without a new document — a
-   * 204/205 response, a download, or a failed request — ends the wait.
+   * Mark the current document and install the page-side listeners that
+   * waitingForNewDocument() reads. A page that is itself still navigating can
+   * destroy the evaluation context mid-call; then wait for the new document
+   * to be parsed and try once more.
    */
-  private async waitingForNewDocument(action: () => Promise<void>): Promise<void> {
-    await this.page.evaluate(() => {
-      const w = window as MarkedWindow;
-      w.__featherDocumentBeforeAction = true;
-      w.__featherLeaving = false;
-      if (!w.__featherListening) {
+  private async markDocumentBeforeAction(): Promise<void> {
+    const mark = () =>
+      this.page.evaluate(() => {
+        const w = window as MarkedWindow;
+        w.__featherDocumentBeforeAction = true;
+        w.__featherLeaving = false;
+        if (w.__featherListening) return;
         w.__featherListening = true;
         // Window bubble phase: runs after the form's own submit handlers.
         window.addEventListener("submit", (event) => {
-          if (!event.defaultPrevented) w.__featherLeaving = true;
+          if (event.defaultPrevented) return;
+          const form = event.target as HTMLFormElement;
+          const submitter = (event as SubmitEvent).submitter;
+          const method = (
+            submitter?.getAttribute("formmethod") ??
+            form.getAttribute("method") ??
+            ""
+          ).toLowerCase();
+          // <form method="dialog"> closes a dialog; it never navigates.
+          if (method === "dialog") return;
+          const target = (
+            submitter?.getAttribute("formtarget") ??
+            form.getAttribute("target") ??
+            document.querySelector("base[target]")?.getAttribute("target") ??
+            ""
+          ).toLowerCase();
+          // A form aimed at a new window or an iframe leaves this page alone.
+          if (target !== "" && target !== "_self" && target !== "_top" && target !== "_parent") {
+            return;
+          }
+          w.__featherLeaving = true;
+        });
+        // A followed link (clicked, or Enter on a focused link).
+        window.addEventListener("click", (event) => {
+          if (event.defaultPrevented) return;
+          const link = (event.target as Element | null)?.closest?.("a[href]");
+          if (!link) return;
+          const target = (link.getAttribute("target") ?? "").toLowerCase();
+          if (target !== "" && target !== "_self" && target !== "_top" && target !== "_parent") {
+            return;
+          }
+          if (link.hasAttribute("download")) return;
+          const href = new URL((link as HTMLAnchorElement).href, location.href);
+          const samePage =
+            href.origin + href.pathname + href.search ===
+            location.origin + location.pathname + location.search;
+          // A same-page #fragment link scrolls; it does not load a page.
+          if (samePage && href.hash !== "") return;
+          w.__featherLeaving = true;
         });
         window.addEventListener("beforeunload", () => {
           w.__featherLeaving = true;
         });
+      });
+    try {
+      await mark();
+    } catch (error) {
+      if (!/execution context was destroyed|navigat/i.test(String(error))) {
+        throw error;
       }
-    });
+      await this.page.waitForLoadState("domcontentloaded");
+      await mark();
+    }
+  }
 
+  /**
+   * Run an action that may submit a form or otherwise leave the page. When it
+   * starts a navigation of this page (e.g. POST, then a 303 redirect to a
+   * GET), wait until the NEW document has loaded, so the next step never
+   * reads the page that was just left. When it starts none (a form handled by
+   * JavaScript, `method="dialog"`, a form aimed at another window or an
+   * iframe), return as soon as the action does.
+   *
+   * Playwright's actions do not always wait for the navigation they start,
+   * so the page itself is watched: before the action it is marked, and
+   * listeners note a navigating form submission and a `beforeunload`. After
+   * the action, a page that is already a new document is waited for. One
+   * that noted either signal is waited for once a main-frame navigation
+   * request is seen (within {@link NAVIGATION_START_GRACE_MS}). A navigation
+   * that ends without a new document — a 204/205 response, a download, or a
+   * failed request no newer navigation replaced — ends the wait.
+   */
+  private async waitingForNewDocument(action: () => Promise<void>): Promise<void> {
+    await this.markDocumentBeforeAction();
+
+    const navigations: Request[] = [];
     const endings: Array<() => void> = [];
     const navigationEnded = new Promise<void>((resolve) => endings.push(resolve));
-    const mainFrameNavigation = (request: Request) =>
+    const end = () => endings.forEach((resolve) => resolve());
+    const isMainFrameNavigation = (request: Request) =>
       request.isNavigationRequest() && request.frame() === this.page.mainFrame();
+    const isLatest = (request: Request) => navigations.at(-1) === request;
+
+    const onRequest = (request: Request) => {
+      if (isMainFrameNavigation(request)) navigations.push(request);
+    };
     const onFinished = async (request: Request) => {
-      if (!mainFrameNavigation(request)) return;
+      if (!isMainFrameNavigation(request)) return;
       const response = await request.response().catch(() => null);
       if (!response) return;
       const status = response.status();
       const disposition = await response
         .headerValue("content-disposition")
         .catch(() => null);
-      if (
+      const noDocument =
         status === 204 ||
         status === 205 ||
-        (disposition !== null && /attachment/i.test(disposition))
-      ) {
-        endings.forEach((end) => end());
-      }
+        (disposition !== null && /attachment/i.test(disposition));
+      if (noDocument && isLatest(request)) end();
     };
     const onFailed = (request: Request) => {
-      if (mainFrameNavigation(request)) endings.forEach((end) => end());
+      if (!isMainFrameNavigation(request)) return;
+      // A navigation that a newer one replaced (e.g. a POST cut short by a
+      // script that sets location) is aborted, and Chromium reports that
+      // failure just before the newer request. So only a failure that is
+      // still the latest navigation a moment later ends the wait.
+      setTimeout(() => {
+        if (isLatest(request)) end();
+      }, SUPERSEDED_NAVIGATION_GRACE_MS);
     };
+    this.page.on("request", onRequest);
     this.page.on("requestfinished", onFinished);
     this.page.on("requestfailed", onFailed);
     try {
       await action();
 
-      let leaving: boolean;
+      let state: "new-document" | "leaving" | "staying";
       try {
-        leaving = await this.page.evaluate(() => {
+        state = await this.page.evaluate(() => {
           const w = window as MarkedWindow;
-          return !w.__featherDocumentBeforeAction || w.__featherLeaving === true;
+          if (!w.__featherDocumentBeforeAction) return "new-document";
+          return w.__featherLeaving ? "leaving" : "staying";
         });
       } catch {
         // The old document's context is already gone: a navigation is under way.
-        leaving = true;
+        state = "new-document";
       }
-      if (!leaving) {
+      if (state === "staying" && navigations.length === 0) {
         return;
       }
+      if (state === "leaving" && navigations.length === 0) {
+        // The page signalled it is leaving; make sure a navigation of this
+        // page really starts before blocking on it.
+        const started = await this.page
+          .waitForRequest(isMainFrameNavigation, {
+            timeout: NAVIGATION_START_GRACE_MS,
+          })
+          .then(
+            () => true,
+            () => false,
+          );
+        if (!started) {
+          return;
+        }
+      }
 
-      const timeout = this.timeout;
+      const timeout = this.options.navigationTimeout;
+      // "complete" (the load event) rather than "interactive": it is what
+      // visit() waits for (page.goto's default), so a step after a submit
+      // sees the page in the same state as a step after a visit, including
+      // anything load handlers render.
       const newDocument = this.page.waitForFunction(
         () =>
           !(window as MarkedWindow).__featherDocumentBeforeAction &&
@@ -204,6 +330,7 @@ export class PlaywrightDriver
         );
       }
     } finally {
+      this.page.off("request", onRequest);
       this.page.off("requestfinished", onFinished);
       this.page.off("requestfailed", onFailed);
     }
@@ -247,11 +374,11 @@ export class PlaywrightDriver
   }
 
   async visit(path: string): Promise<void> {
-    await this.page.goto(path, { timeout: this.timeout });
+    await this.page.goto(path, { timeout: this.options.navigationTimeout });
   }
 
   async reload(): Promise<void> {
-    await this.page.reload({ timeout: this.timeout });
+    await this.page.reload({ timeout: this.options.navigationTimeout });
   }
 
   async click(text: string): Promise<void> {
@@ -731,6 +858,6 @@ export class PlaywrightDriver
       onStep?.({ name: currentName(), status: "passed" });
     };
     // Outside @playwright/test there is no test.step(): run the step directly.
-    return insidePlaywrightRunner() ? test.step(name, run) : run();
+    return this.insideRunner() ? test.step(name, run) : run();
   }
 }

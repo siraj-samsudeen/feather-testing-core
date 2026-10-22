@@ -1482,44 +1482,84 @@ test.describe("session options", () => {
 
 /**
  * A real HTTP server for a server-rendered to-do list: POST /todos, then a
- * 303 redirect back to the list (or a 204 when asked). The GET is slowed down
- * so a step that ran before the new page loaded would read the old one.
- * Route interception cannot stand in here: a fulfilled redirect does not
- * behave like a real one.
+ * 303 redirect back to the list. The GET is slowed down so a step that ran
+ * before the new page loaded would read the old one. `post` picks other
+ * answers to the POST; `getDelay` slows the list further. Route interception
+ * cannot stand in here: a fulfilled redirect does not behave like a real one.
  */
 async function serveTodoList(
   page: Page,
-  opts: { postStatus?: 204 } = {},
+  opts: {
+    post?: "redirect" | "204" | "download" | "drop" | "slow";
+    getDelay?: number;
+  } = {},
 ): Promise<{ url: string; close: () => Promise<void> }> {
   const todos: string[] = [];
+  const otherPages: Record<string, string> = {
+    "/js-todos": `<form id="f"><input placeholder="What needs to be done?"></form><ul id="l"></ul>
+<script>f.onsubmit = (e) => { e.preventDefault(); const i = f.querySelector("input");
+  setTimeout(() => { const li = document.createElement("li"); li.textContent = i.value; l.append(li); }, 100); };</script>`,
+    "/dialog": `<dialog open><form method="dialog">
+  <input placeholder="What needs to be done?"><button>Close</button>
+</form></dialog>`,
+    "/iframe-target": `<iframe name="side"></iframe>
+<form method="post" action="/todos" target="side">
+  <input name="title" placeholder="What needs to be done?"><button type="submit">Add</button>
+</form>`,
+    "/superseded": `<form method="post" action="/todos" id="f">
+  <input name="title" placeholder="What needs to be done?">
+</form>
+<script>f.addEventListener("submit", () => setTimeout(() => { location.href = "/todos?from=script"; }, 100));</script>`,
+    "/links": `<a href="/todos">See the list</a>`,
+  };
   const server = createServer((req, res) => {
+    const path = (req.url ?? "/").split("?")[0]!;
     if (req.method === "POST") {
       let body = "";
       req.on("data", (chunk) => (body += chunk));
       req.on("end", () => {
         const title = new URLSearchParams(body).get("title");
         if (title) todos.push(title);
-        if (opts.postStatus === 204) {
-          res.writeHead(204).end();
-        } else {
-          res.writeHead(303, { location: "/todos" }).end();
+        switch (opts.post) {
+          case "204":
+            res.writeHead(204).end();
+            return;
+          case "download":
+            res
+              .writeHead(200, {
+                "content-type": "text/csv",
+                "content-disposition": 'attachment; filename="todos.csv"',
+              })
+              .end(todos.join("\n"));
+            return;
+          case "drop":
+            req.socket.destroy();
+            return;
+          case "slow":
+            setTimeout(
+              () => res.writeHead(303, { location: "/todos" }).end(),
+              2000,
+            );
+            return;
+          default:
+            res.writeHead(303, { location: "/todos" }).end();
         }
       });
       return;
     }
     const html =
-      req.url === "/js-todos"
-        ? `<form id="f"><input placeholder="What needs to be done?"></form><ul id="l"></ul>
-<script>f.onsubmit = (e) => { e.preventDefault(); const i = f.querySelector("input");
-  setTimeout(() => { const li = document.createElement("li"); li.textContent = i.value; l.append(li); }, 100); };</script>`
-        : `<form method="post" action="/todos">
+      otherPages[path] ??
+      `<form method="post" action="/todos">
   <input name="title" placeholder="What needs to be done?">
   <button type="submit">Add</button>
 </form>
 <ul>${todos.map((t) => `<li>${t}</li>`).join("")}</ul>`;
-    setTimeout(() => {
-      res.writeHead(200, { "content-type": "text/html" }).end(html);
-    }, 300);
+    setTimeout(
+      () => {
+        res.writeHead(200, { "content-type": "text/html" }).end(html);
+      },
+      path === "/todos" ? (opts.getDelay ?? 300) : 0,
+    );
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const { port } = server.address() as AddressInfo;
@@ -1620,7 +1660,7 @@ test.describe("waiting for the new page after a submit", () => {
   test("a 204 response after pressKey('Enter') ends the wait", async ({
     page,
   }) => {
-    const app = await serveTodoList(page, { postStatus: 204 });
+    const app = await serveTodoList(page, { post: "204" });
     try {
       const driver = new PlaywrightDriver(page, page, { timeout: 5000 });
       await driver.visit(`${app.url}/todos`);
@@ -1631,5 +1671,169 @@ test.describe("waiting for the new page after a submit", () => {
     } finally {
       await app.close();
     }
+  });
+});
+
+test.describe("when the wait for a new page ends", () => {
+  /** Run `fn` against a fresh server, closing it afterwards. */
+  async function withApp(
+    page: Page,
+    opts: Parameters<typeof serveTodoList>[1],
+    fn: (url: string) => Promise<void>,
+  ) {
+    const app = await serveTodoList(page, opts);
+    try {
+      await fn(app.url);
+    } finally {
+      await app.close();
+    }
+  }
+
+  test("a download ends the wait without a new page", async ({ page }) => {
+    await withApp(page, { post: "download" }, async (url) => {
+      const driver = new PlaywrightDriver(page, page, { timeout: 5000 });
+      await driver.visit(`${url}/todos`);
+      await driver.fillIn("What needs to be done?", "Buy milk");
+      const started = Date.now();
+      await driver.pressKey("Enter");
+      expect(Date.now() - started).toBeLessThan(3000);
+    });
+  });
+
+  test("a failed request ends the wait without a new page", async ({ page }) => {
+    await withApp(page, { post: "drop" }, async (url) => {
+      const driver = new PlaywrightDriver(page, page, { timeout: 5000 });
+      await driver.visit(`${url}/todos`);
+      await driver.fillIn("What needs to be done?", "Buy milk");
+      const started = Date.now();
+      await driver.pressKey("Enter");
+      expect(Date.now() - started).toBeLessThan(3000);
+    });
+  });
+
+  test("a navigation replaced by a newer one waits for the newer page", async ({
+    page,
+  }) => {
+    await withApp(page, { post: "slow" }, async (url) => {
+      const driver = new PlaywrightDriver(page);
+      await driver.visit(`${url}/superseded`);
+      await driver.fillIn("What needs to be done?", "Buy milk");
+      await driver.pressKey("Enter");
+      // The script's GET /todos?from=script replaced the slow POST; the wait
+      // lasted until that page had loaded.
+      expect(new URL(page.url()).search).toBe("?from=script");
+      expect(await page.evaluate(() => document.readyState)).toBe("complete");
+      expect(await page.locator("form").count()).toBe(1);
+    });
+  });
+
+  test("a page that never loads fails with a message saying so", async ({
+    page,
+  }) => {
+    await withApp(page, { getDelay: 3000 }, async (url) => {
+      await page.goto(`${url}/todos`);
+      // Enter in a form field submits it; page.keyboard does not wait for
+      // that navigation, so only feather's own wait (500 ms here) does.
+      const failure = await new Session(
+        new PlaywrightDriver(page, page, { navigationTimeout: 500 }),
+      )
+        .fillIn("What needs to be done?", "Buy milk")
+        .pressKey("Enter")
+        .then(
+          () => null,
+          (e: unknown) => e,
+        );
+      expect(failure).toBeInstanceOf(StepError);
+      expect((failure as StepError).message).toContain(
+        "the page started to navigate, but no new page finished loading within 500ms",
+      );
+    });
+  });
+
+  test("method=\"dialog\" does not wait for a navigation", async ({ page }) => {
+    await withApp(page, {}, async (url) => {
+      const driver = new PlaywrightDriver(page, page, { timeout: 5000 });
+      await driver.visit(`${url}/dialog`);
+      await driver.fillIn("What needs to be done?", "x");
+      const started = Date.now();
+      await driver.pressKey("Enter");
+      expect(Date.now() - started).toBeLessThan(1000);
+      await expect(page.locator("dialog")).not.toHaveAttribute("open");
+    });
+  });
+
+  test("a form aimed at an iframe does not wait for this page to navigate", async ({
+    page,
+  }) => {
+    await withApp(page, {}, async (url) => {
+      const driver = new PlaywrightDriver(page, page, { timeout: 5000 });
+      await driver.visit(`${url}/iframe-target`);
+      await driver.fillIn("What needs to be done?", "Buy milk");
+      const started = Date.now();
+      await driver.submit();
+      expect(Date.now() - started).toBeLessThan(1000);
+      await expect(
+        page.frameLocator("iframe[name=side]").locator("li"),
+      ).toHaveText(["Buy milk"]);
+    });
+  });
+
+  test("clickLink() waits for the new page", async ({ page }) => {
+    await withApp(page, {}, async (url) => {
+      const driver = new PlaywrightDriver(page);
+      await driver.visit(`${url}/links`);
+      await driver.clickLink("See the list");
+      expect(await page.locator("form").count()).toBe(1);
+    });
+  });
+
+  test("visit() keeps Playwright's navigation timeout, not the session timeout", async ({
+    page,
+  }) => {
+    await withApp(page, { getDelay: 800 }, async (url) => {
+      await createSession(page, { timeout: 200 })
+        .visit(`${url}/todos`)
+        .assertHas("form");
+    });
+  });
+});
+
+test.describe("session options reach every step", () => {
+  test("within() keeps the session timeout", async ({ page }) => {
+    const started = Date.now();
+    const error = await createSession(page, { timeout: 300 })
+      .visit("/scoped")
+      .within(".main", (scoped) => scoped.assertText("Sidebar content"))
+      .then(
+        () => null,
+        (e: unknown) => e,
+      );
+    expect(error).toBeInstanceOf(StepError);
+    expect(Date.now() - started).toBeLessThan(3000);
+  });
+
+  test("within() keeps onStep", async ({ page }) => {
+    const names: string[] = [];
+    await createSession(page, {
+      onStep: (event) => {
+        if (event.status === "passed") names.push(event.name);
+      },
+    })
+      .visit("/scoped")
+      .within(".main", (scoped) => scoped.assertText("Main content"));
+    expect(names).toContain("assertText('Main content')");
+    expect(names).toContain("within('.main')");
+  });
+
+  test("timeout: 0 means no limit", async ({ page }) => {
+    await page.route("**/late-zero", (route) =>
+      route.fulfill({
+        contentType: "text/html",
+        body: `<p id="p"></p><script>setTimeout(() => { p.textContent = "late" }, 600)</script>`,
+      }),
+    );
+    await createSession(page, { timeout: 0 })
+      .visit("/late-zero")
+      .assertHas("#p", { text: "late" });
   });
 });
