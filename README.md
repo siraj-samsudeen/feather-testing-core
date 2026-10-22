@@ -121,8 +121,11 @@ npm install feather-testing-core
 All test framework dependencies are optional peers — install only what you use:
 
 ```bash
-# For Playwright E2E tests
+# For Playwright E2E tests with the Playwright Test runner
 npm install @playwright/test
+
+# For Playwright as a library under another runner (bun test, vitest, ...)
+npm install playwright
 
 # For React Testing Library integration tests
 npm install @testing-library/react @testing-library/user-event
@@ -171,7 +174,68 @@ test("full auth lifecycle", async ({ session }) => {
 });
 ```
 
-The Playwright adapter also works with Playwright used as a library, outside `@playwright/test`'s runner — for instance inside `bun test`, with `createSession(page)` on a `page` from `playwright`'s `chromium.launch()`. Mind the timeouts there: Playwright's 5 s assertion wait equals `bun test`'s default 5 s per-test timeout, so a failing assertion surfaces as "Unhandled error between tests" instead of a clean failure. Raise the runner's budget (`bun test --timeout 15000`) or lower the DSL's (`expect` timeout / per-verb `timeout` options) so the assertion fails first.
+### Using with bun test
+
+The Playwright adapter does not need the Playwright Test runner. Launch a browser with the `playwright` library, hand `createSession` a raw `Page`, and run the test with `bun test` (or any other runner). Only `playwright` has to be installed (`>=1.40.0`); `@playwright/test` is not needed.
+
+```ts
+// todos.test.ts
+import { afterEach, beforeEach, expect, test } from "bun:test";
+import { chromium, type Browser, type Page } from "playwright";
+import { createSession, StepError } from "feather-testing-core/playwright";
+import { app } from "./app"; // e.g. an Elysia app
+
+let server: ReturnType<typeof app.listen>;
+let browser: Browser;
+let page: Page;
+
+beforeEach(async () => {
+  server = app.listen(0); // a fresh in-process server on a free port
+  browser = await chromium.launch();
+  page = await browser.newPage();
+});
+
+afterEach(async () => {
+  await browser.close();
+  await server.stop();
+});
+
+test("adds a to-do", async () => {
+  await createSession(page)
+    .visit(`http://localhost:${server.server!.port}/`)
+    .fillIn("What needs to be done?", "Buy milk")
+    .submit() // waits for the page that the POST redirects to
+    .assertHas("li", { text: "Buy milk" });
+});
+
+test("a failing chain names the failed step", async () => {
+  const chain = createSession(page).visit("about:blank").assertText("Nope");
+  await expect(chain.run()).rejects.toThrow(StepError);
+});
+```
+
+**`createSession(page, options?)`**
+
+| Option | Default | What it does |
+|--------|---------|--------------|
+| `timeout` | Inside `@playwright/test`: Playwright's own `expect.timeout` / `actionTimeout`. Elsewhere: `4000` ms | Budget for every assertion, wait and action in the session. A per-call `timeout` (e.g. `assertHas(sel, { timeout })`) still wins. |
+| `onStep` | none | Called with `{ name, status: "started" \| "passed" \| "failed", error? }` for each step — a stand-in for `test.step()`, e.g. to log progress. |
+
+**Timeouts.** `bun test` stops a test after 5000 ms by default. The 4000 ms session default sits below that, so a failing step reports its chain (`>>> [FAILED] assertText('Nope')`) instead of a bare "test timed out". Browser tests also spend time launching Chromium, so raise bun's per-test limit, and keep the session `timeout` below it:
+
+```toml
+# bunfig.toml
+[test]
+timeout = 20000
+```
+
+Outside the Playwright Test runner the session timeout also bounds actions (fillIn, click, ...), so `page.setDefaultTimeout()` does not apply to session steps — set `timeout` on the session instead.
+
+**Waiting for the next page.** `submit()`, `click()`, `clickLink()`, `clickButton()` and `pressKey()` wait for the new document when the action starts a navigation — such as a form POST answered with a redirect — so the next step never reads the page that was just left. When no navigation starts (a form handled by JavaScript), they return at once. A 204/205 answer, a download or a failed request ends the wait.
+
+**`.rejects` needs `run()`.** `await session...` works everywhere. But bun's `expect(...).rejects` / `.resolves` accept only a real Promise, and a session chain is a thenable, so hand them `chain.run()`, which runs the queued steps and returns a real Promise.
+
+**Step names.** There is no `test.step()` outside the Playwright Test runner. Failures still name the failed step in the `StepError` chain; pass `onStep` to see steps as they run.
 
 ### React Testing Library
 
@@ -754,7 +818,8 @@ import {
   type TestDriver,
 } from "feather-testing-core";
 
-// Playwright adapter
+// Playwright adapter (createSession(page, { timeout?, onStep? }) works under any runner;
+// test and expect are for @playwright/test users)
 import { test, createSession, expect } from "feather-testing-core/playwright";
 
 // RTL adapter
@@ -819,6 +884,13 @@ Deliberate exceptions stay possible and stay visible: an `eslint-disable-next-li
 
 **Why these five.** They are not style preferences. Each one is a way a suite goes green while proving nothing: a sleep passes on a slow machine and fails on a fast one, a conditional skip silently un-tests a spec for its entire life, `toBeTruthy()` accepts almost any value, a swallowed cleanup error surfaces three tests later as something else, and serial mode turns one failure into a wall of red that hides its own cause. `session.until()` exists so the first rule has an honest alternative to point at — see [the document set](docs/document-set.md) for why conventions belong in executable form rather than in a style guide nobody re-reads.
 
+## Upgrading to 0.7.0
+
+- The optional peer dependency is now `playwright` (`>=1.40.0`) instead of `@playwright/test`. `@playwright/test` installs `playwright`, so Playwright Test users change nothing; library users no longer need `@playwright/test`.
+- `submit()`, `click()`, `clickLink()`, `clickButton()` and `pressKey()` wait for the new page after starting a navigation.
+- Outside the Playwright Test runner, assertions and actions default to a 4000 ms budget (`createSession(page, { timeout })` to change it). Inside the runner the configured Playwright timeouts apply, as before.
+- New: `createSession(page, { timeout, onStep })`, `session.run()`.
+
 ## Upgrading to 0.5.0
 
 Version 0.5.0 extends the required `TestDriver` interface. Custom drivers must implement these new methods before upgrading:
@@ -838,7 +910,7 @@ Implement capabilities the adapter can prove, but do not fake browser behavior o
 Releases are manual and publish exactly the version committed to `main`:
 
 1. Run `npm version <version> --no-git-tag-version` so `package.json` and `package-lock.json` contain the intended new version.
-2. Run `npm run lint` and `npm run test:all`, then commit and merge the version change to `main`.
+2. Run `npm run lint`, `npm run test:all` and `npm run test:bun`, then commit and merge the version change to `main`.
 3. In GitHub Actions, open **Publish to npm**, choose **Run workflow**, select `main`, and run it.
 
 The workflow refuses non-`main` refs, mismatched lockfile versions, versions already present on npm, and registry lookup failures. It never changes or commits a version. Ordinary pushes and merges do not run it.
