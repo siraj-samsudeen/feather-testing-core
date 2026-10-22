@@ -52,6 +52,21 @@ export interface PlaywrightSessionOptions {
    */
   navigationTimeout?: number;
   /**
+   * After an action that signalled it is leaving the page (a navigating form
+   * submission, a followed link, `beforeunload`) but before any navigation
+   * request was seen: how long in ms to wait for one to start before
+   * deciding the page stays. Default {@link NAVIGATION_START_WINDOW_MS}
+   * (500). Raise it on a slow CI machine if submits return too early.
+   */
+  navigationStartWindow?: number;
+  /**
+   * After a navigation of the page fails: how long in ms to wait for a newer
+   * navigation that replaced it (a script setting `location` cuts a POST
+   * short) before ending the wait. Default
+   * {@link REPLACED_NAVIGATION_WINDOW_MS} (250).
+   */
+  replacedNavigationWindow?: number;
+  /**
    * Called as each step starts, passes or fails: a stand-in for test.step()
    * when there is no Playwright Test runner, e.g. to log progress. It is also
    * called inside the runner. The name hides a value typed into a password
@@ -65,14 +80,16 @@ export interface PlaywrightSessionOptions {
  * How long a page that signalled it is leaving (a navigating form submission
  * or `beforeunload`) gets to actually start a main-frame navigation before
  * the wait is dropped. Only spent when the signal came but no request did.
+ * Overridable with the `navigationStartWindow` session option.
  */
-const NAVIGATION_START_GRACE_MS = 500;
+export const NAVIGATION_START_WINDOW_MS = 500;
 
 /**
  * How long after a main-frame navigation fails to wait for a newer one that
  * replaced it, before treating the failure as the end of the navigation.
+ * Overridable with the `replacedNavigationWindow` session option.
  */
-const SUPERSEDED_NAVIGATION_GRACE_MS = 250;
+export const REPLACED_NAVIGATION_WINDOW_MS = 250;
 
 /** The session timeout used outside the Playwright Test runner. */
 export const DEFAULT_TIMEOUT_OUTSIDE_RUNNER = 4000;
@@ -264,15 +281,18 @@ export class PlaywrightDriver
         (disposition !== null && /attachment/i.test(disposition));
       if (noDocument && isLatest(request)) end();
     };
+    const timers: ReturnType<typeof setTimeout>[] = [];
     const onFailed = (request: Request) => {
       if (!isMainFrameNavigation(request)) return;
       // A navigation that a newer one replaced (e.g. a POST cut short by a
       // script that sets location) is aborted, and Chromium reports that
       // failure just before the newer request. So only a failure that is
       // still the latest navigation a moment later ends the wait.
-      setTimeout(() => {
-        if (isLatest(request)) end();
-      }, SUPERSEDED_NAVIGATION_GRACE_MS);
+      timers.push(
+        setTimeout(() => {
+          if (isLatest(request)) end();
+        }, this.options.replacedNavigationWindow ?? REPLACED_NAVIGATION_WINDOW_MS),
+      );
     };
     this.page.on("request", onRequest);
     this.page.on("requestfinished", onFinished);
@@ -299,7 +319,8 @@ export class PlaywrightDriver
         // page really starts before blocking on it.
         const started = await this.page
           .waitForRequest(isMainFrameNavigation, {
-            timeout: NAVIGATION_START_GRACE_MS,
+            timeout:
+              this.options.navigationStartWindow ?? NAVIGATION_START_WINDOW_MS,
           })
           .then(
             () => true,
@@ -337,6 +358,7 @@ export class PlaywrightDriver
       this.page.off("request", onRequest);
       this.page.off("requestfinished", onFinished);
       this.page.off("requestfailed", onFailed);
+      timers.forEach((timer) => clearTimeout(timer));
     }
   }
 

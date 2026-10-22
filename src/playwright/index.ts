@@ -11,6 +11,8 @@ export { Session } from "../session.js";
 export { StepError, BrowserOnlyVerbError } from "../errors.js";
 export {
   DEFAULT_TIMEOUT_OUTSIDE_RUNNER,
+  NAVIGATION_START_WINDOW_MS,
+  REPLACED_NAVIGATION_WINDOW_MS,
   PlaywrightDriver,
   type PlaywrightSessionOptions,
   type PlaywrightStepContext,

@@ -238,6 +238,8 @@ test("a failing chain names the failed step", async () => {
 |--------|---------|--------------|
 | `timeout` | Inside `@playwright/test`: Playwright's own `expect.timeout` / `actionTimeout`. Elsewhere: `4000` ms | Budget for every assertion, wait and action in the session. A per-call `timeout` (e.g. `assertHas(sel, { timeout })`) still wins. `0` means no limit. |
 | `navigationTimeout` | Playwright's navigation timeout (30 s unless configured) | Budget for page loads: `visit()`, `reload()`, and the new page after a submit or click that navigates. `0` means no limit. |
+| `navigationStartWindow` | `500` ms | After an action signals it is leaving the page but before any request is seen: how long to wait for the navigation to start. Raise it if submits return too early on a slow CI machine. |
+| `replacedNavigationWindow` | `250` ms | After a navigation of the page fails: how long to wait for a newer one that replaced it (a script setting `location`) before ending the wait. |
 | `onStep` | none | Called with `{ name, status: "started" \| "passed" \| "failed", error? }` for each step — a stand-in for `test.step()`, e.g. to log progress. A value typed into a password or secret-looking field shows as `••••••` in every event. |
 
 **Timeouts.** The 4000 ms session default sits below bun's 5000 ms per-test default, so a failing assertion or action reports its chain (`>>> [FAILED] assertText('Nope')`) instead of a bare "test timed out". Keep the session `timeout` below bun's limit. Page loads keep Playwright's longer navigation timeout, so a dev server that is slow to answer its first request is not cut short. `timeout: 0` (or `navigationTimeout: 0`) removes the limit, leaving only bun's per-test limit, so a failure then shows as "test timed out" without the chain.
@@ -904,7 +906,7 @@ Deliberate exceptions stay possible and stay visible: an `eslint-disable-next-li
 - `submit()`, `click()`, `clickLink()`, `clickButton()` and `pressKey()` wait for the new page after starting a navigation of this page.
 - Outside the Playwright Test runner, assertions and actions default to a 4000 ms budget (`createSession(page, { timeout })` to change it). Inside the runner the configured Playwright timeouts apply, as before. Page loads (`visit()`, `reload()`, the page after a submit) keep Playwright's navigation timeout (30 s), as in 0.6; change it with `navigationTimeout`.
 - `fillIn()` waits for its field before the step starts, to hide a password field's value from step titles and `onStep`. A field that never appears fails the step with its value hidden.
-- New: `createSession(page, { timeout, navigationTimeout, onStep })`, `session.run()`.
+- New: `createSession(page, { timeout, navigationTimeout, navigationStartWindow, replacedNavigationWindow, onStep })`, `session.run()`.
 
 ## Upgrading to 0.5.0
 

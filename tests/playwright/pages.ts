@@ -307,6 +307,11 @@ export const pages: Record<string, string> = {
   <h2 id="details">Details</h2>
 </body></html>`,
 
+  "/fake-leave": `<!DOCTYPE html>
+<html><body>
+  <button onclick="window.dispatchEvent(new Event('beforeunload'))">Pretend to leave</button>
+</body></html>`,
+
   "/late-password": `<!DOCTYPE html>
 <html><body>
   <form id="f"></form>
