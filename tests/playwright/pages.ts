@@ -297,6 +297,16 @@ export const pages: Record<string, string> = {
   </form>
 </body></html>`,
 
+  "/inert-links": `<!DOCTYPE html>
+<html><body>
+  <a href="#" onclick="document.getElementById('msg').textContent='hash'">Empty hash</a>
+  <a href="#details">Fragment</a>
+  <a href="javascript:void(0)" onclick="document.getElementById('msg').textContent='js'">Script link</a>
+  <a href="mailto:someone@example.com" onclick="event.preventDefault()">Email us</a>
+  <p id="msg"></p>
+  <h2 id="details">Details</h2>
+</body></html>`,
+
   "/late-password": `<!DOCTYPE html>
 <html><body>
   <form id="f"></form>

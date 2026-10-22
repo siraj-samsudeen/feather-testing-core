@@ -1837,3 +1837,16 @@ test.describe("session options reach every step", () => {
       .assertHas("#p", { text: "late" });
   });
 });
+
+test.describe("links that do not load a page", () => {
+  for (const name of ["Empty hash", "Fragment", "Script link", "Email us"]) {
+    test(`clickLink('${name}') returns at once`, async ({ page }) => {
+      const driver = new PlaywrightDriver(page, page, { timeout: 5000 });
+      await driver.visit("/inert-links");
+      const started = Date.now();
+      await driver.clickLink(name);
+      // Well under the 500 ms wait for a navigation to start.
+      expect(Date.now() - started).toBeLessThan(400);
+    });
+  }
+});

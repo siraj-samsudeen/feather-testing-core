@@ -192,7 +192,11 @@ export class PlaywrightDriver
             return;
           }
           if (link.hasAttribute("download")) return;
+          // href="#" or "#section": stays on this page.
+          if ((link.getAttribute("href") ?? "").startsWith("#")) return;
           const href = new URL((link as HTMLAnchorElement).href, location.href);
+          // javascript:, mailto:, tel:, ... do not load a page here.
+          if (href.protocol !== "http:" && href.protocol !== "https:") return;
           const samePage =
             href.origin + href.pathname + href.search ===
             location.origin + location.pathname + location.search;
