@@ -1,0 +1,7 @@
+# `bun test` lane. The vitest (`npm test`) and Playwright Test (`npm run test:pw`)
+# lanes do not read this file.
+[test]
+# A DOM (happy-dom) for the React Testing Library tests.
+preload = ["./tests/bun-setup.ts"]
+# Browser tests launch Chromium; bun's default of 5000 ms per test is too tight.
+timeout = 20000
