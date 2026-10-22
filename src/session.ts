@@ -49,7 +49,18 @@ export class Session<TContext = unknown, TNative = unknown>
       | ((reason: unknown) => TResult2 | PromiseLike<TResult2>)
       | null,
   ): Promise<TResult1 | TResult2> {
-    return this.executeSteps().then(onfulfilled, onrejected);
+    return this.run().then(onfulfilled, onrejected);
+  }
+
+  /**
+   * Run the queued steps and return a real Promise. `await session...` does
+   * the same; use run() where a thenable is not enough — bun test's
+   * `expect(...).rejects` / `.resolves` only accept a real Promise:
+   *
+   *   await expect(session.visit("/").assertText("Nope").run()).rejects.toThrow(StepError);
+   */
+  run(): Promise<void> {
+    return this.executeSteps();
   }
 
   private async executeSteps(): Promise<void> {

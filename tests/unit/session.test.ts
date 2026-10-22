@@ -317,9 +317,21 @@ describe("Session", () => {
       });
       const session = new Session(driver);
 
+      // run() hands expect() a real Promise: bun test's .rejects needs one.
       await expect(
-        session.visit("/").clickButton("Go").assertText("Done"),
+        session.visit("/").clickButton("Go").assertText("Done").run(),
       ).rejects.toThrow(StepError);
+    });
+
+    it("run() returns a real Promise that runs the queued steps", async () => {
+      const { driver, calls } = createMockDriver();
+      const session = new Session(driver);
+
+      const running = session.visit("/").clickButton("Go").run();
+
+      expect(running).toBeInstanceOf(Promise);
+      await expect(running).resolves.toBeUndefined();
+      expect(calls).toEqual(['visit("/")', 'clickButton("Go")']);
     });
 
     it("StepError contains the correct step number", async () => {
