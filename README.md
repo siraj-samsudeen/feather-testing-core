@@ -178,38 +178,56 @@ test("full auth lifecycle", async ({ session }) => {
 
 The Playwright adapter does not need the Playwright Test runner. Launch a browser with the `playwright` library, hand `createSession` a raw `Page`, and run the test with `bun test` (or any other runner). Only `playwright` has to be installed (`>=1.40.0`); `@playwright/test` is not needed.
 
+Browser tests spend time launching Chromium and loading pages, so first raise bun's per-test limit (5000 ms by default):
+
+```toml
+# bunfig.toml
+[test]
+timeout = 20000
+```
+
 ```ts
 // todos.test.ts
-import { afterEach, beforeEach, expect, test } from "bun:test";
-import { chromium, type Browser, type Page } from "playwright";
+import { afterAll, afterEach, beforeAll, beforeEach, expect, test } from "bun:test";
+import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
 import { createSession, StepError } from "feather-testing-core/playwright";
 import { app } from "./app"; // e.g. an Elysia app
 
-let server: ReturnType<typeof app.listen>;
 let browser: Browser;
+let context: BrowserContext;
 let page: Page;
+let baseUrl: string;
+
+beforeAll(async () => {
+  browser = await chromium.launch(); // one browser for the file
+});
+
+afterAll(async () => {
+  await browser.close();
+});
 
 beforeEach(async () => {
-  server = app.listen(0); // a fresh in-process server on a free port
-  browser = await chromium.launch();
-  page = await browser.newPage();
+  app.listen(0); // the app on a free port, started in this process
+  baseUrl = `http://localhost:${app.server!.port}`;
+  context = await browser.newContext(); // fresh cookies and storage per test
+  page = await context.newPage();
 });
 
 afterEach(async () => {
-  await browser.close();
-  await server.stop();
+  await context.close();
+  await app.stop();
 });
 
 test("adds a to-do", async () => {
   await createSession(page)
-    .visit(`http://localhost:${server.server!.port}/`)
+    .visit(`${baseUrl}/`)
     .fillIn("What needs to be done?", "Buy milk")
     .submit() // waits for the page that the POST redirects to
     .assertHas("li", { text: "Buy milk" });
 });
 
 test("a failing chain names the failed step", async () => {
-  const chain = createSession(page).visit("about:blank").assertText("Nope");
+  const chain = createSession(page).visit(`${baseUrl}/`).assertText("Nope");
   await expect(chain.run()).rejects.toThrow(StepError);
 });
 ```
@@ -218,20 +236,15 @@ test("a failing chain names the failed step", async () => {
 
 | Option | Default | What it does |
 |--------|---------|--------------|
-| `timeout` | Inside `@playwright/test`: Playwright's own `expect.timeout` / `actionTimeout`. Elsewhere: `4000` ms | Budget for every assertion, wait and action in the session. A per-call `timeout` (e.g. `assertHas(sel, { timeout })`) still wins. |
-| `onStep` | none | Called with `{ name, status: "started" \| "passed" \| "failed", error? }` for each step — a stand-in for `test.step()`, e.g. to log progress. |
+| `timeout` | Inside `@playwright/test`: Playwright's own `expect.timeout` / `actionTimeout`. Elsewhere: `4000` ms | Budget for every assertion, wait and action in the session. A per-call `timeout` (e.g. `assertHas(sel, { timeout })`) still wins. `0` means no limit. |
+| `navigationTimeout` | Playwright's navigation timeout (30 s unless configured) | Budget for page loads: `visit()`, `reload()`, and the new page after a submit or click that navigates. `0` means no limit. |
+| `onStep` | none | Called with `{ name, status: "started" \| "passed" \| "failed", error? }` for each step — a stand-in for `test.step()`, e.g. to log progress. A value typed into a password or secret-looking field shows as `••••••` in every event. |
 
-**Timeouts.** `bun test` stops a test after 5000 ms by default. The 4000 ms session default sits below that, so a failing step reports its chain (`>>> [FAILED] assertText('Nope')`) instead of a bare "test timed out". Browser tests also spend time launching Chromium, so raise bun's per-test limit, and keep the session `timeout` below it:
-
-```toml
-# bunfig.toml
-[test]
-timeout = 20000
-```
+**Timeouts.** The 4000 ms session default sits below bun's 5000 ms per-test default, so a failing assertion or action reports its chain (`>>> [FAILED] assertText('Nope')`) instead of a bare "test timed out". Keep the session `timeout` below bun's limit. Page loads keep Playwright's longer navigation timeout, so a dev server that is slow to answer its first request is not cut short. `timeout: 0` (or `navigationTimeout: 0`) removes the limit, leaving only bun's per-test limit, so a failure then shows as "test timed out" without the chain.
 
 Outside the Playwright Test runner the session timeout also bounds actions (fillIn, click, ...), so `page.setDefaultTimeout()` does not apply to session steps — set `timeout` on the session instead.
 
-**Waiting for the next page.** `submit()`, `click()`, `clickLink()`, `clickButton()` and `pressKey()` wait for the new document when the action starts a navigation — such as a form POST answered with a redirect — so the next step never reads the page that was just left. When no navigation starts (a form handled by JavaScript), they return at once. A 204/205 answer, a download or a failed request ends the wait.
+**Waiting for the next page.** `submit()`, `click()`, `clickLink()`, `clickButton()` and `pressKey()` wait for the new document when the action starts a navigation of this page — such as a form POST answered with a redirect — so the next step never reads the page that was just left. When no navigation starts (a form handled by JavaScript, `method="dialog"`, a form or link aimed at another window or an iframe), they return at once. A 204/205 answer, a download or a failed request ends the wait; a navigation replaced by a newer one (a script setting `location`) waits for the newer page.
 
 **`.rejects` needs `run()`.** `await session...` works everywhere. But bun's `expect(...).rejects` / `.resolves` accept only a real Promise, and a session chain is a thenable, so hand them `chain.run()`, which runs the queued steps and returns a real Promise.
 
@@ -887,9 +900,11 @@ Deliberate exceptions stay possible and stay visible: an `eslint-disable-next-li
 ## Upgrading to 0.7.0
 
 - The optional peer dependency is now `playwright` (`>=1.40.0`) instead of `@playwright/test`. `@playwright/test` installs `playwright`, so Playwright Test users change nothing; library users no longer need `@playwright/test`.
-- `submit()`, `click()`, `clickLink()`, `clickButton()` and `pressKey()` wait for the new page after starting a navigation.
-- Outside the Playwright Test runner, assertions and actions default to a 4000 ms budget (`createSession(page, { timeout })` to change it). Inside the runner the configured Playwright timeouts apply, as before.
-- New: `createSession(page, { timeout, onStep })`, `session.run()`.
+- pnpm with `auto-install-peers=false`, and Yarn Plug'n'Play: add `playwright` to your own `devDependencies`, so the adapter can resolve `playwright/test`.
+- `submit()`, `click()`, `clickLink()`, `clickButton()` and `pressKey()` wait for the new page after starting a navigation of this page.
+- Outside the Playwright Test runner, assertions and actions default to a 4000 ms budget (`createSession(page, { timeout })` to change it). Inside the runner the configured Playwright timeouts apply, as before. Page loads (`visit()`, `reload()`, the page after a submit) keep Playwright's navigation timeout (30 s), as in 0.6; change it with `navigationTimeout`.
+- `fillIn()` waits for its field before the step starts, to hide a password field's value from step titles and `onStep`. A field that never appears fails the step with its value hidden.
+- New: `createSession(page, { timeout, navigationTimeout, onStep })`, `session.run()`.
 
 ## Upgrading to 0.5.0
 
