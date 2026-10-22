@@ -1,4 +1,5 @@
-import { test as base, type Page } from "@playwright/test";
+import type { Page } from "playwright";
+import { test as base } from "playwright/test";
 import { Session } from "../session.js";
 import { PlaywrightDriver, type PlaywrightStepContext } from "./driver.js";
 
@@ -31,4 +32,4 @@ export const test = base.extend<{
   },
 });
 
-export { expect } from "@playwright/test";
+export { expect } from "playwright/test";

@@ -50,13 +50,13 @@
     "dist"
   ],
   "peerDependencies": {
-    "@playwright/test": ">=1.40.0",
+    "playwright": ">=1.40.0",
     "@testing-library/react": ">=14.0.0",
     "@testing-library/user-event": ">=14.0.0",
     "happy-dom": ">=20.0.0"
   },
   "peerDependenciesMeta": {
-    "@playwright/test": {
+    "playwright": {
       "optional": true
     },
     "@testing-library/react": {
@@ -77,7 +77,7 @@
     "lint": "npm run build && eslint ."
   },
   "devDependencies": {
-    "@playwright/test": "^1.58.0",
+    "@playwright/test": "^1.64.1",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.0",
     "@testing-library/user-event": "^14.6.0",
@@ -88,6 +88,7 @@
     "eslint": "^9.39.5",
     "happy-dom": "~20.14.6",
     "jsdom": "^28.1.0",
+    "playwright": "^1.64.1",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "typescript": "~5.9.3",

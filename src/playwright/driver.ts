@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { basename } from "node:path";
-import { type Page, type Locator, expect, test } from "@playwright/test";
+import type { Page, Locator } from "playwright";
+import { expect, test } from "playwright/test";
 import type {
   AssertHasOptions,
   AssertPathOptions,
