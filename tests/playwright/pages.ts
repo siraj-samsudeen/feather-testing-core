@@ -323,6 +323,11 @@ export const pages: Record<string, string> = {
   </script>
 </body></html>`,
 
+  "/closing": `<!DOCTYPE html>
+<html><body>
+  <button onclick="closeThisPage()">Close this window</button>
+</body></html>`,
+
   "/late-password": `<!DOCTYPE html>
 <html><body>
   <form id="f"></form>

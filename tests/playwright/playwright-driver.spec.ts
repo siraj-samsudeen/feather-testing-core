@@ -1921,3 +1921,24 @@ test.describe("fillIn shares one budget", () => {
     await expect(page.getByLabel("Passphrase")).toHaveValue("x");
   });
 });
+
+test.describe("an action that closes the page", () => {
+  test("reports the closed page, not a navigation that never finished", async ({
+    page,
+  }) => {
+    // The button asks the test to close the page while the click runs.
+    await page.exposeFunction("closeThisPage", () => page.close());
+    const error = await createSession(page, { timeout: 1000 })
+      .visit("/closing")
+      .clickButton("Close this window")
+      .then(
+        () => null,
+        (e: unknown) => e,
+      );
+    expect(error).toBeInstanceOf(StepError);
+    const message = (error as StepError).message;
+    expect(message).toContain("[FAILED] clickButton('Close this window')");
+    expect(message).toMatch(/closed/i);
+    expect(message).not.toContain("no new page finished loading");
+  });
+});

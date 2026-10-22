@@ -307,8 +307,12 @@ export class PlaywrightDriver
           if (!w.__featherDocumentBeforeAction) return "new-document";
           return w.__featherLeaving ? "leaving" : "staying";
         });
-      } catch {
-        // The old document's context is already gone: a navigation is under way.
+      } catch (error) {
+        // The old document's context is already gone: a navigation is under
+        // way. Any other failure (e.g. the page was closed) is the real error.
+        if (!/execution context was destroyed|navigat/i.test(String(error))) {
+          throw error;
+        }
         state = "new-document";
       }
       if (state === "staying" && navigations.length === 0) {
