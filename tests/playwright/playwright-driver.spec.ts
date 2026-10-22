@@ -1896,3 +1896,28 @@ test.describe("navigation wait windows", () => {
     }
   });
 });
+
+test.describe("fillIn shares one budget", () => {
+  test("a field that appears late but is never editable fails within one timeout", async ({
+    page,
+  }) => {
+    await page.goto("/late-locked");
+    const started = Date.now();
+    const error = await createSession(page, { timeout: 1000 })
+      .fillIn("Code", "x")
+      .then(
+        () => null,
+        (e: unknown) => e,
+      );
+    expect(error).toBeInstanceOf(StepError);
+    // One 1000 ms budget for finding and filling, not 1000 + 1000.
+    expect(Date.now() - started).toBeLessThan(1700);
+  });
+
+  test("a field that renders late still gets filled", async ({ page }) => {
+    await createSession(page, { timeout: 2000 })
+      .visit("/late-password")
+      .fillIn("Passphrase", "x");
+    await expect(page.getByLabel("Passphrase")).toHaveValue("x");
+  });
+});

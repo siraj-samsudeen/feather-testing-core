@@ -312,6 +312,17 @@ export const pages: Record<string, string> = {
   <button onclick="window.dispatchEvent(new Event('beforeunload'))">Pretend to leave</button>
 </body></html>`,
 
+  "/late-locked": `<!DOCTYPE html>
+<html><body>
+  <form id="f"></form>
+  <script>
+    setTimeout(() => {
+      document.getElementById("f").innerHTML =
+        '<label for="code">Code</label><input id="code" disabled />';
+    }, 700);
+  </script>
+</body></html>`,
+
   "/late-password": `<!DOCTYPE html>
 <html><body>
   <form id="f"></form>

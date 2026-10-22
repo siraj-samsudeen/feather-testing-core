@@ -446,7 +446,7 @@ export class PlaywrightDriver
   async fillIn(label: string, value: string): Promise<void> {
     const field = this.fieldByLabelOrPlaceholder(label);
     this.lastFilledField = field;
-    await field.fill(value, { timeout: this.timeout });
+    await field.fill(value, { timeout: this.fillTimeout(label) });
     this.lastFormLocator = this.scope.locator("form", { has: field });
   }
 
@@ -466,7 +466,26 @@ export class PlaywrightDriver
     );
   }
 
+  /**
+   * The step's budget minus what fillTargetIsPassword() already spent on the
+   * same field, so finding the field and filling it share one `timeout`
+   * instead of taking up to twice as long.
+   */
+  private fillTimeout(label: string): number | undefined {
+    const probe = this.fillProbe;
+    this.fillProbe = null;
+    const timeout = this.timeout;
+    if (!probe || probe.label !== label || !timeout) {
+      return timeout; // undefined: Playwright's own; 0: no limit
+    }
+    return Math.max(1, timeout - (Date.now() - probe.startedAt));
+  }
+
+  /** When fillTargetIsPassword() began looking for a field, and which. */
+  private fillProbe: { label: string; startedAt: number } | null = null;
+
   async fillTargetIsPassword(label: string): Promise<boolean> {
+    this.fillProbe = { label, startedAt: Date.now() };
     const field = this.fieldByLabelOrPlaceholder(label);
     await field.first().waitFor({ state: "attached", timeout: this.timeout });
     return field.evaluateAll((elements) =>
