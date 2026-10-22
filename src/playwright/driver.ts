@@ -137,6 +137,8 @@ export class PlaywrightDriver
     private page: Page,
     private scope: Page | Locator = page,
     private options: PlaywrightSessionOptions = {},
+    /** Whether the Playwright runner is active, when already known (within()). */
+    private insideRunnerCache?: boolean,
   ) {}
 
   /**
@@ -149,8 +151,6 @@ export class PlaywrightDriver
     }
     return this.insideRunner() ? undefined : DEFAULT_TIMEOUT_OUTSIDE_RUNNER;
   }
-
-  private insideRunnerCache: boolean | undefined;
 
   /**
    * Whether a Playwright Test runner test is running, asked once per driver
@@ -877,7 +877,12 @@ export class PlaywrightDriver
   ): Promise<TestDriver<PlaywrightStepContext, Page>> {
     const scopedLocator = this.scope.locator(selector);
     await expect(scopedLocator).toBeAttached({ timeout: this.timeout });
-    return new PlaywrightDriver(this.page, scopedLocator, this.options);
+    return new PlaywrightDriver(
+      this.page,
+      scopedLocator,
+      this.options,
+      this.insideRunner(),
+    );
   }
 
   async debug(): Promise<void> {

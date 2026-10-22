@@ -6,6 +6,7 @@ import { StepError } from "../../src/errors.js";
 import type { TestDriver } from "../../src/types.js";
 import { createSession, type StepEvent } from "../../src/playwright/index.js";
 import { createServer } from "node:http";
+import { test as playwrightTest } from "playwright/test";
 import type { AddressInfo } from "node:net";
 import type { Page } from "playwright";
 
@@ -1940,5 +1941,27 @@ test.describe("an action that closes the page", () => {
     expect(message).toContain("[FAILED] clickButton('Close this window')");
     expect(message).toMatch(/closed/i);
     expect(message).not.toContain("no new page finished loading");
+  });
+});
+
+test.describe("asking whether the Playwright runner is active", () => {
+  test("happens once per session, scoped drivers included", async ({ page }) => {
+    const original = playwrightTest.info;
+    let asked = 0;
+    playwrightTest.info = (() => {
+      asked++;
+      return original.call(playwrightTest);
+    }) as typeof original;
+    try {
+      await createSession(page)
+        .visit("/scoped")
+        .within(".main", (scoped) =>
+          scoped.within("p", (inner) => inner.assertText("Main content")),
+        )
+        .assertText("Sidebar content");
+    } finally {
+      playwrightTest.info = original;
+    }
+    expect(asked).toBe(1);
   });
 });
