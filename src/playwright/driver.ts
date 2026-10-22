@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { basename } from "node:path";
-import type { Page, Locator } from "playwright";
+import type { Page, Locator, Request } from "playwright";
 import { expect, test } from "playwright/test";
 import type {
   AssertHasOptions,
@@ -19,6 +19,58 @@ export interface PlaywrightStepContext {
   /** Current scope: the page, or the container locator inside within(). */
   scope: Page | Locator;
 }
+
+/** What onStep() is told about each step of a chain. */
+export interface StepEvent {
+  /** The step as the chain trace names it, e.g. `fillIn('Email', 'a@b.c')`. */
+  name: string;
+  status: "started" | "passed" | "failed";
+  /** The cause, when status is "failed". */
+  error?: unknown;
+}
+
+export interface PlaywrightSessionOptions {
+  /**
+   * Budget in ms for every assertion, every wait (until, assertPath, ...) and
+   * every action (fillIn, click, ...) in this session. A per-call timeout,
+   * such as `assertHas(sel, { timeout })`, still wins.
+   *
+   * Default: inside the Playwright Test runner, Playwright's own configured
+   * timeouts (expect.timeout, actionTimeout) — unchanged from earlier
+   * versions. Outside it (bun test, vitest, a script), 4000 ms
+   * ({@link DEFAULT_TIMEOUT_OUTSIDE_RUNNER}), so a failing step reports its
+   * chain before bun test's 5000 ms per-test timeout cuts the test off.
+   */
+  timeout?: number;
+  /**
+   * Called as each step starts, passes or fails: a stand-in for test.step()
+   * when there is no Playwright Test runner, e.g. to log progress. It is also
+   * called inside the runner. Like test.step titles, the name hides values
+   * typed into fields whose label looks secret or that were marked
+   * `sensitive`; a password field found only by its type is hidden in the
+   * failure report, not here.
+   */
+  onStep?: (event: StepEvent) => void;
+}
+
+/** The session timeout used outside the Playwright Test runner. */
+export const DEFAULT_TIMEOUT_OUTSIDE_RUNNER = 4000;
+
+/** True while a Playwright Test runner test is executing. */
+function insidePlaywrightRunner(): boolean {
+  try {
+    test.info();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+type MarkedWindow = {
+  __featherDocumentBeforeAction?: boolean;
+  __featherLeaving?: boolean;
+  __featherListening?: boolean;
+};
 
 /**
  * Playwright matches a bare string name/label/text as a case-insensitive
@@ -46,7 +98,117 @@ export class PlaywrightDriver
   constructor(
     private page: Page,
     private scope: Page | Locator = page,
+    private options: PlaywrightSessionOptions = {},
   ) {}
+
+  /**
+   * The session budget: the caller's option, else Playwright's own defaults
+   * inside its runner (undefined), else the outside-runner default.
+   */
+  protected get timeout(): number | undefined {
+    if (this.options.timeout !== undefined) {
+      return this.options.timeout;
+    }
+    return insidePlaywrightRunner() ? undefined : DEFAULT_TIMEOUT_OUTSIDE_RUNNER;
+  }
+
+  /**
+   * Run an action that may submit a form or otherwise leave the page. When it
+   * starts a navigation (e.g. POST, then a 303 redirect to a GET), wait until
+   * the NEW document has loaded, so the next step never reads the page that
+   * was just left. When it starts none (a form handled by JavaScript), return
+   * as soon as the action does — nothing is slept.
+   *
+   * Playwright's actions do not wait for the navigation they start, so the
+   * page itself is watched: before the action it is marked, and listeners
+   * note a form submission nobody prevented and a `beforeunload`. After the
+   * action, a page that is already a new document, or that noted either
+   * signal, is waited for. A navigation that ends without a new document — a
+   * 204/205 response, a download, or a failed request — ends the wait.
+   */
+  private async waitingForNewDocument(action: () => Promise<void>): Promise<void> {
+    await this.page.evaluate(() => {
+      const w = window as MarkedWindow;
+      w.__featherDocumentBeforeAction = true;
+      w.__featherLeaving = false;
+      if (!w.__featherListening) {
+        w.__featherListening = true;
+        // Window bubble phase: runs after the form's own submit handlers.
+        window.addEventListener("submit", (event) => {
+          if (!event.defaultPrevented) w.__featherLeaving = true;
+        });
+        window.addEventListener("beforeunload", () => {
+          w.__featherLeaving = true;
+        });
+      }
+    });
+
+    const endings: Array<() => void> = [];
+    const navigationEnded = new Promise<void>((resolve) => endings.push(resolve));
+    const mainFrameNavigation = (request: Request) =>
+      request.isNavigationRequest() && request.frame() === this.page.mainFrame();
+    const onFinished = async (request: Request) => {
+      if (!mainFrameNavigation(request)) return;
+      const response = await request.response().catch(() => null);
+      if (!response) return;
+      const status = response.status();
+      const disposition = await response
+        .headerValue("content-disposition")
+        .catch(() => null);
+      if (
+        status === 204 ||
+        status === 205 ||
+        (disposition !== null && /attachment/i.test(disposition))
+      ) {
+        endings.forEach((end) => end());
+      }
+    };
+    const onFailed = (request: Request) => {
+      if (mainFrameNavigation(request)) endings.forEach((end) => end());
+    };
+    this.page.on("requestfinished", onFinished);
+    this.page.on("requestfailed", onFailed);
+    try {
+      await action();
+
+      let leaving: boolean;
+      try {
+        leaving = await this.page.evaluate(() => {
+          const w = window as MarkedWindow;
+          return !w.__featherDocumentBeforeAction || w.__featherLeaving === true;
+        });
+      } catch {
+        // The old document's context is already gone: a navigation is under way.
+        leaving = true;
+      }
+      if (!leaving) {
+        return;
+      }
+
+      const timeout = this.timeout;
+      const newDocument = this.page.waitForFunction(
+        () =>
+          !(window as MarkedWindow).__featherDocumentBeforeAction &&
+          document.readyState === "complete",
+        undefined,
+        { timeout },
+      );
+      // The losing branch must not surface as an unhandled rejection.
+      newDocument.catch(() => {});
+      try {
+        await Promise.race([newDocument, navigationEnded]);
+      } catch (error) {
+        throw new Error(
+          `the page started to navigate, but no new page finished loading` +
+            `${timeout === undefined ? "" : ` within ${timeout}ms`}: ` +
+            (error instanceof Error ? error.message.split("\n")[0] : String(error)),
+        );
+      }
+    } finally {
+      this.page.off("requestfinished", onFinished);
+      this.page.off("requestfailed", onFailed);
+    }
+  }
 
   /** The element represented by the current scope; an unscoped page means body. */
   private scopeElement(): Locator {
@@ -80,29 +242,39 @@ export class PlaywrightDriver
             ? null
             : `scrollWidth=${scrollWidth}, clientWidth=${clientWidth}, tolerance=${tolerance}`;
         },
-        { timeout: opts?.timeout },
+        { timeout: opts?.timeout ?? this.timeout },
       )
       .toBeNull();
   }
 
   async visit(path: string): Promise<void> {
-    await this.page.goto(path);
+    await this.page.goto(path, { timeout: this.timeout });
   }
 
   async reload(): Promise<void> {
-    await this.page.reload();
+    await this.page.reload({ timeout: this.timeout });
   }
 
   async click(text: string): Promise<void> {
-    await this.scope.getByText(text, EXACT).click();
+    await this.waitingForNewDocument(() =>
+      this.scope.getByText(text, EXACT).click({ timeout: this.timeout }),
+    );
   }
 
   async clickLink(text: string): Promise<void> {
-    await this.scope.getByRole("link", { name: text, ...EXACT }).click();
+    await this.waitingForNewDocument(() =>
+      this.scope
+        .getByRole("link", { name: text, ...EXACT })
+        .click({ timeout: this.timeout }),
+    );
   }
 
   async clickButton(text: string): Promise<void> {
-    await this.scope.getByRole("button", { name: text, ...EXACT }).click();
+    await this.waitingForNewDocument(() =>
+      this.scope
+        .getByRole("button", { name: text, ...EXACT })
+        .click({ timeout: this.timeout }),
+    );
   }
 
   /** The single label-addressed lookup: every labelled verb goes through it. */
@@ -122,7 +294,7 @@ export class PlaywrightDriver
   async fillIn(label: string, value: string): Promise<void> {
     const field = this.fieldByLabelOrPlaceholder(label);
     this.lastFilledField = field;
-    await field.fill(value);
+    await field.fill(value, { timeout: this.timeout });
     this.lastFormLocator = this.scope.locator("form", { has: field });
   }
 
@@ -144,25 +316,25 @@ export class PlaywrightDriver
 
   async selectOption(label: string, option: string): Promise<void> {
     const select = this.labelled(label);
-    await select.selectOption({ label: option });
+    await select.selectOption({ label: option }, { timeout: this.timeout });
     this.lastFormLocator = this.scope.locator("form", { has: select });
   }
 
   async check(label: string): Promise<void> {
     const checkbox = this.labelled(label);
-    await checkbox.check();
+    await checkbox.check({ timeout: this.timeout });
     this.lastFormLocator = this.scope.locator("form", { has: checkbox });
   }
 
   async uncheck(label: string): Promise<void> {
     const checkbox = this.labelled(label);
-    await checkbox.uncheck();
+    await checkbox.uncheck({ timeout: this.timeout });
     this.lastFormLocator = this.scope.locator("form", { has: checkbox });
   }
 
   async choose(label: string): Promise<void> {
     const radio = this.scope.getByRole("radio", { name: label, ...EXACT });
-    await radio.check();
+    await radio.check({ timeout: this.timeout });
     this.lastFormLocator = this.scope.locator("form", { has: radio });
   }
 
@@ -178,7 +350,9 @@ export class PlaywrightDriver
       'button[type="submit"], input[type="submit"]',
     );
     if ((await submitBtn.count()) > 0) {
-      await submitBtn.first().click();
+      await this.waitingForNewDocument(() =>
+        submitBtn.first().click({ timeout: this.timeout }),
+      );
       return;
     }
     // Second try: a button whose accessible name contains "submit"
@@ -186,19 +360,23 @@ export class PlaywrightDriver
       name: /submit/i,
     });
     if ((await byRole.count()) > 0) {
-      await byRole.first().click();
+      await this.waitingForNewDocument(() =>
+        byRole.first().click({ timeout: this.timeout }),
+      );
     } else {
       // Last resort: press Enter on the last form field
-      await this.lastFormLocator
+      const lastField = this.lastFormLocator
         .locator("input, textarea, select")
-        .last()
-        .press("Enter");
+        .last();
+      await this.waitingForNewDocument(() =>
+        lastField.press("Enter", { timeout: this.timeout }),
+      );
     }
   }
 
   async attachFile(label: string, path: string): Promise<void> {
     const input = this.labelled(label);
-    await input.setInputFiles(path);
+    await input.setInputFiles(path, { timeout: this.timeout });
     this.lastFormLocator = this.scope.locator("form", { has: input });
   }
 
@@ -208,11 +386,11 @@ export class PlaywrightDriver
   }
 
   async pressKey(key: string): Promise<void> {
-    await this.page.keyboard.press(key);
+    await this.waitingForNewDocument(() => this.page.keyboard.press(key));
   }
 
   async hover(text: string): Promise<void> {
-    await this.scope.getByText(text, EXACT).hover();
+    await this.scope.getByText(text, EXACT).hover({ timeout: this.timeout });
   }
 
   async dropFile(selector: string, path: string): Promise<void> {
@@ -227,7 +405,11 @@ export class PlaywrightDriver
       },
       [name, content.toString("base64")] as const,
     );
-    await this.scope.locator(selector).dispatchEvent("drop", { dataTransfer });
+    await this.scope.locator(selector).dispatchEvent(
+      "drop",
+      { dataTransfer },
+      { timeout: this.timeout },
+    );
   }
 
   async assertHas(selector: string, opts?: AssertHasOptions): Promise<void> {
@@ -239,10 +421,10 @@ export class PlaywrightDriver
     }
     if (opts?.count !== undefined) {
       await expect(locator).toHaveCount(opts.count, {
-        timeout: opts?.timeout,
+        timeout: opts?.timeout ?? this.timeout,
       });
     } else {
-      await expect(locator.first()).toBeVisible({ timeout: opts?.timeout });
+      await expect(locator.first()).toBeVisible({ timeout: opts?.timeout ?? this.timeout });
     }
   }
 
@@ -253,11 +435,13 @@ export class PlaywrightDriver
         ? locator.filter({ hasText: opts.text })
         : locator.filter({ hasText: new RegExp(opts.text) });
     }
-    await expect(locator).toHaveCount(0, { timeout: opts?.timeout });
+    await expect(locator).toHaveCount(0, { timeout: opts?.timeout ?? this.timeout });
   }
 
   async assertText(text: string): Promise<void> {
-    await expect(this.scope.getByText(text).first()).toBeVisible();
+    await expect(this.scope.getByText(text).first()).toBeVisible({
+      timeout: this.timeout,
+    });
   }
 
   async assertExactText(
@@ -265,12 +449,14 @@ export class PlaywrightDriver
     opts?: AssertionOptions,
   ): Promise<void> {
     await expect(this.scopeElement()).toHaveText(text, {
-      timeout: opts?.timeout,
+      timeout: opts?.timeout ?? this.timeout,
     });
   }
 
   async refuteText(text: string): Promise<void> {
-    await expect(this.scope.getByText(text)).toHaveCount(0);
+    await expect(this.scope.getByText(text)).toHaveCount(0, {
+      timeout: this.timeout,
+    });
   }
 
   async assertAttribute(
@@ -280,9 +466,9 @@ export class PlaywrightDriver
   ): Promise<void> {
     const assertion = expect(this.scopeElement());
     if (value === undefined) {
-      await assertion.toHaveAttribute(name, { timeout: opts?.timeout });
+      await assertion.toHaveAttribute(name, { timeout: opts?.timeout ?? this.timeout });
     } else {
-      await assertion.toHaveAttribute(name, value, { timeout: opts?.timeout });
+      await assertion.toHaveAttribute(name, value, { timeout: opts?.timeout ?? this.timeout });
     }
   }
 
@@ -291,7 +477,7 @@ export class PlaywrightDriver
     opts?: AssertionOptions,
   ): Promise<void> {
     await expect(this.scopeElement()).not.toHaveAttribute(name, {
-      timeout: opts?.timeout,
+      timeout: opts?.timeout ?? this.timeout,
     });
   }
 
@@ -301,7 +487,7 @@ export class PlaywrightDriver
     opts?: AssertionOptions,
   ): Promise<void> {
     await expect(this.scopeElement()).toHaveCSS(property, value, {
-      timeout: opts?.timeout,
+      timeout: opts?.timeout ?? this.timeout,
     });
   }
 
@@ -349,7 +535,7 @@ export class PlaywrightDriver
             },
             { selector, tolerance },
           ),
-        { timeout: opts?.timeout },
+        { timeout: opts?.timeout ?? this.timeout },
       )
       .toBeNull();
   }
@@ -382,41 +568,52 @@ export class PlaywrightDriver
               : `expected horizontal endpoint within ${allowedDifference}px, but ` +
                   `maximum=${maximum}, scrollLeft=${node.scrollLeft}, direction=${direction}`;
           }, tolerance),
-        { timeout: opts?.timeout },
+        { timeout: opts?.timeout ?? this.timeout },
       )
       .toBeNull();
   }
 
   async assertValue(label: string, value: string): Promise<void> {
-    await expect(this.fieldByLabelOrPlaceholder(label)).toHaveValue(value);
+    await expect(this.fieldByLabelOrPlaceholder(label)).toHaveValue(value, {
+      timeout: this.timeout,
+    });
   }
 
   async assertChecked(label: string): Promise<void> {
-    await expect(this.labelled(label)).toBeChecked();
+    await expect(this.labelled(label)).toBeChecked({ timeout: this.timeout });
   }
 
   async refuteChecked(label: string): Promise<void> {
-    await expect(this.labelled(label)).not.toBeChecked();
+    await expect(this.labelled(label)).not.toBeChecked({
+      timeout: this.timeout,
+    });
   }
 
   async assertSelected(label: string, optionLabel: string): Promise<void> {
     const select = this.labelled(label);
-    await expect(select.locator("option:checked")).toHaveText(optionLabel);
+    await expect(select.locator("option:checked")).toHaveText(optionLabel, {
+      timeout: this.timeout,
+    });
   }
 
   async assertOptions(label: string, optionLabels: string[]): Promise<void> {
     const select = this.labelled(label);
-    await expect(select.locator("option")).toHaveText(optionLabels);
+    await expect(select.locator("option")).toHaveText(optionLabels, {
+      timeout: this.timeout,
+    });
   }
 
   async assertPath(path: string, opts?: AssertPathOptions): Promise<void> {
     if (opts?.queryParams) {
       const params = new URLSearchParams(opts.queryParams).toString();
-      await expect(this.page).toHaveURL(`${path}?${params}`);
+      await expect(this.page).toHaveURL(`${path}?${params}`, {
+        timeout: this.timeout,
+      });
     } else {
       await expect
         .poll(() => new URL(this.page.url()).pathname, {
           message: `assertPath('${path}')`,
+          timeout: this.timeout,
         })
         .toBe(path);
     }
@@ -426,6 +623,7 @@ export class PlaywrightDriver
     await expect
       .poll(() => new URL(this.page.url()).pathname, {
         message: `refutePath('${path}')`,
+        timeout: this.timeout,
       })
       .not.toBe(path);
   }
@@ -439,7 +637,7 @@ export class PlaywrightDriver
     // which is why the trigger arrives as a callback rather than as an
     // earlier step in the chain.
     const [download] = await Promise.all([
-      this.page.waitForEvent("download", { timeout: opts?.timeout }),
+      this.page.waitForEvent("download", { timeout: opts?.timeout ?? this.timeout }),
       trigger(),
     ]);
     const filename = download.suggestedFilename();
@@ -463,7 +661,7 @@ export class PlaywrightDriver
     await expect
       .poll(async () => Boolean(await predicate(this.context())), {
         message: `until: ${description}`,
-        timeout: opts?.timeout,
+        timeout: opts?.timeout ?? this.timeout,
         intervals: opts?.interval === undefined ? undefined : [opts.interval],
       })
       .toBe(true);
@@ -492,8 +690,8 @@ export class PlaywrightDriver
     selector: string,
   ): Promise<TestDriver<PlaywrightStepContext, Page>> {
     const scopedLocator = this.scope.locator(selector);
-    await expect(scopedLocator).toBeAttached();
-    return new PlaywrightDriver(this.page, scopedLocator);
+    await expect(scopedLocator).toBeAttached({ timeout: this.timeout });
+    return new PlaywrightDriver(this.page, scopedLocator, this.options);
   }
 
   async debug(): Promise<void> {
@@ -504,13 +702,18 @@ export class PlaywrightDriver
   }
 
   async wrapStep(name: string, fn: () => Promise<void>): Promise<void> {
-    try {
-      // Throws when not running inside @playwright/test — fall back to
-      // executing the step directly.
-      test.info();
-    } catch {
-      return fn();
-    }
-    return test.step(name, fn);
+    const onStep = this.options.onStep;
+    const run = async () => {
+      onStep?.({ name, status: "started" });
+      try {
+        await fn();
+      } catch (error) {
+        onStep?.({ name, status: "failed", error });
+        throw error;
+      }
+      onStep?.({ name, status: "passed" });
+    };
+    // Outside @playwright/test there is no test.step(): run the step directly.
+    return insidePlaywrightRunner() ? test.step(name, run) : run();
   }
 }

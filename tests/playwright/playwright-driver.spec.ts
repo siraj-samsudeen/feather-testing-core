@@ -4,6 +4,10 @@ import { PlaywrightDriver } from "../../src/playwright/driver.js";
 import { Session } from "../../src/session.js";
 import { StepError } from "../../src/errors.js";
 import type { TestDriver } from "../../src/types.js";
+import { createSession, type StepEvent } from "../../src/playwright/index.js";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
+import type { Page } from "playwright";
 
 test.describe("PlaywrightDriver", () => {
   test.describe("visit()", () => {
@@ -1317,5 +1321,229 @@ test.describe("secrets in failure reports", () => {
 
     await expect(page.getByLabel("Login code")).toHaveValue(FAKE_SECRET);
     await expect(page.getByLabel("Recovery phrase")).toHaveValue(FAKE_SECRET);
+  });
+});
+
+test.describe("session options", () => {
+  test("timeout bounds every assertion of the session", async ({ page }) => {
+    const started = Date.now();
+    const error = await createSession(page, { timeout: 300 })
+      .visit("/")
+      .assertText("Not on this page")
+      .then(
+        () => null,
+        (e: unknown) => e,
+      );
+    expect(error).toBeInstanceOf(StepError);
+    expect((error as StepError).message).toContain(
+      "[FAILED] assertText('Not on this page')",
+    );
+    expect((error as StepError).message).toContain("300ms");
+    expect(Date.now() - started).toBeLessThan(3000);
+  });
+
+  test("timeout bounds actions too", async ({ page }) => {
+    const started = Date.now();
+    const error = await createSession(page, { timeout: 300 })
+      .visit("/form")
+      .fillIn("No such field", "x")
+      .then(
+        () => null,
+        (e: unknown) => e,
+      );
+    expect(error).toBeInstanceOf(StepError);
+    expect(Date.now() - started).toBeLessThan(3000);
+  });
+
+  test("a per-call timeout still wins over the session timeout", async ({
+    page,
+  }) => {
+    await page.route("**/late", (route) =>
+      route.fulfill({
+        contentType: "text/html",
+        body: `<p id="p"></p><script>setTimeout(() => { p.textContent = "late" }, 800)</script>`,
+      }),
+    );
+    await createSession(page, { timeout: 200 })
+      .visit("/late")
+      .assertHas("#p", { text: "late", timeout: 3000 });
+  });
+
+  test("onStep reports each step starting, passing and failing", async ({
+    page,
+  }) => {
+    const events: string[] = [];
+    const onStep = (event: StepEvent) =>
+      events.push(`${event.status} ${event.name}`);
+    await createSession(page, { timeout: 300, onStep })
+      .visit("/")
+      .assertText("Welcome")
+      .assertText("Not here")
+      .then(
+        () => null,
+        () => null,
+      );
+    expect(events).toEqual([
+      "started visit('/')",
+      "passed visit('/')",
+      "started assertText('Welcome')",
+      "passed assertText('Welcome')",
+      "started assertText('Not here')",
+      "failed assertText('Not here')",
+    ]);
+  });
+});
+
+/**
+ * A real HTTP server for a server-rendered to-do list: POST /todos, then a
+ * 303 redirect back to the list (or a 204 when asked). The GET is slowed down
+ * so a step that ran before the new page loaded would read the old one.
+ * Route interception cannot stand in here: a fulfilled redirect does not
+ * behave like a real one.
+ */
+async function serveTodoList(
+  page: Page,
+  opts: { postStatus?: 204 } = {},
+): Promise<{ url: string; close: () => Promise<void> }> {
+  const todos: string[] = [];
+  const server = createServer((req, res) => {
+    if (req.method === "POST") {
+      let body = "";
+      req.on("data", (chunk) => (body += chunk));
+      req.on("end", () => {
+        const title = new URLSearchParams(body).get("title");
+        if (title) todos.push(title);
+        if (opts.postStatus === 204) {
+          res.writeHead(204).end();
+        } else {
+          res.writeHead(303, { location: "/todos" }).end();
+        }
+      });
+      return;
+    }
+    const html =
+      req.url === "/js-todos"
+        ? `<form id="f"><input placeholder="What needs to be done?"></form><ul id="l"></ul>
+<script>f.onsubmit = (e) => { e.preventDefault(); const i = f.querySelector("input");
+  setTimeout(() => { const li = document.createElement("li"); li.textContent = i.value; l.append(li); }, 100); };</script>`
+        : `<form method="post" action="/todos">
+  <input name="title" placeholder="What needs to be done?">
+  <button type="submit">Add</button>
+</form>
+<ul>${todos.map((t) => `<li>${t}</li>`).join("")}</ul>`;
+    setTimeout(() => {
+      res.writeHead(200, { "content-type": "text/html" }).end(html);
+    }, 300);
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address() as AddressInfo;
+  // The fixture context answers every request from its page table; let this
+  // server's requests through to the network.
+  await page.route(`http://127.0.0.1:${port}/**`, (route) => route.continue());
+  return {
+    url: `http://127.0.0.1:${port}`,
+    close: () =>
+      new Promise<void>((resolve) => {
+        server.closeAllConnections();
+        server.close(() => resolve());
+      }),
+  };
+}
+
+/** Reads the list right now, without waiting — what a stale page would show. */
+async function itemsNow(page: Page): Promise<string[]> {
+  return page.locator("li").allTextContents();
+}
+
+test.describe("waiting for the new page after a submit", () => {
+  test("submit() pressing Enter waits for the POST-redirect-GET page", async ({
+    page,
+  }) => {
+    const app = await serveTodoList(page);
+    try {
+      const driver = new PlaywrightDriver(page);
+      await driver.visit(`${app.url}/todos`);
+      // Remove the submit button so submit() falls back to pressing Enter.
+      await page.locator("button").evaluate((b) => b.remove());
+      await driver.fillIn("What needs to be done?", "Buy milk");
+      await driver.submit();
+      expect(await itemsNow(page)).toEqual(["Buy milk"]);
+    } finally {
+      await app.close();
+    }
+  });
+
+  test("submit() clicking the submit button waits for the new page", async ({
+    page,
+  }) => {
+    const app = await serveTodoList(page);
+    try {
+      const driver = new PlaywrightDriver(page);
+      await driver.visit(`${app.url}/todos`);
+      await driver.fillIn("What needs to be done?", "Buy milk");
+      await driver.submit();
+      expect(await itemsNow(page)).toEqual(["Buy milk"]);
+    } finally {
+      await app.close();
+    }
+  });
+
+  test("clickButton() waits for the new page", async ({ page }) => {
+    const app = await serveTodoList(page);
+    try {
+      const driver = new PlaywrightDriver(page);
+      await driver.visit(`${app.url}/todos`);
+      await driver.fillIn("What needs to be done?", "Buy milk");
+      await driver.clickButton("Add");
+      expect(await itemsNow(page)).toEqual(["Buy milk"]);
+    } finally {
+      await app.close();
+    }
+  });
+
+  test("pressKey('Enter') waits for the new page", async ({ page }) => {
+    const app = await serveTodoList(page);
+    try {
+      const driver = new PlaywrightDriver(page);
+      await driver.visit(`${app.url}/todos`);
+      await driver.fillIn("What needs to be done?", "Buy milk");
+      await driver.pressKey("Enter");
+      expect(await itemsNow(page)).toEqual(["Buy milk"]);
+    } finally {
+      await app.close();
+    }
+  });
+
+  test("a form handled by JavaScript does not wait for a navigation", async ({
+    page,
+  }) => {
+    const app = await serveTodoList(page);
+    try {
+      const driver = new PlaywrightDriver(page);
+      await driver.visit(`${app.url}/js-todos`);
+      await driver.fillIn("What needs to be done?", "Client side");
+      const started = Date.now();
+      await driver.submit();
+      expect(Date.now() - started).toBeLessThan(1000);
+      await driver.assertHas("li", { text: "Client side" });
+    } finally {
+      await app.close();
+    }
+  });
+
+  test("a 204 response after pressKey('Enter') ends the wait", async ({
+    page,
+  }) => {
+    const app = await serveTodoList(page, { postStatus: 204 });
+    try {
+      const driver = new PlaywrightDriver(page, page, { timeout: 5000 });
+      await driver.visit(`${app.url}/todos`);
+      await driver.fillIn("What needs to be done?", "Buy milk");
+      const started = Date.now();
+      await driver.pressKey("Enter");
+      expect(Date.now() - started).toBeLessThan(3000);
+    } finally {
+      await app.close();
+    }
   });
 });
