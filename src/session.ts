@@ -67,12 +67,17 @@ export class Session<TContext = unknown, TNative = unknown>
     const steps = [...this.steps];
     this.steps = [];
 
-    const wrap: (name: string, fn: () => Promise<void>) => Promise<void> =
+    const wrap: (
+      name: string,
+      fn: () => Promise<void>,
+      step: QueuedStep,
+    ) => Promise<void> =
       this.driver.wrapStep?.bind(this.driver) ?? ((_name, fn) => fn());
 
     for (const [i, step] of steps.entries()) {
       try {
-        await wrap(step.name, step.action);
+        await step.prepare?.();
+        await wrap(step.name, step.action, step);
         this.executedSteps.push(step);
       } catch (error) {
         // Include steps executed in earlier chains so the full walk is
@@ -126,19 +131,41 @@ export class Session<TContext = unknown, TNative = unknown>
    *
    * A value counts as secret when `opts.sensitive` is set, when the label
    * looks secret ("Password", "API key", "PIN", ...), or when the driver
-   * reports that the field turned out to be a password field. The first two
-   * are known before the step runs, so they also keep the value out of
-   * Playwright's test.step title; the last is only known once it has run.
+   * reports that the field is a password field. A driver that can inspect
+   * the field before filling it (fillTargetIsPassword) settles that before
+   * the step starts, so the value stays out of test.step titles and onStep
+   * events too; if the field never appears, the value is hidden as well.
    */
   fillIn(label: string, value: string, opts?: FillInOptions): this {
     const nameShowingValue = `fillIn('${label}', '${value}')`;
     const nameHidingValue = `fillIn('${label}', '${HIDDEN_VALUE}')`;
     const knownSecret = opts?.sensitive === true || labelLooksSecret(label);
 
+    let fieldNotFound: unknown;
+
     const step: QueuedStep = {
       name: knownSecret ? nameHidingValue : nameShowingValue,
       index: this.stepIndex++,
+      prepare: async () => {
+        if (knownSecret || !this.driver.fillTargetIsPassword) {
+          return;
+        }
+        try {
+          if (await this.driver.fillTargetIsPassword(label)) {
+            step.name = nameHidingValue;
+          }
+        } catch (error) {
+          // The field never appeared, so whether it is secret is unknown:
+          // hide the value, and fail with this error instead of waiting for
+          // the same field a second time.
+          step.name = nameHidingValue;
+          fieldNotFound = error;
+        }
+      },
       action: async () => {
+        if (fieldNotFound !== undefined) {
+          throw hideValueInError(fieldNotFound, value);
+        }
         try {
           await this.driver.fillIn(label, value);
         } catch (error) {

@@ -940,3 +940,91 @@ describe("secrets in failure reports", () => {
     ]);
   });
 });
+
+describe("secrets in step names before a step starts", () => {
+  const FAKE_SECRET = "fake-secret-value-123";
+  const HIDDEN = "••••••";
+
+  /** A driver that records the name wrapStep sees at start and at end. */
+  function recordingDriver(overrides?: Partial<TestDriver>) {
+    const names: string[] = [];
+    const { driver } = createMockDriver(overrides);
+    driver.wrapStep = vi.fn(
+      async (
+        name: string,
+        fn: () => Promise<void>,
+        step?: { readonly name: string },
+      ) => {
+        names.push(`start ${name}`);
+        try {
+          await fn();
+        } finally {
+          names.push(`end ${step?.name ?? name}`);
+        }
+      },
+    );
+    return { driver, names };
+  }
+
+  it("hides the value before the step starts when the field is a password field", async () => {
+    const { driver, names } = recordingDriver({
+      fillTargetIsPassword: vi.fn(async () => true),
+    });
+
+    await new Session(driver).fillIn("Login code", FAKE_SECRET);
+
+    expect(names).toEqual([
+      `start fillIn('Login code', '${HIDDEN}')`,
+      `end fillIn('Login code', '${HIDDEN}')`,
+    ]);
+  });
+
+  it("hands wrapStep the step so a name hidden while running is seen at the end", async () => {
+    const { driver, names } = recordingDriver({
+      lastFilledFieldIsPassword: vi.fn(async () => true),
+    });
+
+    await new Session(driver).fillIn("Login code", FAKE_SECRET);
+
+    expect(names).toEqual([
+      `start fillIn('Login code', '${FAKE_SECRET}')`,
+      `end fillIn('Login code', '${HIDDEN}')`,
+    ]);
+  });
+
+  it("hides the value and fails without filling when the field never appears", async () => {
+    const fillIn = vi.fn(async () => {});
+    const { driver, names } = recordingDriver({
+      fillIn,
+      fillTargetIsPassword: vi.fn(async () => {
+        throw new Error(`no field labelled 'Login code' (typed ${FAKE_SECRET})`);
+      }),
+    });
+
+    const error = await new Session(driver)
+      .fillIn("Login code", FAKE_SECRET)
+      .run()
+      .then(
+        () => null,
+        (e: unknown) => e as StepError,
+      );
+
+    expect(error).toBeInstanceOf(StepError);
+    expect(error!.message).not.toContain(FAKE_SECRET);
+    expect(names.join("\n")).not.toContain(FAKE_SECRET);
+    expect(fillIn).not.toHaveBeenCalled();
+  });
+
+  it("shows an ordinary value", async () => {
+    const { driver, names } = recordingDriver({
+      fillTargetIsPassword: vi.fn(async () => false),
+    });
+
+    await new Session(driver).fillIn("Email", "someone@example.com");
+
+    expect(names).toEqual([
+      "start fillIn('Email', 'someone@example.com')",
+      "end fillIn('Email', 'someone@example.com')",
+    ]);
+  });
+});

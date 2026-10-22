@@ -1289,6 +1289,92 @@ test.describe("secrets in failure reports", () => {
     expect(driver.titles).toContain("fillIn('Email', 'someone@example.com')");
     expect(driver.titles).toContain(`fillIn('Password', '${HIDDEN}')`);
     expect(driver.titles).toContain(`fillIn('Recovery phrase', '${HIDDEN}')`);
+    // A password field with an ordinary label is found by its type before
+    // the step starts, so its title is hidden too.
+    expect(driver.titles).toContain(`fillIn('Login code', '${HIDDEN}')`);
+    expect(driver.titles.join("\n")).not.toContain(FAKE_SECRET);
+  });
+
+  /** Every onStep event of a chain, as "status name". */
+  function recordSteps() {
+    const events: string[] = [];
+    const onStep = (event: StepEvent) =>
+      events.push(`${event.status} ${event.name}`);
+    return { events, onStep };
+  }
+
+  test("onStep never sees a value typed into a password field: started and passed", async ({
+    page,
+  }) => {
+    const { events, onStep } = recordSteps();
+    await createSession(page, { onStep })
+      .visit("/sign-in")
+      .fillIn("Login code", FAKE_SECRET);
+
+    expect(events).toContain(`started fillIn('Login code', '${HIDDEN}')`);
+    expect(events).toContain(`passed fillIn('Login code', '${HIDDEN}')`);
+    expect(events.join("\n")).not.toContain(FAKE_SECRET);
+  });
+
+  test("onStep never sees a value typed into a password field: failed", async ({
+    page,
+  }) => {
+    const { events, onStep } = recordSteps();
+    await createSession(page, { onStep, timeout: 500 })
+      .visit("/sign-in")
+      .fillIn("Locked code", FAKE_SECRET)
+      .then(
+        () => null,
+        () => null,
+      );
+
+    expect(events).toContain(`started fillIn('Locked code', '${HIDDEN}')`);
+    expect(events).toContain(`failed fillIn('Locked code', '${HIDDEN}')`);
+    expect(events.join("\n")).not.toContain(FAKE_SECRET);
+  });
+
+  test("onStep never sees a value typed into a password field that renders late", async ({
+    page,
+  }) => {
+    const { events, onStep } = recordSteps();
+    await createSession(page, { onStep })
+      .visit("/late-password")
+      .fillIn("Passphrase", FAKE_SECRET);
+
+    expect(events).toContain(`started fillIn('Passphrase', '${HIDDEN}')`);
+    expect(events.join("\n")).not.toContain(FAKE_SECRET);
+    await expect(page.getByLabel("Passphrase")).toHaveValue(FAKE_SECRET);
+  });
+
+  test("a field that never appears hides the value and fails once", async ({
+    page,
+  }) => {
+    const { events, onStep } = recordSteps();
+    const started = Date.now();
+    const error = await createSession(page, { onStep, timeout: 500 })
+      .visit("/sign-in")
+      .fillIn("No such field", FAKE_SECRET)
+      .then(
+        () => null,
+        (e: unknown) => e,
+      );
+
+    expect(error).toBeInstanceOf(StepError);
+    expect((error as StepError).message).not.toContain(FAKE_SECRET);
+    expect(events.join("\n")).not.toContain(FAKE_SECRET);
+    // One wait for the missing field, not two.
+    expect(Date.now() - started).toBeLessThan(900 + 1500);
+  });
+
+  test("onStep shows ordinary values", async ({ page }) => {
+    const { events, onStep } = recordSteps();
+    await createSession(page, { onStep })
+      .visit("/sign-in")
+      .fillIn("Email", "someone@example.com");
+
+    expect(events).toContain(
+      "passed fillIn('Email', 'someone@example.com')",
+    );
   });
 
   test("hides the value when filling a password field fails, cause included", async ({

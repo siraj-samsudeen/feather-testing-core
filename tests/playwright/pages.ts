@@ -297,6 +297,17 @@ export const pages: Record<string, string> = {
   </form>
 </body></html>`,
 
+  "/late-password": `<!DOCTYPE html>
+<html><body>
+  <form id="f"></form>
+  <script>
+    setTimeout(() => {
+      document.getElementById("f").innerHTML =
+        '<label for="pass">Passphrase</label><input id="pass" type="password" />';
+    }, 300);
+  </script>
+</body></html>`,
+
   "/upload": `<!DOCTYPE html>
 <html><body>
   <form>

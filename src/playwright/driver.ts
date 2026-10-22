@@ -45,10 +45,9 @@ export interface PlaywrightSessionOptions {
   /**
    * Called as each step starts, passes or fails: a stand-in for test.step()
    * when there is no Playwright Test runner, e.g. to log progress. It is also
-   * called inside the runner. Like test.step titles, the name hides values
-   * typed into fields whose label looks secret or that were marked
-   * `sensitive`; a password field found only by its type is hidden in the
-   * failure report, not here.
+   * called inside the runner. The name hides a value typed into a password
+   * field, a field whose label looks secret, or one marked `sensitive`, in
+   * every event: the field is inspected before the step starts.
    */
   onStep?: (event: StepEvent) => void;
 }
@@ -307,6 +306,17 @@ export class PlaywrightDriver
       return false;
     }
     return this.lastFilledField.evaluateAll((elements) =>
+      elements.some(
+        (element) =>
+          element instanceof HTMLInputElement && element.type === "password",
+      ),
+    );
+  }
+
+  async fillTargetIsPassword(label: string): Promise<boolean> {
+    const field = this.fieldByLabelOrPlaceholder(label);
+    await field.first().waitFor({ state: "attached", timeout: this.timeout });
+    return field.evaluateAll((elements) =>
       elements.some(
         (element) =>
           element instanceof HTMLInputElement && element.type === "password",
@@ -701,17 +711,24 @@ export class PlaywrightDriver
     });
   }
 
-  async wrapStep(name: string, fn: () => Promise<void>): Promise<void> {
+  async wrapStep(
+    name: string,
+    fn: () => Promise<void>,
+    step?: { readonly name: string },
+  ): Promise<void> {
     const onStep = this.options.onStep;
+    // The name can change while the step runs (a secret value gets hidden),
+    // so it is read again when the step ends.
+    const currentName = () => step?.name ?? name;
     const run = async () => {
-      onStep?.({ name, status: "started" });
+      onStep?.({ name: currentName(), status: "started" });
       try {
         await fn();
       } catch (error) {
-        onStep?.({ name, status: "failed", error });
+        onStep?.({ name: currentName(), status: "failed", error });
         throw error;
       }
-      onStep?.({ name, status: "passed" });
+      onStep?.({ name: currentName(), status: "passed" });
     };
     // Outside @playwright/test there is no test.step(): run the step directly.
     return insidePlaywrightRunner() ? test.step(name, run) : run();

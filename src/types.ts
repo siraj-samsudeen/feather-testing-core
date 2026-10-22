@@ -44,6 +44,12 @@ export interface QueuedStep {
   name: string;
   action: () => Promise<void>;
   index: number;
+  /**
+   * Runs before the step is reported as started (before wrapStep), so it can
+   * settle the step's name first — e.g. hide a value typed into a field that
+   * turns out to be a password field.
+   */
+  prepare?: () => Promise<void>;
 }
 
 /** A condition polled by `until()`; may be sync or async. */
@@ -74,6 +80,13 @@ export interface TestDriver<TContext = unknown, TNative = unknown> {
    * the `sensitive` option alone.
    */
   lastFilledFieldIsPassword?(): Promise<boolean>;
+  /**
+   * Optional: wait (within the driver's own budget) until the field fillIn()
+   * would target is present, and say whether it is a password field. The
+   * session asks before the step is reported as started, so the value never
+   * reaches a step title or step event. Throws when the field never appears.
+   */
+  fillTargetIsPassword?(label: string): Promise<boolean>;
   selectOption(label: string, option: string): Promise<void>;
   check(label: string): Promise<void>;
   uncheck(label: string): Promise<void>;
@@ -146,5 +159,13 @@ export interface TestDriver<TContext = unknown, TNative = unknown> {
    * Optional hook: wrap a queued step's execution (e.g. in Playwright's
    * test.step()) so chains appear in trace viewers and reporters.
    */
-  wrapStep?(name: string, fn: () => Promise<void>): Promise<void>;
+  wrapStep?(
+    name: string,
+    fn: () => Promise<void>,
+    /**
+     * The step itself. Its name can change while it runs (a value found to
+     * be secret gets hidden), so read `step.name` again after `fn` settles.
+     */
+    step?: { readonly name: string },
+  ): Promise<void>;
 }
