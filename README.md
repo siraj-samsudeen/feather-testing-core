@@ -1107,9 +1107,9 @@ Deliberate exceptions stay possible and stay visible: an `eslint-disable-next-li
 
 - Secret values can still appear in other verbs' errors (e.g. Testing Library DOM dumps with input `value` attributes, app-thrown errors) and in Playwright's own trace and HTML report — see [What is protected](#secrets-in-failure-reports) and [issue #16](https://github.com/siraj-samsudeen/feather-testing-core/issues/16). Don't use real credentials in tests.
 
-## Upgrading to 0.7.0 (beta: 0.7.0-beta.1)
+## Upgrading to 0.7.0
 
-0.7.0 is in beta. Install it with `npm install feather-testing-core@0.7.0-beta.1`; see [Known limitations](#known-limitations) first.
+See [Known limitations](#known-limitations) first.
 
 - **Breaking (Playwright adapter):** a submit the browser refuses because a field is invalid (an empty `required` field above all) now fails the step: `form not sent: 'Title' is required`. It used to pass silently. Where the refusal is the point of the spec, use the new `assertSubmitBlocked(label)`.
 - **Changed (all adapters):** `fillIn` and `assertValue` no longer print their value in the chain, `Failed at:`, `onStep` events or `test.step()` titles: it shows as `'••••••'` (`''` when empty), secret or not. A field can turn secret after any check, and the step's name goes out before the action. Tests or tooling that match on `fillIn('Email', 'a@b.com')` in output need the redacted form. See [Secrets in failure reports](#secrets-in-failure-reports).

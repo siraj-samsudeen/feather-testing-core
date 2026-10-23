@@ -1,6 +1,6 @@
 # Decisions for 0.7
 
-These are the design decisions taken for 0.7.0. Each has a short entry with its reasoning. They follow the parity matrix in [ADAPTER_PARITY.md](ADAPTER_PARITY.md). The author can veto any of them before 0.7.0 leaves beta.
+These are the design decisions taken for 0.7.0. Each has a short entry with its reasoning. They follow the parity matrix in [ADAPTER_PARITY.md](ADAPTER_PARITY.md). They were decided for the 0.7.0 release.
 
 ## Decided and built
 
