@@ -305,7 +305,7 @@ test("a failing chain names the failed step", async () => {
 |--------|---------|--------------|
 | `baseUrl` | The browser context's `baseURL` | What `visit()` paths resolve against, as `new URL(path, baseUrl)`, the same as the request adapter. |
 | `timeout` | Inside `@playwright/test`: Playwright's own `expect.timeout` / `actionTimeout`. Elsewhere: `4000` ms | Budget for every assertion, wait and action in the session. A per-call `timeout` (e.g. `assertHas(sel, { timeout })`) still wins. `0` means no limit. |
-| `navigationTimeout` | The page's navigation timeout (`setDefaultNavigationTimeout`, the runner's `navigationTimeout`, else 30 s) | Budget for page loads: `visit()`, `reload()`, and the new page after a submit or click that navigates. `0` means no limit. |
+| `navigationTimeout` | The page's navigation timeout (`setDefaultNavigationTimeout`, the runner's `navigationTimeout`, else 30 s) | Budget for page loads: `visit()`, `reload()`, and the new page after a submit or click that navigates. `0` means no limit. The wait after a submit has no Playwright call to inherit the page's default from, so it falls back in this order: this option, then the page's default (read from Playwright; see Upgrading), then 30 s. |
 | `navigationStartTimeout` | `500` ms | After an action signals it is leaving the page but before any request is seen: how long to wait for the navigation to start. Raise it if submits return too early on a slow CI machine. |
 | `replacedNavigationTimeout` | `250` ms | After a navigation of the page fails: how long to wait for a newer one that replaced it (a script setting `location`) before ending the wait. |
 | `cookies` | none | Cookies the session starts with, e.g. a signed-in user's session cookie: `[{ name, value, domain?, path?, expires?, httpOnly?, secure?, sameSite? }]` (`expires` in seconds). Without `domain` a cookie is set for `baseUrl`'s host; `path` defaults to `/`; `secure` is kept as given. Added to the browser context before the first step, by domain and path (a domain without a leading dot is that host only, in both adapters). Both send a `secure` cookie over https, and to `localhost`/`127.0.0.1` over http, as Chromium does. The app's own cookies behave as usual afterwards. |
@@ -317,7 +317,7 @@ test("a failing chain names the failed step", async () => {
 
 Outside the Playwright Test runner the session timeout also bounds actions (fillIn, click, ...), so `page.setDefaultTimeout()` does not apply to session steps — set `timeout` on the session instead.
 
-**What the session puts in your page.** No window globals and no patched prototypes: its page state lives under one Symbol-keyed store (`window[Symbol.for("feather-testing-core")]`). The first action that may navigate installs listeners on `window`: `click` and `keydown` (capture), `submit`, `invalid` (capture) and `beforeunload`. They only record what happens; they never prevent or change it. A page script's own `requestSubmit()` is not watched.
+**What the session puts in your page.** No window globals and no patched prototypes: its page state lives under one Symbol-keyed store (`window[Symbol.for("feather-testing-core")]`). The first action that may navigate installs listeners on `window`: two `click` listeners (one in the capture phase, for submit buttons; one in the bubble phase, for followed links, so a page that cancels the click is respected), `keydown` (capture), `submit`, `invalid` (capture) and `beforeunload`. They only record what happens; they never prevent or change it. A page script's own `requestSubmit()` is not watched.
 
 **Waiting for the next page.** `submit()`, `click()`, `clickLink()`, `clickButton()` and `pressKey()` wait for the new document when the action starts a navigation of this page — such as a form POST answered with a redirect — so the next step never reads the page that was just left. When no navigation starts (a form handled by JavaScript, `method="dialog"`, a form or link aimed at another window or an iframe), they return at once. A 204/205 answer, a download or a failed request ends the wait; a navigation replaced by a newer one (a script setting `location`) waits for the newer page.
 
@@ -388,7 +388,8 @@ Core's fixtures:
 | `context` | test | A fresh browser context (cookies, storage). `RECORD=1` (option `record: "on"`): a video of every page in `test-results/videos` and a screenshot of the last page in `test-results/screenshots`; `record: "on-failure"` keeps them only for failed tests; option `outputDir` |
 | `page` | test | A page in `context` |
 | `session` | test | A Playwright-adapter session on `page`, with the `baseUrl` fixture; without one, paths resolve against the context's own `baseURL` |
-| `request` | test | A request-adapter session; needs a `handler` fixture. A test that asks only for `request` never loads or launches a browser |
+| `handler` | test | Not supplied: the app's request handler, for `request`. Give it as a value: `.with({ handler: value(app.handle) })` (a bare function would be read as a fixture function) |
+| `request` | test | A request-adapter session on `handler`. A test that asks only for `request` never loads or launches a browser |
 | `rtl` | test | An RTL-adapter session on what is rendered (needs a DOM) |
 
 **Defining your own.**
