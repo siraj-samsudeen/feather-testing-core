@@ -1,6 +1,6 @@
 {
   "name": "feather-testing-core",
-  "version": "0.7.0-beta.1",
+  "version": "0.7.0",
   "description": "Phoenix Test-inspired fluent testing DSL for Playwright, React Testing Library, and browserless HTTP requests",
   "license": "MIT",
   "repository": {
@@ -19,6 +19,8 @@
     "integration"
   ],
   "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
