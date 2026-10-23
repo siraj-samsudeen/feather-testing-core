@@ -161,3 +161,28 @@ export class CookieJar {
     return matching.map((c) => `${c.name}=${c.value}`).join("; ");
   }
 }
+
+/**
+ * The Cookie header a browser would send to `url`, given a list of cookies
+ * shaped like the `cookies` option (or Playwright's context.cookies()):
+ * domain (none: `url`'s host only; a leading dot or any domain also covers
+ * its subdomains), path, secure (sent over https, and to localhost or
+ * 127.0.0.1) and expiry (seconds; -1 or none: a session cookie). Null when
+ * no cookie matches. The request adapter's own jar applies the same rules.
+ */
+export function cookieHeaderFor(
+  cookies: readonly {
+    name: string;
+    value: string;
+    domain?: string;
+    path?: string;
+    expires?: number;
+    secure?: boolean;
+  }[],
+  url: string | URL,
+): string | null {
+  const target = typeof url === "string" ? new URL(url) : url;
+  const jar = new CookieJar();
+  for (const cookie of cookies) jar.seed(cookie, target);
+  return jar.header(target);
+}

@@ -970,8 +970,8 @@ import { test, createSession, expect } from "feather-testing-core/playwright";
 // RTL adapter
 import { createSession } from "feather-testing-core/rtl";
 
-// Request adapter (no browser)
-import { createSession, RequestDriver } from "feather-testing-core/request";
+// Request adapter (no browser); cookieHeaderFor(cookies, url) builds a Cookie header by the same rules
+import { createSession, RequestDriver, cookieHeaderFor } from "feather-testing-core/request";
 
 // Fixtures for bun:test and Vitest (see Fixtures)
 import { defineCoreTest, defineTest } from "feather-testing-core/fixtures";

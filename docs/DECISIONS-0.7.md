@@ -82,6 +82,12 @@ Core provides its own fixtures through `defineCoreTest(runner)`: `browser` (file
 - `SessionCookie` is exported from every entry point.
 - In the fixture engine, a test body with no parameter (`async () => …`) uses no fixtures. Only a non-destructured parameter or a rest pattern fails with the explicit-list hint.
 
+### `cookieHeaderFor(cookies, url)` from `/request`
+
+**Requested by:** `feather-testing-elysia`, whose Eden client then reuses it instead of keeping a copy.
+
+**Decision:** Export the request adapter's cookie matching as a function. Given a cookie list (the `cookies` option's shape, or Playwright's `context.cookies()`) and a URL, it returns the `Cookie` header a browser would send, honouring domain, path, secure and expiry, or `null` when no cookie matches. The adapter's own jar applies the same rules. This is additive.
+
 ## Deferred
 
 ### B2 (rest). A per-driver Session type that rejects unsupported verbs at compile time

@@ -16,6 +16,7 @@ export {
   type RequestPage,
   type RequestStepContext,
 } from "./driver.js";
+export { cookieHeaderFor } from "./cookies.js";
 export {
   RequestBrowser,
   type RequestHandler,
