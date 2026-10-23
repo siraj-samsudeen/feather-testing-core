@@ -9,6 +9,7 @@ import type {
   DownloadOptions,
   LayoutAssertionOptions,
   TestDriver,
+  SessionCookie,
   SessionOptions,
   StepOptions,
   UntilOptions,
@@ -179,32 +180,37 @@ export class PlaywrightDriver
   private seedCookies(): Promise<void> {
     if (this.cookieSeed.done) return this.cookieSeed.done;
     const cookies = this.options.cookies ?? [];
-    this.cookieSeed.done =
-      cookies.length === 0
-        ? Promise.resolve()
-        : (async () => {
-            const base = this.options.baseUrl ?? this.page.url();
-            const origin = /^https?:/.test(base) ? new URL(base) : null;
-            await this.page.context().addCookies(
-              cookies.map((c) => {
-                const { domain, path, ...rest } = c;
-                if (domain !== undefined) {
-                  return { ...rest, domain, path: path ?? "/" };
-                }
-                if (!origin) {
-                  throw new Error(
-                    `cookies: '${c.name}' has no domain, and the session has no baseUrl ` +
-                      "to take it from. Pass baseUrl to createSession, or give the cookie a domain.",
-                  );
-                }
-                // domain + path, not url: a url makes Playwright take
-                // `secure` from its scheme, overriding the cookie's own.
-                return { ...rest, domain: origin.hostname, path: path ?? "/" };
-              }),
-            );
-          })();
+    this.cookieSeed.done = cookies.length === 0 ? Promise.resolve() : this.addCookies(cookies);
     return this.cookieSeed.done;
   }
+
+  /**
+   * Add cookies to the browser context, as the `cookies` option does, at
+   * any point in the session. A cookie without a domain is set for the
+   * session's baseUrl (or the page's current URL), by domain and path.
+   */
+  async addCookies(cookies: readonly SessionCookie[]): Promise<void> {
+    const base = this.options.baseUrl ?? this.page.url();
+    const origin = /^https?:/.test(base) ? new URL(base) : null;
+    await this.page.context().addCookies(
+      cookies.map((c) => {
+        const { domain, path, ...rest } = c;
+        if (domain !== undefined) {
+          return { ...rest, domain, path: path ?? "/" };
+        }
+        if (!origin) {
+          throw new Error(
+            `cookies: '${c.name}' has no domain, and the session has no baseUrl ` +
+              "to take it from. Pass baseUrl to createSession, or give the cookie a domain.",
+          );
+        }
+        // domain + path, not url: a url makes Playwright take
+        // `secure` from its scheme, overriding the cookie's own.
+        return { ...rest, domain: origin.hostname, path: path ?? "/" };
+      }),
+    );
+  }
+
 
   /**
    * The session budget: the caller's option, else Playwright's own defaults

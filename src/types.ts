@@ -251,6 +251,8 @@ export interface TestDriver<TContext = unknown, TNative = unknown> {
    * Fail if the form is sent, or held back by another field.
    */
   assertSubmitBlocked?(label: string): Promise<void>;
+  /** Optional: add cookies to the session (the `cookies` option, after creation). */
+  addCookies?(cookies: readonly SessionCookie[]): Promise<void>;
   step(fn: (context: TContext) => Promise<unknown>): Promise<void>;
   /** Hand the caller the adapter's own driving handle, untyped by the DSL. */
   raw(fn: (native: TNative) => unknown | Promise<unknown>): Promise<void>;

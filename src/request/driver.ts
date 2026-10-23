@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { basename, extname } from "node:path";
 import type {
+  SessionCookie,
   SessionOptions,
   AssertHasOptions,
   AssertPathOptions,
@@ -637,6 +638,11 @@ export class RequestDriver
 
   /** Submit the form the latest form verb touched, finding its submit
    * control the same way the Playwright adapter does. */
+  /** Put cookies in the session's jar, as the `cookies` option does, at any point. */
+  async addCookies(cookies: readonly SessionCookie[]): Promise<void> {
+    this.browser.seedCookies(cookies);
+  }
+
   async assertSubmitBlocked(label: string): Promise<void> {
     const verb = `assertSubmitBlocked('${label}')`;
     const field = this.findField(label, verb);

@@ -706,6 +706,21 @@ for (const driver of drivers) {
       });
     }, TEST_TIMEOUT);
 
+    it("cookies: addCookies after the first request; the next request sends them, names only in the step", async () => {
+      await withApp(async (h) => {
+        const names: string[] = [];
+        await h
+          .session({ onStep: (e) => e.status === "passed" && names.push(e.name) })
+          .visit("/echo")
+          .within("#cookie", (s) => s.assertExactText(""))
+          .addCookies([{ name: "session", value: "secret-token-value" }])
+          .visit("/echo")
+          .within("#cookie", (s) => s.assertExactText("session=secret-token-value"));
+        // The step is named by the cookie's name; its value never appears.
+        expect(names.filter((n) => n.startsWith("addCookies"))).toEqual(["addCookies(session)"]);
+      });
+    }, TEST_TIMEOUT);
+
     it("#56 step() and raw() run inside the chain", async () => {
       await withApp(async (h) => {
         const seen: string[] = [];

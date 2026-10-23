@@ -73,6 +73,15 @@ Core provides its own fixtures through `defineCoreTest(runner)`: `browser` (file
 - File scope relies on `afterAll` registered during collection, so the first test that uses a file-scoped fixture inside a `describe` ties its teardown to that `describe`.
 - A function supplied as a fixture value needs `{ value: true }`, or `.with()`.
 
+### `addCookies(cookies)`, `SessionCookie` everywhere, and test bodies with no parameter
+
+**Requested by:** `feather-testing-elysia`.
+
+**Decision:** All three are additive.
+- `session.addCookies(cookies)`, on both adapters, adds cookies at any point in a chain. Its shape is the same as the `cookies` option. The step is named by the cookies' names, never their values. This lifts the elysia package's "logInAs only before the first request step" limit.
+- `SessionCookie` is exported from every entry point.
+- In the fixture engine, a test body with no parameter (`async () => …`) uses no fixtures. Only a non-destructured parameter or a rest pattern fails with the explicit-list hint.
+
 ## Deferred
 
 ### B2 (rest). A per-driver Session type that rejects unsupported verbs at compile time

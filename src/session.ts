@@ -6,6 +6,7 @@ import type {
   FillInOptions,
   LayoutAssertionOptions,
   QueuedStep,
+  SessionCookie,
   SessionOptions,
   StepEvent,
   StepOptions,
@@ -514,6 +515,24 @@ export class Session<TContext = unknown, TNative = unknown>
         );
       }
       await this.driver.assertSubmitBlocked(label);
+    });
+  }
+
+  /**
+   * Add cookies to the session from this point on — e.g. sign a user in
+   * after the first request. Same shape as createSession's `cookies`. The
+   * step is named by the cookies' names only: their values are secrets.
+   */
+  addCookies(cookies: readonly SessionCookie[]): this {
+    const names = cookies.map((c) => c.name).join(", ");
+    return this.enqueue(`addCookies(${names})`, async () => {
+      if (!this.driver.addCookies) {
+        throw new Error(
+          `addCookies(${names}): this adapter's driver does not implement it. ` +
+            "Use the request or Playwright adapter.",
+        );
+      }
+      await this.driver.addCookies(cookies);
     });
   }
 
