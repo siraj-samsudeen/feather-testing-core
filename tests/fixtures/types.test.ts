@@ -57,6 +57,20 @@ describe("fixture API types", () => {
     expect(typeof optional).toBe("function");
   });
 
+  it("take a two-item array value as the value: [1, {}], rows", () => {
+    const pairs = defineTest<{ pair: [number, {}]; rows: { id: number }[] }>(runner, {
+      pair: [1, {}],
+      rows: [{ id: 1 }, { id: 2 }],
+    });
+    pairs.with({ pair: [2, {}], rows: [{ id: 3 }, { id: 4 }] })("pairs", async ({ pair, rows }) => {
+      const n: number = pair[0] + rows[1]!.id;
+      void n;
+    });
+    // @ts-expect-error -- an unknown option key: not [fn, options], and not a string either
+    test.with({ greeting: [async ({}, use) => use("x"), { scope: "file", limit: 3 }] });
+    expect(registered).toContain("pairs");
+  });
+
   it("type a test body's fixtures", () => {
     test("typed", async ({ greeting, shout }) => {
       const both: string = greeting + shout;

@@ -811,6 +811,42 @@ describe("defineTest", () => {
       expect(got).toBe("made");
     });
 
+    it("a two-item array is a value unless it is [function, options]: rows, [1, {}], unknown keys", async () => {
+      const { runner, run } = recordingRunner();
+      const fn = () => "f";
+      const defs = {
+        rows: [{ id: 1 }, { id: 2 }],
+        numberAndEmpty: [1, {}],
+        numberAndScope: [1, { scope: "file" }],
+        unknownKey: [fn, { scope: "file", limit: 3 }],
+        nonPlain: [fn, new Date(0)],
+      };
+      const test = defineTest(runner, defs as never);
+      let got: Record<string, unknown> = {};
+      test("whole", async ({ rows, numberAndEmpty, numberAndScope, unknownKey, nonPlain }: Record<string, unknown>) => {
+        got = { rows, numberAndEmpty, numberAndScope, unknownKey, nonPlain };
+      });
+      await run("whole");
+      expect(got).toEqual(defs);
+      expect((got.rows as unknown[])[1]).toEqual({ id: 2 });
+    });
+
+    it("[fn, { scope }] and [fn, { value: true }] are still unwrapped", async () => {
+      const { runner, run, endFile } = recordingRunner();
+      const handler = (r: string) => `handled ${r}`;
+      const test = defineTest(runner, {
+        shared: [async ({}, use: (v: string) => Promise<void>) => use("shared"), { scope: "file" }],
+        handler: [handler, { value: true }],
+      } as never);
+      let got: unknown[] = [];
+      test("both", async ({ shared, handler: h }: { shared: string; handler: typeof handler }) => {
+        got = [shared, h("x")];
+      });
+      await run("both");
+      await endFile();
+      expect(got).toEqual(["shared", "handled x"]);
+    });
+
     it("value(x) makes anything a plain value: a function, or an ambiguous array", async () => {
       const { runner, run } = recordingRunner();
       const handler = (request: string) => `handled ${request}`;
