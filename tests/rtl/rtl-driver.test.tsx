@@ -1332,3 +1332,19 @@ describe("RTLDriver — secrets in failure reports", () => {
     expect(output).not.toContain(FAKE_SECRET);
   });
 });
+
+describe("createSession({ onStep })", () => {
+  afterEach(cleanup);
+
+  it("reports each step as it starts and passes, like the other adapters", async () => {
+    render(<h1>Hello</h1>);
+    const events: string[] = [];
+    await createSession({
+      onStep: (event) => events.push(`${event.status} ${event.name}`),
+    }).assertText("Hello");
+    expect(events).toEqual([
+      "started assertText('Hello')",
+      "passed assertText('Hello')",
+    ]);
+  });
+});
