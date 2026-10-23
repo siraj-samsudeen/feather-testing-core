@@ -66,6 +66,7 @@ const pages: Pages = {
       <label for="title">Title</label><input id="title" name="title" required>
       <label for="due">Due</label><input id="due" name="due">
     </form>`,
+  "/locked": `<form><label for="pw">Password</label><input id="pw" type="password" disabled></form>`,
   "/list": `<ul><li class="item">One</li><li class="item">Two</li></ul>`,
   "/first-hidden": `<p class="msg" hidden>Old notice</p><p class="msg">New notice</p>`,
   "/dialog": `<p>Behind the dialog</p>
@@ -728,6 +729,17 @@ for (const driver of drivers) {
         // Not queued: in effect before the visit queued above runs.
         await session.setCookies([{ name: "now", value: "1" }]);
         await chain;
+      });
+    }, TEST_TIMEOUT);
+
+    it("#12 a secret fillIn that fails says why (the driver's first line), without the value", async () => {
+      await withApp(async (h) => {
+        const error = await failure(h.session(FAST).visit("/locked").fillIn("Password", FAKE_SECRET));
+        expect(error.message).toContain(`[FAILED] fillIn('Password', '${HIDDEN}')`);
+        expect(error.message).toMatch(/failed on a secret field: \S/);
+        expect(error.message).not.toContain(FAKE_SECRET);
+        expect(String((error.cause as Error).message)).not.toContain(FAKE_SECRET);
+        if (driver.name === "request") expect(error.message).toContain("disabled");
       });
     }, TEST_TIMEOUT);
 

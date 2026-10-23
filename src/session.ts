@@ -47,7 +47,21 @@ function describe(expected: string | RegExp): string {
  * What a failed step on a secret field reports instead of the driver's
  * error, which can contain the value or part of it.
  */
-function withheldError(stepName: string): Error {
+function withheldError(stepName: string, error: unknown, value: string, verb: string): Error {
+  // fillIn: the driver's first line, with the typed value hidden, says why
+  // (disabled, not found, timed out). Withheld entirely when the driver
+  // marks its error unsafe (RTL's key-syntax errors quote fragments) and
+  // for assertValue, whose driver messages can quote the value found.
+  const unsafe =
+    verb !== "fillIn" ||
+    (error instanceof Error && (error as { secretUnsafe?: boolean }).secretUnsafe === true);
+  if (!unsafe) {
+    const hidden = hideValueInError(error, value);
+    const firstLine = (hidden instanceof Error ? hidden.message : String(hidden)).split("\n")[0]!.trim();
+    if (firstLine !== "" && (value === "" || !firstLine.includes(value))) {
+      return new Error(`${stepName} failed on a secret field: ${firstLine}`);
+    }
+  }
   return new Error(
     `${stepName} failed on a secret field. The driver's message is not shown, ` +
       "because it can contain the field's value. Re-run the step on a " +
@@ -316,7 +330,7 @@ export class Session<TContext = unknown, TNative = unknown>
             hide();
           }
           if (hidden) {
-            throw withheldError(nameHidingValue);
+            throw withheldError(nameHidingValue, error, value, verb);
           }
           throw error;
         }
