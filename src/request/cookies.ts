@@ -135,7 +135,9 @@ export class CookieJar {
       hostOnly: cookie.domain === undefined,
       path: cookie.path ?? "/",
       secure: cookie.secure === true,
-      expires: cookie.expires === undefined ? null : cookie.expires * 1000,
+      // -1 (or none) is a session cookie, as in Playwright's context.cookies().
+      expires:
+        cookie.expires === undefined || cookie.expires < 0 ? null : cookie.expires * 1000,
     });
   }
 

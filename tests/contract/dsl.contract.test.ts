@@ -687,6 +687,16 @@ for (const driver of drivers) {
       });
     }, TEST_TIMEOUT);
 
+    it("cookies: expires -1 (Playwright's session-cookie marker) is a session cookie", async () => {
+      await withApp(async (h) => {
+        // The shape context.cookies() returns for a session cookie.
+        await h
+          .session({ cookies: [{ name: "theme", value: "dark", domain: undefined, path: "/", expires: -1 }] })
+          .visit("/echo")
+          .within("#cookie", (s) => s.assertExactText("theme=dark"));
+      });
+    }, TEST_TIMEOUT);
+
     it("#56 step() and raw() run inside the chain", async () => {
       await withApp(async (h) => {
         const seen: string[] = [];

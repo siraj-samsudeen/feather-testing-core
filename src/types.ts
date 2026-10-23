@@ -67,7 +67,7 @@ export interface SessionCookie {
   domain?: string;
   /** Default: "/". */
   path?: string;
-  /** Seconds since the epoch; default: a session cookie. */
+  /** Seconds since the epoch; -1 or none: a session cookie (as Playwright's context.cookies() gives it). */
   expires?: number;
   httpOnly?: boolean;
   secure?: boolean;
