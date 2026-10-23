@@ -122,6 +122,24 @@ export class Session<TContext = unknown, TNative = unknown>
     }
   }
 
+  /**
+   * Throw if steps were queued on this session but never run — a callback
+   * that neither returned the session nor awaited it. Running them now
+   * instead would run them after whatever else the callback did.
+   */
+  private requireNothingLeft(verb: string): void {
+    if (this.steps.length === 0) return;
+    const names = this.steps.map((step) => step.name).join(", ");
+    const count = this.steps.length;
+    this.steps = [];
+    throw new Error(
+      `${verb}: the callback queued ${names} but never ran ` +
+        `${count === 1 ? "it" : "them"}. Return the ` +
+        "chain from the callback (s => s.assertText(...)) or await it inside " +
+        "(async s => { await s.assertText(...); }).",
+    );
+  }
+
   private enqueue(name: string, action: () => Promise<void>): this {
     this.steps.push({ name, action, index: this.stepIndex++ });
     return this;
@@ -447,7 +465,9 @@ export class Session<TContext = unknown, TNative = unknown>
       this.driver.assertDownload(
         expected,
         async () => {
-          await trigger(new Session(this.driver, this.options));
+          const scoped = new Session(this.driver, this.options);
+          await trigger(scoped);
+          scoped.requireNothingLeft(`assertDownload('${describe(expected)}')`);
         },
         opts,
       ),
@@ -505,6 +525,9 @@ export class Session<TContext = unknown, TNative = unknown>
    * `fn` must either return the scoped session — so its queued steps run — or
    * a promise it already awaited. Returning anything else would silently drop
    * the scoped chain, which is why the callback's return type is not `unknown`.
+   * An async callback that queues steps without awaiting them type-checks,
+   * so a scoped chain with steps left over fails the within() step, naming
+   * them, instead of passing without running them.
    */
   within(
     selector: string,
@@ -516,6 +539,7 @@ export class Session<TContext = unknown, TNative = unknown>
       const scopedDriver = await this.driver.within(selector);
       const scopedSession = new Session(scopedDriver, this.options);
       await fn(scopedSession);
+      scopedSession.requireNothingLeft(`within('${selector}')`);
     });
   }
 

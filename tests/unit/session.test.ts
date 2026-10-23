@@ -464,6 +464,58 @@ describe("Session", () => {
       // within is calls[1]
       expect(calls[2]).toBe('assertText("Done")');
     });
+
+    /** A driver whose within() scopes to itself, so one call log shows everything. */
+    function selfScopingDriver() {
+      const mock = createMockDriver();
+      mock.driver.within = vi.fn(async () => mock.driver);
+      return mock;
+    }
+
+    it("still runs steps the callback awaited itself", async () => {
+      const { driver, calls } = selfScopingDriver();
+      await new Session(driver).within(".form", async (s) => {
+        await s.fillIn("Name", "Ada");
+        await s.assertText("Saved");
+      });
+      expect(calls).toContain('fillIn("Name", "Ada")');
+      expect(calls).toContain('assertText("Saved")');
+    });
+
+    it("fails, naming the steps, when an async callback leaves steps unawaited", async () => {
+      const { driver, calls } = selfScopingDriver();
+      const error = await new Session(driver)
+        .within("form", async (s) => {
+          s.assertText("impossible");
+        })
+        .run()
+        .then(
+          () => null,
+          (e: unknown) => e as StepError,
+        );
+      expect(error).toBeInstanceOf(StepError);
+      expect(error!.message).toContain("[FAILED] within('form')");
+      expect(error!.message).toContain(
+        "the callback queued assertText('impossible') but never ran it",
+      );
+      // Nothing ran silently afterwards either.
+      expect(calls).not.toContain('assertText("impossible")');
+    });
+
+    it("assertDownload's trigger is held to the same rule", async () => {
+      const { driver } = createMockDriver();
+      const error = await new Session(driver)
+        .assertDownload("report.csv", async (s) => {
+          s.clickLink("Report");
+        })
+        .run()
+        .then(
+          () => null,
+          (e: unknown) => e as StepError,
+        );
+      expect(error).toBeInstanceOf(StepError);
+      expect(error!.message).toContain("clickLink('Report')");
+    });
   });
 
   describe("step() escape hatch", () => {

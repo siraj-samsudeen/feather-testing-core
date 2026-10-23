@@ -942,6 +942,7 @@ Deliberate exceptions stay possible and stay visible: an `eslint-disable-next-li
 - `submit()`, `click()`, `clickLink()`, `clickButton()` and `pressKey()` wait for the new page after starting a navigation of this page.
 - Outside the Playwright Test runner, assertions and actions default to a 4000 ms budget (`createSession(page, { timeout })` to change it). Inside the runner the configured Playwright timeouts apply, as before. Page loads (`visit()`, `reload()`, the page after a submit) keep Playwright's navigation timeout (30 s), as in 0.6; change it with `navigationTimeout`.
 - `fillIn()` waits for its field before the step starts, to hide a password field's value from step titles and `onStep`. A field that never appears fails the step with its value hidden.
+- `within()` and `assertDownload()` fail, naming the steps, when their callback queues steps without returning or awaiting them (`async s => { s.assertText(...); }`). Those steps used to be dropped silently. Callbacks that return the chain or await it are unaffected.
 - New: `createSession(page, { baseUrl, timeout, navigationTimeout, navigationStartWindow, replacedNavigationWindow, onStep })`, `session.run()`. The request adapter takes `{ baseUrl, timeout, onStep }` and the RTL adapter `{ onStep }`. The shared `SessionOptions` type, `StepEvent` and `DEFAULT_TIMEOUT` are exported from every entry point.
 - Playwright `fillIn()` on a label that matches several fields fails at once with "N fields are labelled '…'", and hides the value, as the request adapter does.
 
