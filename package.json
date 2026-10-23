@@ -40,6 +40,11 @@
       "import": "./dist/request/index.js",
       "default": "./dist/request/index.js"
     },
+    "./cookies": {
+      "types": "./dist/cookies/index.d.ts",
+      "import": "./dist/cookies/index.js",
+      "default": "./dist/cookies/index.js"
+    },
     "./fixtures": {
       "types": "./dist/fixtures/index.d.ts",
       "import": "./dist/fixtures/index.js",

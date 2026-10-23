@@ -980,6 +980,9 @@ import { createSession, RequestDriver, cookieHeaderFor } from "feather-testing-c
 // Fixtures for bun:test and Vitest (see Fixtures)
 import { defineCoreTest, defineTest } from "feather-testing-core/fixtures";
 
+// Cookie matching without any adapter (no browser, no happy-dom); also from the root
+import { cookieHeaderFor, type CookieLike, type SessionCookie } from "feather-testing-core/cookies";
+
 // ESLint plugin (see below)
 import featherTesting from "feather-testing-core/eslint-plugin";
 ```

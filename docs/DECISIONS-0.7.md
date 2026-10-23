@@ -94,6 +94,12 @@ Core provides its own fixtures through `defineCoreTest(runner)`: `browser` (file
 
 **Decision:** Add `await session.setCookies(cookies)` on both adapters. It applies the cookies immediately, outside the step queue. It is additive, and the queued `addCookies` stays as it is. On Playwright, the `cookies` option's own cookies are applied first, so later ones win where they overlap.
 
+### `feather-testing-core/cookies`: cookie matching without happy-dom
+
+**Requested by:** `feather-testing-elysia`. Its `api`/`logInAs` must work in projects without happy-dom.
+
+**Decision:** Export `cookieHeaderFor` and the `CookieLike` and `SessionCookie` types from a new `/cookies` subpath, which imports no package at all, and from the root entry. The `/request` re-export stays. A test walks the import graph of both entries to keep it that way.
+
 ## Deferred
 
 ### B2 (rest). A per-driver Session type that rejects unsupported verbs at compile time
