@@ -303,21 +303,23 @@ class FileScope {
    */
   values = new Map<string, Promise<Active>>();
   order: string[] = [];
-  registered = false;
 
   async teardown(): Promise<void> {
     const errors: unknown[] = [];
+    // Only what exists now; each key is removed as it is torn down, so a
+    // later hook (another block's) does not tear it down twice.
     for (const name of [...this.order].reverse()) {
+      const pending = this.values.get(name);
+      this.values.delete(name);
+      const at = this.order.indexOf(name);
+      if (at >= 0) this.order.splice(at, 1);
       try {
-        const active = await this.values.get(name)!.catch(() => null);
+        const active = await pending?.catch(() => null);
         await active?.teardown();
       } catch (error) {
         errors.push(error);
       }
     }
-    this.values.clear();
-    this.order = [];
-    this.registered = false;
     if (errors.length > 0) throw errors[0];
   }
 }
@@ -383,10 +385,11 @@ function build<F>(
         );
       }
     }
-    if (!fileScope.registered) {
-      fileScope.registered = true;
-      runner.afterAll(() => fileScope.teardown());
-    }
+    // Every test registers the teardown in the suite it is collected in
+    // (the file, or its describe): at the end of each block whatever
+    // file-scoped fixtures exist are torn down, once — later hooks find
+    // nothing left. A flag here would register only in the first block.
+    runner.afterAll(() => fileScope.teardown());
     const timeout = settings.timeout?.(optionValues());
     runner.test(
       name,
