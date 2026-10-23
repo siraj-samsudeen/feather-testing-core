@@ -129,7 +129,11 @@ export class Session<TContext = unknown, TNative = unknown>
    */
   private requireNothingLeft(verb: string): void {
     if (this.steps.length === 0) return;
-    const names = this.steps.map((step) => step.name).join(", ");
+    // These steps never ran, so whether a typed value was a password was
+    // never checked: hide every typed value.
+    const names = this.steps
+      .map((step) => step.nameHidingValue ?? step.name)
+      .join(", ");
     const count = this.steps.length;
     this.steps = [];
     throw new Error(
@@ -194,6 +198,7 @@ export class Session<TContext = unknown, TNative = unknown>
 
     const step: QueuedStep = {
       name: knownSecret ? nameHidingValue : nameShowingValue,
+      nameHidingValue,
       index: this.stepIndex++,
       prepare: async () => {
         if (knownSecret || !this.driver.fillTargetIsPassword) {

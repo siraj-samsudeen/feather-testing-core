@@ -1416,3 +1416,34 @@ describe("onStep and password fields (no secret-looking label)", () => {
     expect(events.join("\n")).not.toContain(FAKE);
   });
 });
+
+describe("a fillIn queued but never run", () => {
+  afterEach(cleanup);
+
+  it("keeps the value out of the within() and assertDownload() errors", async () => {
+    const SECRET = "fake-secret-value-123";
+    render(
+      <form>
+        <label htmlFor="code">Login code</label>
+        <input id="code" type="password" />
+      </form>,
+    );
+    const failed: unknown[] = [];
+    const error = await createSession({
+      onStep: (e) => {
+        if (e.status === "failed") failed.push(e.error);
+      },
+    })
+      .within("form", async (s) => {
+        s.fillIn("Login code", SECRET);
+      })
+      .run()
+      .then(
+        () => null,
+        (e: unknown) => e as StepError,
+      );
+    expect(error).toBeInstanceOf(StepError);
+    expect(error!.message).not.toContain(SECRET);
+    expect(String((failed[0] as Error).message)).not.toContain(SECRET);
+  });
+});

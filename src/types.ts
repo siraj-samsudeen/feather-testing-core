@@ -90,6 +90,11 @@ export interface QueuedStep {
    * turns out to be a password field.
    */
   prepare?: () => Promise<void>;
+  /**
+   * The name with any typed value hidden, for reporting a step that never
+   * ran (and so never learned whether its value was secret).
+   */
+  nameHidingValue?: string;
 }
 
 /** A condition polled by `until()`; may be sync or async. */

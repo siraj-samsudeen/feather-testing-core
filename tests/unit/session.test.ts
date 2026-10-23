@@ -502,6 +502,44 @@ describe("Session", () => {
       expect(calls).not.toContain('assertText("impossible")');
     });
 
+    it("never puts a typed value in the leftover-steps error or the onStep payload", async () => {
+      const SECRET = "fake-secret-value-123";
+      const { driver } = selfScopingDriver();
+      const failed: unknown[] = [];
+      const error = await new Session(driver, {
+        onStep: (e) => {
+          if (e.status === "failed") failed.push(e.error);
+        },
+      })
+        .within("form", async (s) => {
+          s.fillIn("Login code", SECRET);
+        })
+        .run()
+        .then(
+          () => null,
+          (e: unknown) => e as StepError,
+        );
+      expect(error!.message).toContain("fillIn('Login code', '••••••')");
+      expect(error!.message).not.toContain(SECRET);
+      expect(String((failed[0] as Error).message)).not.toContain(SECRET);
+    });
+
+    it("never puts a typed value in assertDownload's leftover-steps error", async () => {
+      const SECRET = "fake-secret-value-123";
+      const { driver } = createMockDriver();
+      const error = await new Session(driver)
+        .assertDownload("report.csv", async (s) => {
+          s.fillIn("Login code", SECRET);
+        })
+        .run()
+        .then(
+          () => null,
+          (e: unknown) => e as StepError,
+        );
+      expect(error).toBeInstanceOf(StepError);
+      expect(error!.message).not.toContain(SECRET);
+    });
+
     it("assertDownload's trigger is held to the same rule", async () => {
       const { driver } = createMockDriver();
       const error = await new Session(driver)

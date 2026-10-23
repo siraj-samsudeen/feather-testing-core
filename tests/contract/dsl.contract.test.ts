@@ -460,6 +460,23 @@ for (const driver of drivers) {
       });
     }, TEST_TIMEOUT);
 
+    it("#11 a value queued but never run inside within() stays hidden", async () => {
+      await withApp(async (h) => {
+        const failed: unknown[] = [];
+        const error = await failure(
+          h
+            .session({ onStep: (e) => e.status === "failed" && failed.push(e.error) })
+            .visit("/codes")
+            .within("form", async (s) => {
+              s.fillIn("Login code", FAKE_SECRET);
+            }),
+        );
+        expect(error.message).toContain(`fillIn('Login code', '${HIDDEN}')`);
+        expect(error.message).not.toContain(FAKE_SECRET);
+        expect(failed.map((e) => String((e as Error).message)).join("\n")).not.toContain(FAKE_SECRET);
+      });
+    }, TEST_TIMEOUT);
+
     it("#56 step() and raw() run inside the chain", async () => {
       await withApp(async (h) => {
         const seen: string[] = [];
