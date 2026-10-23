@@ -7,6 +7,8 @@ export default defineConfig({
       "tests/rtl/**/*.test.tsx",
       "tests/request/**/*.test.ts",
       "tests/contract/**/*.test.ts",
+      "tests/fixtures/**/*.test.ts",
+      "tests/fixtures/**/*.test.tsx",
     ],
     environment: "jsdom",
   },
