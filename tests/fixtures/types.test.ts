@@ -38,6 +38,11 @@ describe("fixture API types", () => {
     expect(() => test.with({ greting: "typo" })).toThrow("is not a defined fixture");
     // @ts-expect-error -- wrong type for greeting
     test.with({ greeting: 42 });
+    // @ts-expect-error -- [x, { value: true }] is for functions; use value(x) or the plain value
+    test.with({ greeting: ["hello", { value: true }] });
+    // @ts-expect-error -- likewise for a number
+    test.with({ greeting: [42, { value: true }] });
+    test.with({ handler: [(_r: Request) => new Response("ok"), { value: true }] });
     expect(registered).toEqual(["a value", "a fixture fn", "[fn, options]", "value(fn)"]);
   });
 

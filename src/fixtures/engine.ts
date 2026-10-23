@@ -65,7 +65,10 @@ export type FixtureDef<T, F> =
   | FixtureFn<T, F>
   | FixtureValue<T>
   | [FixtureFn<T, F>, FixtureOptions]
-  | [T, FixtureOptions & { value: true }];
+  // [fn, { value: true }] only when the fixture's type is a function (others:
+  // value(x), or just the value) — at runtime only a function-first pair is
+  // unwrapped. Conditional, so it adds nothing for other fixtures.
+  | ([T] extends [(...args: never[]) => unknown] ? [T, FixtureOptions & { value: true }] : never);
 
 export type FixtureDefs<T, F> = { [K in keyof T]: FixtureDef<T[K], F> };
 
