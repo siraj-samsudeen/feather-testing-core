@@ -277,10 +277,14 @@ export class Session<TContext = unknown, TNative = unknown>
     const nameHidingValue =
       value === "" ? nameShowingValue : `${verb}('${label}', '${HIDDEN_VALUE}')`;
 
-    let hidden = false;
+    // Two things: whether the field is secret (then the driver's message
+    // is withheld, whatever the value — an empty expected value does not
+    // stop assertValue's message quoting the secret found), and whether the
+    // name needs masking (not for an empty value, shown as '').
+    let secretField = false;
     let fieldNotFound: Error | undefined;
     const hide = () => {
-      hidden = value !== "";
+      secretField = true;
       step.name = nameHidingValue;
     };
 
@@ -329,7 +333,7 @@ export class Session<TContext = unknown, TNative = unknown>
           if (askAfterRun && (await this.lastFilledFieldIsPassword())) {
             hide();
           }
-          if (hidden) {
+          if (secretField) {
             throw withheldError(nameHidingValue, label);
           }
           throw error;

@@ -1613,3 +1613,28 @@ describe("unsupported verbs name the adapter, the verb and what to use instead",
     expect(cause).toMatch(/\b(Use|use|Render|Assert|Run)\b/);
   });
 });
+
+describe("assertValue with an empty expected value on a password field", () => {
+  afterEach(cleanup);
+
+  it("never shows the value found", async () => {
+    render(<SignInApp />);
+    const SECRET = "fake-secret-value-123";
+    const failed: string[] = [];
+    const error = await createSession({
+      onStep: (e) => {
+        if (e.status === "failed") failed.push(String((e.error as Error).message));
+      },
+    })
+      .fillIn("Login code", SECRET)
+      .assertValue("Login code", "")
+      .run()
+      .then(
+        () => null,
+        (e: unknown) => e as StepError,
+      );
+    expect(error).toBeInstanceOf(StepError);
+    const text = [error!.message, String(error!.stack), String((error!.cause as Error)?.message), ...failed].join("\n");
+    expect(text).not.toContain(SECRET);
+  });
+});

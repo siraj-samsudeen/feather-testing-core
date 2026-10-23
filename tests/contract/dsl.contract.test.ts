@@ -742,6 +742,25 @@ for (const driver of drivers) {
       });
     }, TEST_TIMEOUT);
 
+    it("#12 assertValue with an empty expected value never shows the secret found", async () => {
+      await withApp(async (h) => {
+        const failed: string[] = [];
+        const error = await failure(
+          h
+            .session({
+              ...FAST,
+              onStep: (e) => e.status === "failed" && failed.push(String((e.error as Error)?.message)),
+            })
+            .visit("/codes")
+            .fillIn("Login code", FAKE_SECRET)
+            .assertValue("Login code", ""),
+        );
+        expect(error.message).toContain("[FAILED] assertValue('Login code', '')");
+        const text = [error.message, String(error.stack), String((error.cause as Error)?.message), ...failed].join("\n");
+        expect(text).not.toContain(FAKE_SECRET);
+      });
+    }, TEST_TIMEOUT);
+
     it("#56 step() and raw() run inside the chain", async () => {
       await withApp(async (h) => {
         const seen: string[] = [];
