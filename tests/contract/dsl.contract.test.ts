@@ -78,6 +78,14 @@ const pages: Pages = {
       <label for="age">Age</label><input id="age" type="number">
       <div style="display: none"><label for="gone">Gone</label><input id="gone"></div>
     </form>`,
+  // The field a step targets turns secret while the step waits.
+  "/turns-secret": `<form><label for="c">Code</label><input id="c" value="fake-secret-value-123"></form>
+    <script>setTimeout(() => { document.getElementById("c").type = "password"; }, 100);</script>`,
+  "/replaced-by-secret": `<form id="f"><label for="c">Code</label><input id="c" value="plain"></form>
+    <script>setTimeout(() => {
+      document.getElementById("f").innerHTML =
+        '<label for="p">Code</label><input id="p" type="password" value="fake-secret-value-123">';
+    }, 100);</script>`,
   "/list": `<ul><li class="item">One</li><li class="item">Two</li></ul>`,
   "/first-hidden": `<p class="msg" hidden>Old notice</p><p class="msg">New notice</p>`,
   "/dialog": `<p>Behind the dialog</p>
@@ -765,6 +773,30 @@ for (const driver of drivers) {
           expect(error.message).toContain(fact);
         });
       }, TEST_TIMEOUT);
+    }
+
+    // Only a browser runs page scripts: the field changes during the wait.
+    if (driver.name === "playwright") {
+      for (const page of ["/turns-secret", "/replaced-by-secret"]) {
+        it(`#12 a field that turns secret during the wait never shows its value (${page})`, async () => {
+          await withApp(async (h) => {
+            const events: string[] = [];
+            const error = await failure(
+              h
+                .session({
+                  timeout: 1000,
+                  onStep: (e) => void events.push(`${e.status} ${e.name} ${e.error ? (e.error as Error).message : ""}`),
+                })
+                .visit(page)
+                .assertValue("Code", "wrong"),
+            );
+            expect(error.message).toContain("[FAILED] assertValue('Code', '••••••')");
+            expect(error.message).toContain("(a secret field)");
+            const text = [error.message, String((error.cause as Error)?.message), ...events].join("\n");
+            expect(text).not.toContain(FAKE_SECRET);
+          });
+        }, TEST_TIMEOUT);
+      }
     }
 
     // Only a browser lays the page out: the request adapter has no CSS, so

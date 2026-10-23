@@ -774,33 +774,35 @@ export class PlaywrightDriver
   }
 
   /**
-   * The field fillIn() and assertValue() target, read as it is now: count,
-   * evaluateAll() and isVisible() never wait. Null unless exactly one
-   * field matches.
+   * The field fillIn() and assertValue() target, read as it is now, in one
+   * evaluateAll() (which never waits): how many match, whether the one
+   * that does is a password field, and only if not, its value and state.
+   * Null unless exactly one field matches.
    */
   async fieldState(label: string): Promise<FieldState | null> {
-    const field = this.fieldByLabelOrPlaceholder(label);
-    if ((await field.count()) !== 1) return null;
-    const [facts] = await field.evaluateAll(
-      (elements, notTypeable) =>
-        elements.map((el) => {
-          const input = el instanceof HTMLInputElement ? el : null;
-          const tag = el.tagName.toLowerCase();
-          return {
-            value: "value" in el ? String((el as HTMLInputElement).value) : (el.textContent ?? ""),
-            disabled: el.matches(":disabled"),
-            readOnly: el.hasAttribute("readonly"),
-            editable:
-              el instanceof HTMLTextAreaElement ||
-              (input !== null && !notTypeable.includes(input.type)) ||
-              (el as HTMLElement).isContentEditable,
-            kind: input ? `an <input type="${input.type}">` : `a <${tag}>`,
-          };
-        }),
+    return this.fieldByLabelOrPlaceholder(label).evaluateAll(
+      (elements, notTypeable): FieldState | null => {
+        if (elements.length !== 1) return null;
+        const el = elements[0] as HTMLElement;
+        const input = el instanceof HTMLInputElement ? el : null;
+        if (input?.type === "password") return { secret: true };
+        const box = el.getBoundingClientRect();
+        return {
+          secret: false,
+          value: "value" in el ? String((el as HTMLInputElement).value) : (el.textContent ?? ""),
+          disabled: el.matches(":disabled"),
+          readOnly: el.hasAttribute("readonly"),
+          // Playwright's own rule: a non-empty box, not visibility: hidden.
+          visible: box.width > 0 && box.height > 0 && getComputedStyle(el).visibility !== "hidden",
+          editable:
+            el instanceof HTMLTextAreaElement ||
+            (input !== null && !notTypeable.includes(input.type)) ||
+            el.isContentEditable,
+          kind: input ? `an <input type="${input.type}">` : `a <${el.tagName.toLowerCase()}>`,
+        };
+      },
       NOT_TYPEABLE_INPUT_TYPES,
     );
-    if (!facts) return null;
-    return { ...facts, visible: await field.isVisible() };
   }
 
   /**

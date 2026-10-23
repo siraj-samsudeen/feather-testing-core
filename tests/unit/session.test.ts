@@ -1231,6 +1231,52 @@ describe("a field that is not there", () => {
   });
 });
 
+describe("fieldState() after a failed fillIn/assertValue", () => {
+  const SECRET = "fake-secret-value-123";
+
+  async function failWith(state: unknown) {
+    const { driver } = createMockDriver({
+      assertValue: vi.fn(async () => {
+        throw new Error(`found '${SECRET}'`);
+      }),
+    });
+    driver.fieldIsPassword = vi.fn(async () => false);
+    driver.fieldState = vi.fn(async () => state) as never;
+    const events: string[] = [];
+    const error = await new Session(driver, {
+      onStep: (e) => void events.push(`${e.status} ${e.name} ${e.error ? (e.error as Error).message : ""}`),
+    })
+      .assertValue("Code", "wrong")
+      .run()
+      .then(
+        () => null,
+        (e: unknown) => e as StepError,
+      );
+    const text = [error!.message, String((error!.cause as Error)?.message), ...events].join("\n");
+    return { error: error!, text };
+  }
+
+  it("a field the driver now reports as secret: the step is hidden and no value or state is shown", async () => {
+    const { error, text } = await failWith({ secret: true });
+    expect(error.message).toContain("[FAILED] assertValue('Code', '••••••')");
+    expect(error.message).toContain("failed on the field labelled 'Code' (a secret field)");
+    expect(text).not.toContain(SECRET);
+  });
+
+  it("a state that does not say secret: false shows no value", async () => {
+    const { error, text } = await failWith({
+      value: SECRET,
+      disabled: false,
+      readOnly: false,
+      visible: true,
+      editable: true,
+      kind: 'an <input type="text">',
+    });
+    expect(error.message).toContain("failed on the field labelled 'Code'.");
+    expect(text).not.toContain(SECRET);
+  });
+});
+
 describe("fieldIsPassword()", () => {
   it("is asked with the label and the step's own timeout, and nothing else", async () => {
     const { driver } = createMockDriver();

@@ -152,9 +152,17 @@ export type UntilPredicate<TContext> = (
  * TNative is the adapter's own driving handle, handed to raw() callbacks:
  * Playwright's `Page`, RTL's scoped query object.
  */
-/** What {@link TestDriver.fieldState} reports about a field. */
-export interface FieldState {
-  /** Its current value. Shown only for a field that is not secret. */
+/**
+ * What {@link TestDriver.fieldState} reports about a field: for a password
+ * field only that it is secret, decided on the same element in the same
+ * read, so no value can come from a field that turned secret meanwhile.
+ */
+export type FieldState = { secret: true } | PlainFieldState;
+
+/** A field that is not secret, as {@link TestDriver.fieldState} reads it. */
+export interface PlainFieldState {
+  secret: false;
+  /** Its current value. */
   value: string;
   disabled: boolean;
   readOnly: boolean;

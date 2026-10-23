@@ -863,13 +863,13 @@ The driver checks the field before the step starts. So the hidden form is used e
 - a suggestion to run `debug()` to see the page;
 - for a field that is not secret, its state as the driver reads it: `assertValue` says "expected 'Ada', found 'Bob'", and `fillIn` says whether the field is disabled, read-only, not visible, or not a text field (`it is an <input type="checkbox">, which cannot be typed into`).
 
-A secret field never gets its value or state in the message. Richer diagnostics for secret fields are tracked in issue #16.
+A secret field never gets its value or state in the message. Whether it is secret is checked again on the exact field read for the message: a field that became a password field while the step waited (its type changed, or a password field took its place) is reported as secret, and the step's value is hidden. Richer diagnostics for secret fields are tracked in issue #16.
 
 The RTL and request adapters' `debug()` print password inputs' values as `'••••••'`.
 
 Limits: see [Known limitations](#known-limitations). Secret values can still appear in other steps' error output, such as a Testing Library DOM dump or an error the app throws. Playwright's own trace and HTML report record every action with its arguments. Treat traces and reports from runs that type real credentials as secret.
 
-A custom `TestDriver` takes part in the password rule by implementing the optional `fieldIsPassword(label, timeout?)` (asked before the step with the step's own timeout, if it set one; it may wait for the field, and throws if it never appears) and `lastFilledFieldIsPassword()` (asked after a `fillIn`, at once). It gives the facts above for fields that are not secret by implementing the optional `fieldState(label)`: the field's value, whether it is disabled, read-only, visible and editable, and its kind, read at once, or `null` when not exactly one field matches.
+A custom `TestDriver` takes part in the password rule by implementing the optional `fieldIsPassword(label, timeout?)` (asked before the step with the step's own timeout, if it set one; it may wait for the field, and throws if it never appears) and `lastFilledFieldIsPassword()` (asked after a `fillIn`, at once). It gives the facts above for fields that are not secret by implementing the optional `fieldState(label)`, read at once on the field the step targeted: `{ secret: true }` for a password field (decided on that element, in the same read), else `{ secret: false, value, disabled, readOnly, visible, editable, kind }`, or `null` when it cannot tell. The session shows a value only for `secret: false`.
 
 ## RTL Adapter Limitations
 

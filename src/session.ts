@@ -4,6 +4,7 @@ import type {
   AssertionOptions,
   DownloadOptions,
   FieldState,
+  PlainFieldState,
   FillInOptions,
   LayoutAssertionOptions,
   QueuedStep,
@@ -74,7 +75,7 @@ function fieldFactsError(
   stepName: string,
   label: string,
   expected: string,
-  state: FieldState,
+  state: PlainFieldState,
 ): Error {
   let facts: string;
   if (verb === "assertValue") {
@@ -387,9 +388,13 @@ export class Session<TContext = unknown, TNative = unknown>
           if (askAfterRun && (await this.lastFilledFieldIsPassword())) {
             hide();
           }
-          throw secretField
-            ? ownFactsError(step.name, label, true)
-            : await this.fieldFailure(verb, step.name, label, value);
+          // Facts only for a field the driver read and reported, in the
+          // same read, as not secret; a field reported secret now is hidden.
+          const state = secretField ? null : await this.readFieldState(label);
+          if (state?.secret === true) hide();
+          throw state?.secret === false
+            ? fieldFactsError(verb, step.name, label, value, state)
+            : ownFactsError(step.name, label, secretField);
         }
         if (askAfterRun && (await this.lastFilledFieldIsPassword())) {
           hide();
@@ -404,26 +409,13 @@ export class Session<TContext = unknown, TNative = unknown>
     return this;
   }
 
-  /**
-   * The error for a fillIn/assertValue that failed on a field that is not
-   * secret: the field's state when the driver can read it, else the plain
-   * own-facts error.
-   */
-  private async fieldFailure(
-    verb: "fillIn" | "assertValue",
-    stepName: string,
-    label: string,
-    expected: string,
-  ): Promise<Error> {
-    let state: FieldState | null = null;
+  /** The driver's fieldState(), or null when it has none, cannot tell, or fails. */
+  private async readFieldState(label: string): Promise<FieldState | null> {
     try {
-      state = (await this.driver.fieldState?.(label)) ?? null;
+      return (await this.driver.fieldState?.(label)) ?? null;
     } catch {
-      state = null;
+      return null;
     }
-    return state
-      ? fieldFactsError(verb, stepName, label, expected, state)
-      : ownFactsError(stepName, label, false);
   }
 
   /** Ask the driver whether the field just filled is a password field. */

@@ -601,7 +601,10 @@ export class RequestDriver
     } catch {
       return null;
     }
+    // Decided on the element read here: never a value from a password field.
+    if (isInput(field, "password")) return { secret: true };
     return {
+      secret: false,
       value: (field as HTMLInputElement).value ?? "",
       disabled: isDisabled(field),
       readOnly: field.hasAttribute("readonly"),

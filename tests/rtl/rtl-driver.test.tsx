@@ -1737,3 +1737,70 @@ describe("RTLDriver — why fillIn/assertValue failed on a field that is not sec
     expect(error.message).not.toContain("fake-secret-value-123");
   });
 });
+
+describe("RTLDriver — a field that turns secret, and an overridden findField", () => {
+  const SECRET = "fake-secret-value-123";
+
+  async function failure(session: { run(): Promise<void> }, events: string[]) {
+    const error = await session.run().then(
+      () => null,
+      (e: unknown) => e as StepError,
+    );
+    expect(error).toBeInstanceOf(StepError);
+    return [error!.message, String((error!.cause as Error)?.message), ...events].join("\n");
+  }
+  const recorder = (events: string[]) => ({
+    timeout: 400,
+    onStep: (e: { status: string; name: string; error?: unknown }) =>
+      void events.push(`${e.status} ${e.name} ${e.error ? (e.error as Error).message : ""}`),
+  });
+
+  it("the type changes to password during the wait", async () => {
+    render(
+      <form>
+        <label htmlFor="c">Code</label>
+        <input id="c" defaultValue={SECRET} />
+      </form>,
+    );
+    setTimeout(() => ((document.getElementById("c") as HTMLInputElement).type = "password"), 50);
+    const events: string[] = [];
+    const text = await failure(createSession(recorder(events)).assertValue("Code", "wrong"), events);
+    expect(text).toContain("[FAILED] assertValue('Code', '••••••')");
+    expect(text).not.toContain(SECRET);
+  });
+
+  it("the text field is removed, leaving a password field with that placeholder", async () => {
+    render(
+      <form>
+        <label htmlFor="t">Code</label>
+        <input id="t" defaultValue="plain" />
+        <input type="password" placeholder="Code" defaultValue={SECRET} />
+      </form>,
+    );
+    setTimeout(() => document.getElementById("t")!.remove(), 50);
+    const events: string[] = [];
+    const text = await failure(createSession(recorder(events)).assertValue("Code", "wrong"), events);
+    expect(text).not.toContain(SECRET);
+  });
+
+  it("a subclass's findField picks the field the message describes", async () => {
+    class ByTestId extends RTLDriver {
+      protected override async findField(label: string): Promise<HTMLElement> {
+        return screen.getByTestId(label);
+      }
+    }
+    render(
+      <form>
+        <input data-testid="Code" defaultValue="plain" />
+        <label htmlFor="p">Code</label>
+        <input id="p" type="password" defaultValue={SECRET} />
+      </form>,
+    );
+    const events: string[] = [];
+    const { Session } = await import("../../src/session.js");
+    const session = new Session(new ByTestId(undefined, undefined, 400), recorder(events));
+    const text = await failure(session.assertValue("Code", "wrong"), events);
+    expect(text).toContain("expected 'wrong', found 'plain'.");
+    expect(text).not.toContain(SECRET);
+  });
+});

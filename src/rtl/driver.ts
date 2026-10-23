@@ -53,6 +53,20 @@ export class RTLDriver implements TestDriver<RTLStepContext, RTLQueries> {
   protected lastFormElement: HTMLFormElement | null = null;
   /** The field the most recent fillIn() found; null if it found none. */
   protected lastFilledField: HTMLElement | null = null;
+  /**
+   * The field the last fillIn() or assertValue() resolved, through
+   * findField() (which a subclass may override): fieldState() reads this
+   * element, so the step and its failure message describe the same one.
+   */
+  private stepField: { label: string; element: HTMLElement } | null = null;
+
+  /** findField() for a fillIn/assertValue step, remembered for fieldState(). */
+  private async stepFieldFor(label: string): Promise<HTMLElement> {
+    this.stepField = null;
+    const element = await this.findField(label);
+    this.stepField = { label, element };
+    return element;
+  }
   /** Per-lookup timeout in ms; undefined leaves RTL's own default in place. */
   protected timeout: number | undefined;
 
@@ -140,7 +154,7 @@ export class RTLDriver implements TestDriver<RTLStepContext, RTLQueries> {
 
   async fillIn(label: string, value: string): Promise<void> {
     this.lastFilledField = null;
-    const input = await this.findField(label);
+    const input = await this.stepFieldFor(label);
     this.lastFilledField = input;
     await this.user.clear(input);
     // user.type() reads { and [ as key syntax ({Enter}, [ShiftLeft]); a
@@ -161,16 +175,18 @@ export class RTLDriver implements TestDriver<RTLStepContext, RTLQueries> {
   }
 
   /**
-   * The field fillIn() and assertValue() target, read as it is now: the
-   * queryAll* queries never wait. Null unless exactly one field matches.
+   * The field the failed fillIn() or assertValue() itself resolved (no
+   * second lookup, no waiting), read as it is now. Whether it is secret is
+   * decided on that element in the same read. Null when the step never
+   * found its field.
    */
   async fieldState(label: string): Promise<FieldState | null> {
-    let matches = this.container.queryAllByLabelText(label);
-    if (matches.length === 0) matches = this.container.queryAllByPlaceholderText(label);
-    if (matches.length !== 1) return null;
-    const el = matches[0]!;
+    if (this.stepField?.label !== label) return null;
+    const el = this.stepField.element;
     const input = el instanceof HTMLInputElement ? el : null;
+    if (input?.type === "password") return { secret: true };
     return {
+      secret: false,
       value: "value" in el ? String((el as HTMLInputElement).value) : (el.textContent ?? ""),
       disabled: el.matches(":disabled"),
       readOnly: el.hasAttribute("readonly"),
@@ -431,7 +447,7 @@ export class RTLDriver implements TestDriver<RTLStepContext, RTLQueries> {
   }
 
   async assertValue(label: string, value: string): Promise<void> {
-    const field = await this.findField(label);
+    const field = await this.stepFieldFor(label);
     await waitFor(() => {
       const actual = (field as ValueElement).value;
       if (actual !== value) {
