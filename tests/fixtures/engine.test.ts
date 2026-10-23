@@ -537,4 +537,39 @@ describe("defineTest", () => {
       expect(teardowns).toBe(1);
     });
   });
+
+  describe("file-level lifecycle", () => {
+    // eslint-disable-next-line feather-testing/no-wait-for-timeout -- builds deliberately slow fixtures; no test waits on it
+    const after = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+    it("a pending file-scoped fixture finishes and is torn down before what it depends on", async () => {
+      const { runner, run, endFile } = recordingRunner();
+      const log: string[] = [];
+      const test = defineTest(
+        runner,
+        {
+          browser: [
+            async ({}, use: (v: string) => Promise<void>) => {
+              await use("browser");
+              log.push("browser down");
+            },
+            { scope: "file" },
+          ],
+          app: [
+            async ({ browser }: { browser: string }, use: (v: string) => Promise<void>) => {
+              await after(300);
+              await use(`app on ${browser}`);
+              log.push("app down");
+            },
+            { scope: "file" },
+          ],
+        } as never,
+        { testTimeout: 100, teardownTimeout: 1000 },
+      );
+      test("needs app", async ({ app }: { app: string }) => void app);
+      await expect(run("needs app")).rejects.toThrow("did not finish within 100ms");
+      await endFile();
+      expect(log).toEqual(["app down", "browser down"]);
+    });
+  });
 });
