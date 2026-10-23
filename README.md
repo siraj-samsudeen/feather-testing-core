@@ -110,6 +110,37 @@ Notice every example uses the **exact same methods** — `fillIn`, `clickButton`
 
 Inspired by [Phoenix Test](https://hexdocs.pm/phoenix_test/PhoenixTest.html) — Elixir's pipe-chain testing DSL.
 
+### One DSL, two drivers: Playwright and request
+
+A chain written for the request adapter runs unchanged on the Playwright adapter, and the other way round, as long as the page needs no JavaScript. Both entry points take the native handle and the same options:
+
+```ts
+import { createSession } from "feather-testing-core/request";        // no browser
+// import { createSession } from "feather-testing-core/playwright";  // a real browser
+
+const session = createSession(app.handle /* or a Playwright page */, {
+  baseUrl: "http://localhost:3000", // what visit() paths resolve against
+  timeout: 4000,                    // budget for anything that waits; 0 = no limit
+  onStep: (e) => console.log(e.status, e.name), // started / passed / failed, secrets hidden
+});
+```
+
+`tests/contract/` runs one spec of DSL behaviour against both drivers (32 tests each, under `bun test` and vitest). [docs/ADAPTER_PARITY.md](docs/ADAPTER_PARITY.md) lists every surface and behaviour with its status. Here is what differs, and why:
+
+| Behaviour | Playwright | Request | Why |
+|-----------|------------|---------|-----|
+| JavaScript, CSS, layout (`hover`, `dropFile`, keys other than Enter, `assertComputedStyle`, layout verbs, `javascript:` links) | Runs them | `BrowserOnlyVerbError` | No browser |
+| Waiting | Assertions retry until `timeout`; page loads wait up to `navigationTimeout` | Nothing retries (responses arrive complete); only `until` uses `timeout` | Nothing changes on its own |
+| Visibility | CSS decides (`display: none` is hidden) | Markup decides (`hidden`, `<template>`, ...) | No stylesheets |
+| `debug()` | Saves a screenshot | Prints the HTML, password values hidden | |
+| A 204/205 answer to a form | The browser stays, but Playwright 1.64's locators then hang | Stays on the page | Upstream Playwright |
+| Name of a wrapping `<label>` with a `<select>` inside | Includes the option texts | Excludes them | Give such labels `for` |
+| `within()` | Selector must match at least one element | Exactly one | Undecided, see the parity doc |
+| An empty `required` field when submitting | The browser blocks it; the step passes | The step fails, naming the field | Undecided, see the parity doc |
+| `target` on a form or link | This page stays | Ignored: this page navigates | Undecided, see the parity doc |
+| `assertHas(selector)` | The first match must be visible | Any rendered match | Undecided, see the parity doc |
+| Adapter-only options | `navigationTimeout`, `navigationStartWindow`, `replacedNavigationWindow`, the `@playwright/test` fixture | `close()` on the driver | |
+
 ## Installation
 
 ```bash
@@ -238,6 +269,7 @@ test("a failing chain names the failed step", async () => {
 
 | Option | Default | What it does |
 |--------|---------|--------------|
+| `baseUrl` | The browser context's `baseURL` | What `visit()` paths resolve against, as `new URL(path, baseUrl)`, the same as the request adapter. |
 | `timeout` | Inside `@playwright/test`: Playwright's own `expect.timeout` / `actionTimeout`. Elsewhere: `4000` ms | Budget for every assertion, wait and action in the session. A per-call `timeout` (e.g. `assertHas(sel, { timeout })`) still wins. `0` means no limit. |
 | `navigationTimeout` | Playwright's navigation timeout (30 s unless configured) | Budget for page loads: `visit()`, `reload()`, and the new page after a submit or click that navigates. `0` means no limit. |
 | `navigationStartWindow` | `500` ms | After an action signals it is leaving the page but before any request is seen: how long to wait for the navigation to start. Raise it if submits return too early on a slow CI machine. |
@@ -736,11 +768,12 @@ The third constructor argument is a per-lookup timeout in ms; omit it to keep RT
 ### The handler contract
 
 ```ts
-createSession(handler, { baseUrl? })
+createSession(handler, { baseUrl?, timeout?, onStep? })
 ```
 
 - `handler` is any `(request: Request) => Response | Promise<Response>`: Elysia's `app.handle`, Hono's `app.fetch`, or `fetch` itself pointed at a running server. Pass a function that keeps its `this` (both of those are already bound). The adapter has no framework dependency.
 - `baseUrl` is what `visit()` paths resolve against — an origin, optionally with a base path (`"http://localhost/app/"`). It defaults to `http://localhost`. Every request carries a full URL on that origin.
+- `timeout` is the budget of `until()`, the one verb that waits here (default 4000 ms, `0` = no limit), and `onStep` reports each step as it starts, passes or fails, as in the Playwright adapter.
 - Each request is sent with `redirect: "manual"`; the adapter follows redirects itself.
 
 ### What it does, as a browser would
@@ -748,7 +781,7 @@ createSession(handler, { baseUrl? })
 | Behaviour | How |
 |-----------|-----|
 | Form submission | Per the HTML spec: `method` and `action` (relative to the page or its `<base href>`; missing or empty means the current URL), the submitter's `formaction` / `formmethod` / `formenctype`, successful controls only (named, not disabled, not in a disabled `<fieldset>` outside its first `<legend>`, not in a `<datalist>`), in tree order, including controls outside the form with `form="id"`. Defaults come from the markup; checkboxes and radios send `value` or `"on"` when checked; `<select>` sends every selected option (multiple too); `<textarea>` newlines go out as CRLF; `_charset_` hidden inputs send `UTF-8`; only the clicked submit button's `name`/`value` is sent |
-| Encodings | `application/x-www-form-urlencoded`, `multipart/form-data` (files from `attachFile`, with name and a type from the extension; an empty file input sends an empty, nameless file), and `text/plain`. A GET form replaces the action's query string. `method="dialog"` throws |
+| Encodings | `application/x-www-form-urlencoded`, `multipart/form-data` (files from `attachFile`, with name and a type from the extension; an empty file input sends an empty, nameless file), and `text/plain`. A GET form replaces the action's query string. `method="dialog"` closes its `<dialog>` and sends nothing |
 | Validation | A form with an empty `required` control is not sent — the step fails saying which — unless the form has `novalidate` or the submitter `formnovalidate`. Other constraints (`pattern`, `min`, `type="email"`, …) are not checked: the server's validation is what a request test is for |
 | Buttons | A submit button submits its form, a reset button restores the defaults. A link styled as a button (`<a role="button" href>`) is followed. A `type="button"` button, any other `role="button"` element, or a button outside any form does nothing without JavaScript, so it throws `BrowserOnlyVerbError` |
 | `submit()` / `pressKey("Enter")` | `submit()` uses the same order as the Playwright adapter (explicit `type="submit"`, a button named like "submit", then Enter). Enter is [implicit submission](https://html.spec.whatwg.org/multipage/form-control-infrastructure.html#implicit-submission): the form's first submit button, or with none, the form itself when it has at most one text field. In a `<textarea>` Enter types a newline |
@@ -756,14 +789,14 @@ createSession(handler, { baseUrl? })
 | Redirects | 301/302 turn a POST into a GET, 303 turns anything but HEAD into a GET, 307/308 resend the method and body. At most 20 hops |
 | Cookies | Kept across requests and redirect hops: host-only and `Domain` cookies, `Path`, `Max-Age` / `Expires` (including deletion), `Secure` (sent over https and to localhost). No public-suffix list |
 | Headers | `Accept: text/html,…`, `Cookie`, and `Origin` on every non-GET request, as browsers send for CSRF checks |
-| Responses | Any status is shown as a page (a 422 validation page, a 404). A non-HTML body is shown as text, as a browser shows JSON. A `Content-Disposition: attachment` response, or any response to an `<a download>` link, is a download: the session stays on its page and `assertDownload` sees the suggested filename |
+| Responses | Any status is shown as a page (a 422 validation page, a 404), except 204 and 205, which leave the session on its page as a browser does. A non-HTML body is shown as text, as a browser shows JSON. A `Content-Disposition: attachment` response, or any response to an `<a download>` link, is a download: the session stays on its page and `assertDownload` sees the suggested filename |
 | Current URL | Tracked through redirects for `assertPath` / `refutePath` / `reload` |
 
 Addressing follows the other adapters: interactions match a label, placeholder, or accessible name **exactly** (whitespace-normalized, case-sensitive), and more than one match is an error naming the count — scope with `within()`. Labels are `<label for>`, a wrapping `<label>` (which labels only its first labelable descendant), `aria-labelledby`, and `aria-label`, then the placeholder. A wrapping label is named without the text of controls nested in it (`<select>`, `<textarea>`, `<button>`, `<output>`, `<meter>`, `<progress>`), as Testing Library names it; Playwright keeps that text, so on Playwright `<label>Plan <select>…</select></label>` is called "Plan Free Pro" — give such a label `for` when one spec must run on both. `fillIn` refuses a value the field cannot hold (`"abc"` in a number input, a malformed date) instead of letting it be sent empty, as Playwright's `fill()` does. Text assertions match a case-insensitive substring of the rendered text, like Playwright's `getByText`. "Rendered" is judged from markup alone: `<head>`, `<script>`, `<style>`, `<template>`, `<noscript>`, `hidden` subtrees and hidden inputs are not page text; there is no CSS, so `display: none` is not seen. `assertHas` needs a rendered match (any of them; Playwright checks only the first); its `count`, and `refuteHas`, count every match, as Playwright's `toHaveCount` does. A `within()` scope is a selector recipe, re-resolved against the current page at every step, so it keeps working after a navigation inside it. It must match exactly one element, which is stricter than Playwright's `within()` (that only requires the selector to match something): scope with a selector that names one container. Focus is part of the session, so `pressKey("Enter")` after a `fillIn` inside `within()` submits that field's form, as in a browser.
 
 ### Waiting
 
-Responses arrive complete, so no verb waits or retries: each looks at the current page once, and the `timeout` options assertions accept are ignored. `until(description, fn, opts)` still polls, because the server's state can change: between checks, a page that came from a GET is fetched again; a page that came from a POST is not re-sent, and the predicate is just evaluated again (it can call the context's `fetch` itself). The budget defaults to 5000 ms and the interval to 100 ms.
+Responses arrive complete, so no verb waits or retries: each looks at the current page once, and the `timeout` options assertions accept are ignored. `until(description, fn, opts)` still polls, because the server's state can change: between checks, a page that came from a GET is fetched again; a page that came from a POST is not re-sent, and the predicate is just evaluated again (it can call the context's `fetch` itself). The budget is the session `timeout` (default 4000 ms, `0` for no limit) unless the call sets one, and the interval defaults to 100 ms.
 
 The step and `until` context is `{ page, scope, fetch }`: the current page as `raw()` gets it, the scope element, and a `fetch(url, init?)` that sends a request with the session's cookies without navigating, as the page's own script would. Unlike a browser's `fetch`, it does not follow redirects: a 3xx comes back as it is, so you can assert on it.
 
@@ -817,7 +850,7 @@ class WrapperLabelDriver extends RequestDriver {
   }
 
   protected override scoped(selectors: readonly string[]) {
-    return new WrapperLabelDriver(this.browser, {}, selectors);
+    return new WrapperLabelDriver(this.browser, this.options, selectors);
   }
 }
 
@@ -909,7 +942,8 @@ Deliberate exceptions stay possible and stay visible: an `eslint-disable-next-li
 - `submit()`, `click()`, `clickLink()`, `clickButton()` and `pressKey()` wait for the new page after starting a navigation of this page.
 - Outside the Playwright Test runner, assertions and actions default to a 4000 ms budget (`createSession(page, { timeout })` to change it). Inside the runner the configured Playwright timeouts apply, as before. Page loads (`visit()`, `reload()`, the page after a submit) keep Playwright's navigation timeout (30 s), as in 0.6; change it with `navigationTimeout`.
 - `fillIn()` waits for its field before the step starts, to hide a password field's value from step titles and `onStep`. A field that never appears fails the step with its value hidden.
-- New: `createSession(page, { timeout, navigationTimeout, navigationStartWindow, replacedNavigationWindow, onStep })`, `session.run()`.
+- New: `createSession(page, { baseUrl, timeout, navigationTimeout, navigationStartWindow, replacedNavigationWindow, onStep })`, `session.run()`. The request adapter takes `{ baseUrl, timeout, onStep }` and the RTL adapter `{ onStep }`. The shared `SessionOptions` type, `StepEvent` and `DEFAULT_TIMEOUT` are exported from every entry point.
+- Playwright `fillIn()` on a label that matches several fields fails at once with "N fields are labelled '…'", and hides the value, as the request adapter does.
 
 ## Upgrading to 0.5.0
 
