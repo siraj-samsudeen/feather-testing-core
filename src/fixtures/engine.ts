@@ -350,6 +350,10 @@ export function destructuredNames(fn: (...args: never[]) => unknown): string[] |
 
 const OPTION_KEYS = new Set(["scope", "deps", "value"]);
 
+/** For errors about a function taken as a fixture function. */
+const WRAP_VALUE_HINT =
+  "If this function is the fixture's value (e.g. a request handler), wrap it: value(fn).";
+
 /**
  * `[definition, options]`: a two-item array whose second item has only
  * fixture-option keys. Anything else — say two cookies — is a plain value.
@@ -389,7 +393,8 @@ function normalize(name: string, def: unknown): Definition {
     throw new Error(
       `fixture '${name}': cannot read its dependencies from ` +
         `${param.kind === "unsupported" ? param.why : `the parameter '${param.name}'`}. ` +
-        `Destructure them (async ({ baseUrl }, use) => …), or name them: [fn, { deps: ["baseUrl"] }].`,
+        `Destructure them (async ({ baseUrl }, use) => …), or name them: [fn, { deps: ["baseUrl"] }]. ` +
+        WRAP_VALUE_HINT,
     );
   }
   return { fn: null, value: body, scope, deps: [] };
@@ -421,15 +426,20 @@ async function start(
   let provided!: (box: { value: unknown }) => void;
   const valueReady = new Promise<{ value: unknown }>((resolve) => (provided = resolve));
   let used = false;
-  const run = def
-    .fn(deps, async (value) => {
-      used = true;
-      provided({ value });
-      await released;
-    }, info)
+  // Through a promise: a function that is really a value (a request
+  // handler, say) returns something that is not one, and must still get
+  // the "never called use()" error, not "then is not a function".
+  const run = Promise.resolve()
+    .then(() =>
+      def.fn!(deps, async (value) => {
+        used = true;
+        provided({ value });
+        await released;
+      }, info),
+    )
     .then(() => {
       if (!used) {
-        throw new Error(`fixture '${name}' finished without calling use(value)`);
+        throw new Error(`fixture '${name}' finished without calling use(value). ${WRAP_VALUE_HINT}`);
       }
     });
   // The function may also end (or fail) before calling use.

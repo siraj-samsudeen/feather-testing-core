@@ -847,6 +847,24 @@ describe("defineTest", () => {
       expect(got).toEqual(["shared", "handled x"]);
     });
 
+    it("a bare handler in .with() is read as a fixture function, and the error says to wrap it in value(fn)", async () => {
+      const { runner, run } = recordingRunner();
+      const test = defineTest(runner, { handler: value(() => "default") } as never);
+      // A parameter the engine cannot read as fixtures: refused when defined.
+      expect(() => test.with({ handler: (request: string) => `handled ${request}` })).toThrow(
+        "If this function is the fixture's value (e.g. a request handler), wrap it: value(fn).",
+      );
+      // `_req` reads as "no fixtures", so it runs as a fixture function and
+      // never calls use(): the failure comes when a test needs it.
+      test.with({ handler: (_req: string) => "handled" })("bare", async ({ handler }: { handler: unknown }) => {
+        void handler;
+      });
+      await expect(run("bare")).rejects.toThrow(
+        "fixture 'handler' finished without calling use(value). " +
+          "If this function is the fixture's value (e.g. a request handler), wrap it: value(fn).",
+      );
+    });
+
     it("value(x) makes anything a plain value: a function, or an ambiguous array", async () => {
       const { runner, run } = recordingRunner();
       const handler = (request: string) => `handled ${request}`;
