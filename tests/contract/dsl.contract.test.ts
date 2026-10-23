@@ -54,6 +54,7 @@ const pages: Pages = {
       <label for="code">Login code</label><input id="code" name="code" type="password">
       <button>Check</button>
     </form>`,
+  "/phrase": `<form><label for="phrase">Recovery phrase</label><textarea id="phrase" name="phrase"></textarea></form>`,
   "/codes": `
     <form method="post" action="/echo">
       <label for="code">Login code</label><input id="code" name="code" type="password">
@@ -549,6 +550,32 @@ for (const driver of drivers) {
         );
         const text = [error.message, String(error.stack), String((error.cause as Error)?.message), ...failed].join("\n");
         expect(text).not.toContain(FAKE_SECRET);
+      });
+    }, TEST_TIMEOUT);
+
+    it("#11 a field marked sensitive stays secret for assertValue, also with another value", async () => {
+      await withApp(async (h) => {
+        const OTHER = "other-secret-value-456";
+        const events: string[] = [];
+        const onStep = (e: { status: string; name: string; error?: unknown }) =>
+          events.push(`${e.status} ${e.name} ${e.error ? String((e.error as Error).message) : ""}`);
+        await h
+          .session({ onStep })
+          .visit("/phrase")
+          .fillIn("Recovery phrase", FAKE_SECRET, { sensitive: true })
+          .assertValue("Recovery phrase", FAKE_SECRET);
+        expect(events).toContain(`passed assertValue('Recovery phrase', '${HIDDEN}') `);
+        const error = await failure(
+          h
+            .session({ ...FAST, onStep })
+            .visit("/phrase")
+            .fillIn("Recovery phrase", FAKE_SECRET, { sensitive: true })
+            .within("form", (s) => s.assertValue("Recovery phrase", OTHER)),
+        );
+        expect(error.message).not.toContain(OTHER);
+        expect(error.message).not.toContain(FAKE_SECRET);
+        expect(events.join("\n")).not.toContain(OTHER);
+        expect(events.join("\n")).not.toContain(FAKE_SECRET);
       });
     }, TEST_TIMEOUT);
 

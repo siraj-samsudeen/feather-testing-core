@@ -710,6 +710,7 @@ The chain prints the value each `fillIn` typed and each `assertValue` expected, 
 | The label looks secret: it contains `password`, `passcode`, `secret`, `token` or `api key` (also `api_key`, `apikey`), or the whole word `pin` or `otp`, in any case | `fillIn('Password:', pw)` |
 | You mark it sensitive | `fillIn('Recovery phrase', phrase, { sensitive: true })` |
 | The field is a password field (`type="password"`), whatever its label | `fillIn('Login code', code)` |
+| An earlier step in the chain found the field secret by one of the rules above | `assertValue('Recovery phrase', phrase)` after the sensitive `fillIn` |
 
 The driver is asked about the field before the step starts, so the hidden form is used everywhere: the chain, `Failed at:`, `onStep` events, and Playwright `test.step()` titles. The real value is still typed; only what is printed changes. When a step on a secret field fails, the driver's own message is replaced by one naming the step, because it can quote the value or part of it.
 

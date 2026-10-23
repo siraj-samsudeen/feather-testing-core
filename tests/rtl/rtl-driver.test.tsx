@@ -1624,3 +1624,29 @@ describe("secrets in other steps' errors", () => {
     expect(printed.join("\n")).not.toContain(SECRET);
   });
 });
+
+describe("a field marked sensitive stays secret for assertValue", () => {
+  afterEach(cleanup);
+
+  it("hides the expected value, even a different one, in names, events and errors", async () => {
+    render(<SignInApp />);
+    const SECRET = "fake-secret-value-123";
+    const OTHER = "other-secret-value-456";
+    const events: string[] = [];
+    const error = await createSession({
+      onStep: (e) =>
+        events.push(`${e.status} ${e.name} ${e.error ? String((e.error as Error).message) : ""}`),
+    })
+      .fillIn("Recovery phrase", SECRET, { sensitive: true })
+      .assertValue("Recovery phrase", OTHER)
+      .run()
+      .then(
+        () => null,
+        (e: unknown) => e as StepError,
+      );
+    expect(error).toBeInstanceOf(StepError);
+    expect(error!.message).toContain("[FAILED] assertValue('Recovery phrase', '••••••')");
+    expect(error!.message).not.toContain(OTHER);
+    expect(events.join("\n")).not.toContain(OTHER);
+  });
+});

@@ -292,7 +292,10 @@ export class Session<TContext = unknown, TNative = unknown>
       nameHidingValue,
       index: this.stepIndex++,
       prepare: async () => {
-        if (knownSecret) {
+        // A field marked sensitive earlier in the chain (by fillIn's option
+        // or a password check), in this session or the one it came from,
+        // stays secret for every later step on it.
+        if (knownSecret || this.secrets.hasLabel(label)) {
           hide();
           return;
         }
