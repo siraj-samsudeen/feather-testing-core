@@ -25,6 +25,7 @@ import {
   renderedText,
 } from "./dom.js";
 import {
+  attachedFile,
   formControls,
   isButtonElement,
   isResetButton,
@@ -683,7 +684,7 @@ export class RequestDriver
     const bytes = await readFile(path);
     this.browser.files.set(
       input,
-      new File([bytes], basename(path), { type: mimeType(path) }),
+      attachedFile([bytes], basename(path), mimeType(path)),
     );
     this.touched(input);
   }

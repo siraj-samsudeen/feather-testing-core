@@ -37,6 +37,32 @@ function redirect(location: string, status = 303): Response {
   return new Response(null, { status, headers: { location } });
 }
 
+/**
+ * Read multipart/form-data as sent, part by part. The runtime's formData()
+ * is not used: Bun's parser reports a part with `filename=""` as a file
+ * with no name and no type, so /echo would not show what was really sent.
+ * Text bodies only — the fixture files are text.
+ */
+function parseMultipart(
+  body: string,
+  contentType: string,
+): { name: string; filename?: string; type: string; body: string }[] {
+  const boundary = /boundary=([^;]+)/.exec(contentType)?.[1] ?? "";
+  return body
+    .split(`--${boundary}`)
+    .slice(1, -1)
+    .map((chunk) => {
+      const headerEnd = chunk.indexOf("\r\n\r\n");
+      const headers = chunk.slice(2, headerEnd);
+      const content = chunk.slice(headerEnd + 4, -2);
+      const disposition = /content-disposition:([^\r]*)/i.exec(headers)?.[1] ?? "";
+      const name = /\bname="([^"]*)"/.exec(disposition)?.[1] ?? "";
+      const filename = /\bfilename="([^"]*)"/.exec(disposition)?.[1];
+      const type = /content-type: *([^\r]*)/i.exec(headers)?.[1] ?? "";
+      return { name, filename, type, body: content };
+    });
+}
+
 async function echo(request: Request): Promise<Response> {
   const url = new URL(request.url);
   const type = request.headers.get("content-type") ?? "";
@@ -45,15 +71,12 @@ async function echo(request: Request): Promise<Response> {
     entries.push(`query ${name}=${value}`);
   }
   if (type.startsWith("multipart/form-data")) {
-    for (const [name, value] of await request.formData()) {
-      if (typeof value === "string") {
-        entries.push(`body ${name}=${value}`);
-      } else {
-        const text = await value.text();
-        entries.push(
-          `body ${name}=file:${value.name}:${value.type}:${value.size}:${text}`,
-        );
-      }
+    for (const part of parseMultipart(await request.text(), type)) {
+      entries.push(
+        part.filename === undefined
+          ? `body ${part.name}=${part.body}`
+          : `body ${part.name}=file:${part.filename}:${part.type}:${part.body.length}:${part.body}`,
+      );
     }
   } else if (type.startsWith("application/x-www-form-urlencoded")) {
     for (const [name, value] of new URLSearchParams(await request.text())) {
