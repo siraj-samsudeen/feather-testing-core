@@ -66,7 +66,9 @@ export function renderedText(node: Node, { withAlt = false } = {}): string {
 export function labelText(label: Element): string {
   const copy = label.cloneNode(true) as Element;
   for (const nested of Array.from(
-    copy.querySelectorAll("select, textarea, datalist"),
+    copy.querySelectorAll(
+      "select, textarea, datalist, button, meter, output, progress",
+    ),
   )) {
     nested.remove();
   }
@@ -95,6 +97,9 @@ export function controlLabels(control: Element): string[] {
   if (ariaLabel) names.push(normalize(ariaLabel));
   const labels = (control as HTMLInputElement).labels;
   for (const label of labels ? Array.from(labels) : []) {
+    // A wrapping label without `for` labels only its first labelable
+    // descendant, whatever else is inside it.
+    if (!label.hasAttribute("for") && label.control !== control) continue;
     names.push(labelText(label));
   }
   return names.filter((name) => name !== "");
@@ -138,10 +143,34 @@ export function accessibleName(element: Element): string {
 /** An input's type as the HTML spec reads it: lowercase, "text" when absent
  * or unknown to us. */
 export function inputType(element: Element): string {
-  return (
-    (element.getAttribute("type") ?? "text").trim().toLowerCase() || "text"
-  );
+  const type = (element.getAttribute("type") ?? "").trim().toLowerCase();
+  return INPUT_TYPES.has(type) ? type : "text";
 }
+
+const INPUT_TYPES = new Set([
+  "hidden",
+  "text",
+  "search",
+  "tel",
+  "url",
+  "email",
+  "password",
+  "date",
+  "month",
+  "week",
+  "time",
+  "datetime-local",
+  "number",
+  "range",
+  "color",
+  "checkbox",
+  "radio",
+  "file",
+  "submit",
+  "image",
+  "reset",
+  "button",
+]);
 
 /** A button's type: submit unless it says reset or button. */
 export function buttonType(element: Element): string {

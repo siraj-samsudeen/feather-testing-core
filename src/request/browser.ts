@@ -30,40 +30,56 @@ export interface CurrentPage {
   document: Document;
 }
 
+const WINDOW_SETTINGS = {
+  disableJavaScriptEvaluation: true,
+  disableJavaScriptFileLoading: true,
+  disableCSSFileLoading: true,
+  disableIframePageLoading: true,
+  disableComputedStyleRendering: true,
+  navigation: {
+    disableMainFrameNavigation: true,
+    disableChildFrameNavigation: true,
+    disableChildPageNavigation: true,
+    disableFallbackToSetURL: true,
+  },
+};
+
+/** The happy-dom window that owns the current page's document. */
+interface WindowHolder {
+  window: Window | null;
+}
+
 /**
- * The state one browser tab would hold — current page, cookies — shared by a
- * driver and every within()-scoped driver made from it, so a navigation
- * inside a scope is seen by the whole session.
+ * happy-dom keeps a window, and every document it parsed, alive until the
+ * window is closed. So each page gets its own window, closed when the next
+ * page replaces it, and the last one is closed by close() — or, if the
+ * session is simply dropped, once it is garbage-collected.
+ */
+const openWindows = new FinalizationRegistry<WindowHolder>((holder) => {
+  void holder.window?.happyDOM.close();
+});
+
+/**
+ * The state one browser tab would hold — current page, cookies, focus —
+ * shared by a driver and every within()-scoped driver made from it, so a
+ * navigation inside a scope is seen by the whole session.
  */
 export class RequestBrowser {
-  private window: Window;
+  private holder: WindowHolder = { window: null };
   private page: CurrentPage | null = null;
   private cookies = new CookieJar();
   /** Files attached to file inputs of the current page. */
   readonly files: AttachedFiles = new WeakMap();
   /** Every download so far, oldest first. */
   readonly downloads: Download[] = [];
+  /** What has focus: the control the latest verb acted on. pressKey() acts on it. */
+  focused: Element | null = null;
 
   constructor(
     private handler: RequestHandler,
     readonly baseUrl: URL,
   ) {
-    this.window = new Window({
-      url: baseUrl.href,
-      settings: {
-        disableJavaScriptEvaluation: true,
-        disableJavaScriptFileLoading: true,
-        disableCSSFileLoading: true,
-        disableIframePageLoading: true,
-        disableComputedStyleRendering: true,
-        navigation: {
-          disableMainFrameNavigation: true,
-          disableChildFrameNavigation: true,
-          disableChildPageNavigation: true,
-          disableFallbackToSetURL: true,
-        },
-      },
-    });
+    openWindows.register(this, this.holder);
   }
 
   get current(): CurrentPage {
@@ -148,13 +164,19 @@ export class RequestBrowser {
     }
   }
 
-  /** Follow a link. Only the fragment changing is a same-document
-   * navigation: no request, just a new URL. */
-  async followLink(verb: string, url: URL, download?: string): Promise<void> {
+  /**
+   * Follow a link. An href with a fragment (even an empty one, `#`) to the
+   * current page is a same-document navigation: no request, just a new URL.
+   */
+  async followLink(
+    verb: string,
+    url: URL,
+    { download, hasFragment }: { download?: string; hasFragment: boolean },
+  ): Promise<void> {
     const current = this.current.url;
     if (
       download === undefined &&
-      url.hash !== "" &&
+      hasFragment &&
       withoutHash(url) === withoutHash(current)
     ) {
       this.current.url = url;
@@ -164,8 +186,10 @@ export class RequestBrowser {
   }
 
   /**
-   * Send a request with the tab's cookies without navigating, the way a
-   * page's own fetch() would. Relative URLs resolve against the current page.
+   * Send a request with the tab's cookies without navigating, as a page's
+   * own script would; relative URLs resolve against the current page.
+   * Unlike a browser's fetch(), redirects are not followed: a 3xx comes back
+   * as it is, so a test can assert on it.
    */
   async fetch(input: string | URL, init: RequestInit = {}): Promise<Response> {
     const url = new URL(input, this.page?.url ?? this.baseUrl);
@@ -243,7 +267,8 @@ export class RequestBrowser {
     const type = (
       response.headers.get("content-type") ?? "text/html"
     ).toLowerCase();
-    const parser = new this.window.DOMParser();
+    const window = new Window({ url: url.href, settings: WINDOW_SETTINGS });
+    const parser = new window.DOMParser();
     let document: Document;
     if (type.includes("html")) {
       document = parser.parseFromString(
@@ -259,6 +284,19 @@ export class RequestBrowser {
       document.querySelector("pre")!.textContent = body;
     }
     this.page = { url, request, response, body, document };
+    const previous = this.holder.window;
+    this.holder.window = window;
+    void previous?.happyDOM.close();
+  }
+
+  /** Close the tab: release the current page. Optional — a dropped session
+   * is cleaned up when it is garbage-collected — but prompt. */
+  async close(): Promise<void> {
+    const window = this.holder.window;
+    this.holder.window = null;
+    this.page = null;
+    this.focused = null;
+    await window?.happyDOM.close();
   }
 }
 
@@ -280,8 +318,10 @@ function dispositionFilename(header: string): string {
   return (plain[1] ?? plain[2]).replace(/\\(.)/g, "$1");
 }
 
+/** The URL without its fragment; `url.hash` is "" for a bare `#`, so cut at
+ * the `#` itself. */
 function withoutHash(url: URL): string {
-  return url.href.slice(0, url.href.length - url.hash.length);
+  return url.href.replace(/#.*$/, "");
 }
 
 const MAX_REDIRECTS = 20;

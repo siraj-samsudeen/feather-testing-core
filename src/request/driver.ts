@@ -88,8 +88,6 @@ const NOT_TYPEABLE = new Set([
   "button",
   "image",
   "hidden",
-  "range",
-  "color",
 ]);
 
 /** Fields that stop Enter from submitting a form with no submit button. */
@@ -140,8 +138,6 @@ export class RequestDriver
   protected lastForm: HTMLFormElement | null = null;
   /** The field the most recent fillIn() found; null if it found none. */
   protected lastFilledField: Element | null = null;
-  /** What has focus: the control the latest verb acted on. pressKey() acts on it. */
-  protected focused: Element | null = null;
 
   /**
    * `handler` is anything that answers a Request: `app.handle` (Elysia),
@@ -385,7 +381,7 @@ export class RequestDriver
   /** Remember the control a verb acted on: it has focus, and its form is
    * what submit() submits. */
   private touched(control: Element): void {
-    this.focused = control;
+    this.browser.focused = control;
     this.lastForm = formOwner(control);
   }
 
@@ -442,7 +438,7 @@ export class RequestDriver
 
   /** Follow a link: a GET of its href, resolved against the page. */
   protected async follow(link: Element, verb: string): Promise<void> {
-    this.focused = link;
+    this.browser.focused = link;
     const { document, url } = this.browser.current;
     const href = (link.getAttribute("href") ?? "").trim();
     const target = new URL(href, baseUrl(document, url));
@@ -453,15 +449,22 @@ export class RequestDriver
         ENVIRONMENT,
       );
     }
-    const download = link.getAttribute("download") ?? undefined;
-    await this.browser.followLink(verb, target, download);
+    await this.browser.followLink(verb, target, {
+      download: link.getAttribute("download") ?? undefined,
+      hasFragment: href.includes("#"),
+    });
   }
 
   /** Activate a button the way a browser does without JavaScript: submit or
-   * reset its form. Anything else it could do is script. */
+   * reset its form, or follow it when it is a link styled as a button
+   * (`<a role="button" href>`). Anything else it could do is script. */
   protected async press(button: Element, verb: string): Promise<void> {
+    if (button.matches(LINKS)) {
+      await this.follow(button, verb);
+      return;
+    }
     this.requireEnabled(button, verb, "button");
-    this.focused = button;
+    this.browser.focused = button;
     const form = isButtonElement(button) ? formOwner(button) : null;
     if (form && isSubmitButton(button)) {
       await this.browser.submit(verb, form, button);
@@ -474,7 +477,8 @@ export class RequestDriver
     throw new BrowserOnlyVerbError(
       verb,
       "Without JavaScript this button does nothing: it is not a submit or " +
-        'reset button of a form (type="button", role="button", or outside any <form>). ' +
+        'reset button of a form (type="button", a role="button" element that is not a link, ' +
+        "or outside any <form>). " +
         "Test what its script does in a Playwright spec.",
       ENVIRONMENT,
     );
@@ -537,8 +541,19 @@ export class RequestDriver
     if (field.hasAttribute("readonly")) {
       throw new Error(`${verb}: the field is read-only.`);
     }
-    (field as HTMLInputElement).value = value;
+    const input = field as HTMLInputElement;
+    input.value = value;
     this.touched(field);
+    // A number, date or color input drops a value it cannot hold, which
+    // would then be sent empty. Playwright's fill() refuses such a value;
+    // so does this. (A textarea's value holds newlines as LF.)
+    const expected =
+      field.tagName === "TEXTAREA" ? value.replace(/\r\n?/g, "\n") : value;
+    if (input.value !== expected) {
+      throw new Error(
+        `${verb}: ${describeTag(field)} cannot hold '${value}' (it would hold '${input.value}').`,
+      );
+    }
   }
 
   async lastFilledFieldIsPassword(): Promise<boolean> {
@@ -702,7 +717,7 @@ export class RequestDriver
         ENVIRONMENT,
       );
     }
-    const focused = this.focused;
+    const focused = this.browser.focused;
     if (!focused || !this.browser.current.document.contains(focused)) {
       throw new Error(`${verb}: nothing has focus. Fill in a field first.`);
     }
@@ -1063,6 +1078,17 @@ export class RequestDriver
       scope: this.scopeElement(),
       fetch: (input, init) => this.browser.fetch(input, init),
     };
+  }
+
+  // --- Lifecycle ---
+
+  /**
+   * Release the current page (and its parser window). Optional: a session
+   * that is simply dropped is cleaned up once it is garbage-collected. After
+   * close() the driver has no page until the next visit().
+   */
+  async close(): Promise<void> {
+    await this.browser.close();
   }
 
   // --- Scoping ---

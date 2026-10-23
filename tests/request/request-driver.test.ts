@@ -1287,3 +1287,90 @@ describe("createSession() (request adapter)", () => {
       });
   });
 });
+
+describe("review fixes", () => {
+  it('clickButton() follows an <a role="button" href>, as Playwright\'s click on a button-role link does', async () => {
+    const { driver } = driverFor({
+      "/": `<a class="btn" role="button" href="/echo/new">New item</a>`,
+    });
+    await driver.visit("/");
+    await driver.clickButton("New item");
+    await driver.assertPath("/echo/new");
+  });
+
+  it("focus is tab state: Enter after a fillIn inside within() submits that field's form", async () => {
+    const app = createFixtureApp();
+    await createSession(app.handle)
+      .visit("/")
+      .within("form.new-todo", (form) =>
+        form.fillIn("What needs to be done?", "Scoped"),
+      )
+      .pressKey("Enter")
+      .assertText("Scoped");
+  });
+
+  it("fillIn() fails when the field cannot hold the value, instead of sending it empty", async () => {
+    const { driver } = driverFor({
+      "/": `<label>N <input type="number" name="n"></label><label>D <input type="date" name="d"></label>`,
+    });
+    await driver.visit("/");
+    await expect(driver.fillIn("N", "abc")).rejects.toThrow(
+      `fillIn('N'): an <input type="number"> cannot hold 'abc' (it would hold '').`,
+    );
+    await expect(driver.fillIn("D", "tomorrow")).rejects.toThrow(
+      `an <input type="date"> cannot hold 'tomorrow'`,
+    );
+    await driver.fillIn("N", "42");
+    await driver.fillIn("D", "2026-10-23");
+    await driver.assertValue("N", "42");
+  });
+
+  it("fillIn() sets range and color inputs, as Playwright's fill() does", async () => {
+    const { driver } = driverFor({
+      "/": `<label>Volume <input type="range" name="v"></label><label>Tint <input type="color" name="c"></label>`,
+    });
+    await driver.visit("/");
+    await driver.fillIn("Volume", "30");
+    await driver.fillIn("Tint", "#ff0000");
+    await driver.assertValue("Volume", "30");
+    await driver.assertValue("Tint", "#ff0000");
+  });
+
+  it('an empty-fragment link (href="#") sends nothing', async () => {
+    const { app, driver } = driverFor({ "/": `<a href="#">Top</a>` });
+    await driver.visit("/");
+    await driver.clickLink("Top");
+    expect(app.requests).toHaveLength(1);
+    await driver.assertPath("/");
+  });
+
+  it("an input of an unknown type is a text field, so it blocks implicit submission like one", async () => {
+    const { app, driver } = driverFor({
+      "/": `<form method="post" action="/echo"><label>A <input name="a"></label><label>B <input type="fancy" name="b"></label></form>`,
+    });
+    await driver.visit("/");
+    await driver.fillIn("A", "1");
+    await expect(driver.pressKey("Enter")).rejects.toThrow(
+      "more than one text field",
+    );
+    expect(app.requests).toHaveLength(1);
+  });
+
+  it("a wrapping label is named without nested output/meter/progress/button text, as in RTL", async () => {
+    const { driver } = driverFor({
+      "/": `<label><input name="a"> Amount <output>5</output></label>`,
+    });
+    await driver.visit("/");
+    await driver.fillIn("Amount", "7");
+    await driver.assertValue("Amount", "7");
+  });
+
+  it("close() releases the page; the driver then has none", async () => {
+    const { driver } = driverFor();
+    await driver.visit("/about");
+    await driver.close();
+    await expect(driver.assertText("About")).rejects.toThrow(
+      "No page loaded yet",
+    );
+  });
+});
