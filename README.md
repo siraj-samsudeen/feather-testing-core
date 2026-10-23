@@ -865,11 +865,19 @@ The driver checks the field before the step starts, after a `fillIn`, and again 
 - a suggestion to run `debug()` to see the page;
 - for a field that is not secret, its state as the driver reads it: `assertValue` says "found 'Bob'" (read in the same read that found the field not secret; the expected value is not repeated), and `fillIn` says whether the field is disabled, read-only, not visible, or not a text field (`it is an <input type="checkbox">, which cannot be typed into`).
 
-A secret field never gets its value or state in the message. Whether it is secret is checked again on the exact field read for the message: a field that became a password field while the step waited (its type changed, or a password field took its place) is reported as secret. Richer diagnostics for secret fields are tracked in issue #16.
+A secret field never gets its value or state in the message. Whether it is secret is checked again on the exact field read for the message: a field that became a password field while the step waited (its type changed, or a password field took its place) is reported as secret. Richer diagnostics for secret fields are tracked in [issue #16](https://github.com/siraj-samsudeen/feather-testing-core/issues/16).
 
 The RTL and request adapters' `debug()` print password inputs' values as `'••••••'`.
 
-Limits: see [Known limitations](#known-limitations). Secret values can still appear in other steps' error output, such as a Testing Library DOM dump or an error the app throws. Playwright's own trace and HTML report record every action with its arguments. Treat traces and reports from runs that type real credentials as secret.
+**What is protected:**
+- feather's own outputs never show a `fillIn` or `assertValue` value: step names, the chain, `onStep` events and `test.step()` titles;
+- a secret field's value never appears in a `fillIn` or `assertValue` error.
+
+**Not yet protected ([issue #16](https://github.com/siraj-samsudeen/feather-testing-core/issues/16)):**
+- errors from other verbs can include driver text, such as a Testing Library DOM dump that contains input `value` attributes (and an error the app itself throws can contain anything);
+- Playwright's own trace and HTML report record the values given to `fill()` and `expect`.
+
+If you record traces or reports, don't use real credentials in tests. That is good practice anyway.
 
 A custom `TestDriver` takes part in the password rule by implementing the optional `fieldIsPassword(label, timeout?)` (asked before the step with the step's own timeout, if it set one; it may wait for the field, and throws if it never appears) and `lastFilledFieldIsPassword()` (asked after a `fillIn`, at once). It gives the facts above for fields that are not secret by implementing the optional `fieldState(label)`, read at once on the field the step targeted: `{ secret: true }` for a password field (decided on that element, in the same read), else `{ secret: false, value, disabled, readOnly, visible, editable, kind }`, or `null` when it cannot tell. The session shows a value only for `secret: false`.
 
@@ -1097,7 +1105,7 @@ Deliberate exceptions stay possible and stay visible: an `eslint-disable-next-li
 
 ## Known limitations
 
-- Secret values can still appear in some error output (e.g. Testing Library DOM dumps, app-thrown errors) — tracked in an issue; don't run 0.7.0-beta against real credentials.
+- Secret values can still appear in other verbs' errors (e.g. Testing Library DOM dumps with input `value` attributes, app-thrown errors) and in Playwright's own trace and HTML report — see [What is protected](#secrets-in-failure-reports) and [issue #16](https://github.com/siraj-samsudeen/feather-testing-core/issues/16). Don't use real credentials in tests.
 
 ## Upgrading to 0.7.0 (beta: 0.7.0-beta.1)
 
