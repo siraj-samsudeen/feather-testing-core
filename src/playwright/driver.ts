@@ -78,6 +78,9 @@ export const NAVIGATION_START_WINDOW_MS = 500;
  */
 export const REPLACED_NAVIGATION_WINDOW_MS = 250;
 
+/** How long to wait for a stopped new-page poll to notice and exit. */
+const POLL_STOP_GRACE_MS = 1000;
+
 /** Makes each new-page wait's stop token unique. */
 let waitCounter = 0;
 
@@ -99,8 +102,8 @@ function insidePlaywrightRunner(): boolean {
 
 type MarkedWindow = {
   __featherDocumentBeforeAction?: boolean;
-  /** The token of a new-page wait that was settled from outside. */
-  __featherStopWait?: string;
+  /** Tokens of new-page waits settled from outside, one per wait. */
+  __featherStoppedWaits?: Set<string>;
   __featherLeaving?: boolean;
   __featherListening?: boolean;
 };
@@ -369,10 +372,14 @@ export class PlaywrightDriver
       // window, and the predicate then returns at once.
       const token = `wait-${++waitCounter}`;
       const newDocument = this.page.waitForFunction(
-        (stopToken) =>
-          (window as MarkedWindow).__featherStopWait === stopToken ||
-          (!(window as MarkedWindow).__featherDocumentBeforeAction &&
-            document.readyState === "complete"),
+        (stopToken) => {
+          const w = window as MarkedWindow;
+          if (w.__featherStoppedWaits?.delete(stopToken)) return true;
+          return (
+            !w.__featherDocumentBeforeAction &&
+            document.readyState === "complete"
+          );
+        },
         token,
         { timeout },
       );
@@ -391,12 +398,28 @@ export class PlaywrightDriver
           }),
         ]);
         if (ended) {
-          await this.page
+          // Each wait has its own token, so a later wait cannot overwrite an
+          // earlier one's stop signal; the poll removes its token as it
+          // stops. Wait (briefly) for it to stop before moving on.
+          const stopped = await this.page
             .evaluate((stopToken) => {
-              (window as MarkedWindow).__featherStopWait = stopToken;
+              const w = window as MarkedWindow;
+              (w.__featherStoppedWaits ??= new Set()).add(stopToken);
             }, token)
-            // The page is gone or navigating: its poll went with it.
-            .catch(() => undefined);
+            .then(
+              () => true,
+              // The page is gone or navigating: its poll went with it.
+              () => false,
+            );
+          if (stopped) {
+            await Promise.race([
+              newDocument.then(
+                () => undefined,
+                () => undefined,
+              ),
+              new Promise((resolve) => setTimeout(resolve, POLL_STOP_GRACE_MS)),
+            ]);
+          }
         }
       } catch (error) {
         throw new Error(
