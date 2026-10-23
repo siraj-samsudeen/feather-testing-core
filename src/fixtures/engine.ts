@@ -240,6 +240,36 @@ function parenthesised(source: string, open: number): string {
   return source.slice(open + 1);
 }
 
+/** The index of the brace that closes `text`'s opening one (strings and comments skipped). */
+function matchingBrace(text: string): number {
+  let depth = 0;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i]!;
+    if (c === '"' || c === "'" || c === "`") {
+      let j = i + 1;
+      while (j < text.length && text[j] !== c) j += text[j] === "\\" ? 2 : 1;
+      i = j;
+      continue;
+    }
+    if (c === "/" && text[i + 1] === "/") {
+      const end = text.indexOf("\n", i);
+      i = end < 0 ? text.length : end;
+      continue;
+    }
+    if (c === "/" && text[i + 1] === "*") {
+      const end = text.indexOf("*/", i + 2);
+      i = end < 0 ? text.length : end + 1;
+      continue;
+    }
+    if (c === "{" || c === "[" || c === "(") depth++;
+    if (c === "}" || c === "]" || c === ")") {
+      depth--;
+      if (depth === 0) return i;
+    }
+  }
+  return text.length;
+}
+
 function firstParam(fn: (...args: never[]) => unknown): FirstParam {
   const source = Function.prototype.toString.call(fn);
   const arrow = /^\s*(?:async\s+)?([A-Za-z_$][\w$]*)\s*=>/.exec(source);
@@ -254,8 +284,9 @@ function firstParam(fn: (...args: never[]) => unknown): FirstParam {
     const name = /^[A-Za-z_$][\w$]*/.exec(first)?.[0] ?? first;
     return { kind: "identifier", name };
   }
-  // The object pattern, without its braces (and without a default after it).
-  const close = first.lastIndexOf("}");
+  // The object pattern, without its braces: up to the brace that closes
+  // the opening one, not a default's (`{ a } = { a: 1, b: 2 }`).
+  const close = matchingBrace(first);
   const names: string[] = [];
   for (const entry of splitTopLevel(first.slice(1, close))) {
     if (entry.startsWith("...")) return { kind: "unsupported", why: `a rest pattern (${entry})` };

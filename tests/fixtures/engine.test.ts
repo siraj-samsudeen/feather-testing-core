@@ -78,6 +78,11 @@ describe("reading destructured names from real code", () => {
     expect(ran).toBe(true);
   });
 
+  it("reads only the pattern when the parameter has an object default", () => {
+    const withDefault = async ({ a }: { a: number } = { a: 1, b: 2 } as never) => a;
+    expect(destructuredNames(withDefault)).toEqual(["a"]);
+  });
+
   it("refuses a rest pattern or an undestructured parameter in a test, showing the explicit form", () => {
     const { runner } = recordingRunner();
     const test = defineTest(runner, { a: 1 } as never);
