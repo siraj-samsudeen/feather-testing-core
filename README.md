@@ -271,7 +271,7 @@ test("a failing chain names the failed step", async () => {
 |--------|---------|--------------|
 | `baseUrl` | The browser context's `baseURL` | What `visit()` paths resolve against, as `new URL(path, baseUrl)`, the same as the request adapter. |
 | `timeout` | Inside `@playwright/test`: Playwright's own `expect.timeout` / `actionTimeout`. Elsewhere: `4000` ms | Budget for every assertion, wait and action in the session. A per-call `timeout` (e.g. `assertHas(sel, { timeout })`) still wins. `0` means no limit. |
-| `navigationTimeout` | Playwright's navigation timeout (30 s unless configured) | Budget for page loads: `visit()`, `reload()`, and the new page after a submit or click that navigates. `0` means no limit. |
+| `navigationTimeout` | The page's navigation timeout (`setDefaultNavigationTimeout`, the runner's `navigationTimeout`, else 30 s) | Budget for page loads: `visit()`, `reload()`, and the new page after a submit or click that navigates. `0` means no limit. |
 | `navigationStartWindow` | `500` ms | After an action signals it is leaving the page but before any request is seen: how long to wait for the navigation to start. Raise it if submits return too early on a slow CI machine. |
 | `replacedNavigationWindow` | `250` ms | After a navigation of the page fails: how long to wait for a newer one that replaced it (a script setting `location`) before ending the wait. |
 | `onStep` | none | Called with `{ name, status: "started" \| "passed" \| "failed", error? }` for each step — a stand-in for `test.step()`, e.g. to log progress. A value typed into a password or secret-looking field shows as `••••••` in every event. |
@@ -937,6 +937,7 @@ Deliberate exceptions stay possible and stay visible: an `eslint-disable-next-li
 ## Upgrading to 0.7.0
 
 - The optional peer dependency is now `playwright` (`>=1.64.0`, the version tested) instead of `@playwright/test` (`>=1.40.0`). `@playwright/test` installs `playwright`, so Playwright Test users on 1.64 or later change nothing; library users no longer need `@playwright/test`.
+- Without the `navigationTimeout` option, the adapter reads the page's own navigation timeout from a private Playwright field (Playwright has no public getter), falling back to 30 s if that field ever goes away. Set `navigationTimeout` explicitly when the budget must be guaranteed across Playwright upgrades.
 - Projects on Playwright below 1.64 get a peer-dependency warning, or an install error with strict npm (`strict-peer-deps`) or pnpm (`strict-peer-dependencies`) settings, until they upgrade Playwright.
 - pnpm with `auto-install-peers=false`, and Yarn Plug'n'Play: add `playwright` to your own `devDependencies`, so the adapter can resolve `playwright/test`.
 - `submit()`, `click()`, `clickLink()`, `clickButton()` and `pressKey()` wait for the new page after starting a navigation of this page.
