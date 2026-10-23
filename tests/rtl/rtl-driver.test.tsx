@@ -1040,14 +1040,14 @@ describe("RTLDriver", () => {
     it("assertHas() throws", async () => {
       const driver = new RTLDriver();
       await expect(driver.assertHas("div")).rejects.toThrow(
-        "assertHas() with CSS selectors is not recommended in RTL",
+        "assertHas() is not available in the RTL adapter",
       );
     });
 
     it("refuteHas() throws", async () => {
       const driver = new RTLDriver();
       await expect(driver.refuteHas("div")).rejects.toThrow(
-        "refuteHas() with CSS selectors is not recommended in RTL",
+        "refuteHas() is not available in the RTL adapter",
       );
     });
   });
@@ -1586,5 +1586,30 @@ describe("createSession({ timeout })", () => {
   it("passes the session timeout to the driver (Testing Library's default is 1 s)", async () => {
     render(<Late />);
     await createSession({ timeout: 4000 }).assertText("Arrived");
+  });
+});
+
+describe("unsupported verbs name the adapter, the verb and what to use instead", () => {
+  afterEach(cleanup);
+
+  it.each([
+    ["visit('/')", (s: ReturnType<typeof createSession>) => s.visit("/")],
+    ["reload()", (s: ReturnType<typeof createSession>) => s.reload()],
+    ["assertHas('li')", (s: ReturnType<typeof createSession>) => s.assertHas("li")],
+    ["refuteHas('li')", (s: ReturnType<typeof createSession>) => s.refuteHas("li")],
+    ["assertPath('/')", (s: ReturnType<typeof createSession>) => s.assertPath("/")],
+    ["refutePath('/')", (s: ReturnType<typeof createSession>) => s.refutePath("/")],
+  ] as const)("%s", async (_name, chain) => {
+    render(<p>x</p>);
+    const error = await chain(createSession())
+      .run()
+      .then(
+        () => null,
+        (e: unknown) => e as StepError,
+      );
+    const cause = String((error!.cause as Error).message);
+    expect(cause).toContain("RTL adapter");
+    expect(cause).toMatch(/\b(visit|reload|assertHas|refuteHas|assertPath|refutePath|hover)\(\)/);
+    expect(cause).toMatch(/\b(Use|use|Render|Assert|Run)\b/);
   });
 });

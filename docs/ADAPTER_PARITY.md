@@ -53,9 +53,9 @@ This matrix lists every public surface and behaviour, as of the `bun-port-stacke
 | 22 | A 204/205 answer to a form submission | differs (Playwright limitation) | R now stays on the page, as browsers do (request suite). In Playwright 1.64 the browser stays too, but afterwards every locator waits for the 204 "navigation to finish" and times out, so P cannot pass the same check. Upstream; not contract-tested. |
 | 23 | A download answer (`Content-Disposition: attachment`) | same | Both stay on the page. `assertDownload` sees the suggested filename. |
 | 24 | `<form method="dialog">` | same | R now closes the enclosing `<dialog>` and sends nothing, as a browser does. |
-| 25 | Form or link with `target` / `formtarget` naming another window or an iframe | differs | P: this page stays and the other context loads. R ignores `target` and navigates the session's page. **Decision needed (D3).** |
+| 25 | Form or link with `target` / `formtarget` / `<base target>` naming another window or frame | differs (decided, D3) | P: this page stays, the other window loads. R: `BrowserOnlyVerbError` naming the destination to `visit()` — the session has one page. |
 | 26 | Links: `href="#"`, `#fragment`, `javascript:`, `mailto:` | differs (choice) | Both stay on the page for `#` and `#fragment` (R updates the URL's hash, as browsers do). For `javascript:`, P runs the script and R throws `BrowserOnlyVerbError`. That is n/a. |
-| 27 | An empty `required` field when submitting | differs | P: the browser blocks the submission silently, and the step passes. R: the step fails and names the field. **Decision needed (D2).** |
+| 27 | Submitting with an empty `required` field | same (D2) | Both fail the step: "form not sent: '<label>' is required" (P checks the browser's constraint validation after the action). The deliberate case is `assertSubmitBlocked(label)`, same on both. |
 | 28 | Cookies kept across redirects and requests (`Path`, `Max-Age`, deletion) | same | |
 | 29 | `Origin` and `Accept` headers on form posts | same | The browser sends them; R adds them. |
 | 30 | `attachFile` / `upload`: multipart bytes, file name and type | same | |
@@ -76,7 +76,7 @@ This matrix lists every public surface and behaviour, as of the `bun-port-stacke
 |---|---------|--------|-------|
 | 36 | `assertText` / `refuteText`: case-insensitive substring | same | |
 | 37 | `assertExactText` | same | |
-| 38 | `assertHas(selector)` without `count`: which match must be visible | differs | P checks the first match only. R accepts any rendered match. **Decision needed (D4).** |
+| 38 | `assertHas(selector)` without `count`: which match must be visible | same (D4) | Any visible (P) / rendered (R) match. `count` and `refuteHas` count every match. |
 | 39 | `assertHas` with `count` / `text`, and `refuteHas` | same | |
 | 40 | `assertAttribute` / `refuteAttribute` | same | |
 | 41 | `assertValue`, `assertChecked`, `refuteChecked`, `assertSelected`, `assertOptions` | same | |
@@ -99,7 +99,7 @@ This matrix lists every public surface and behaviour, as of the `bun-port-stacke
 | # | Surface | Status | Notes |
 |---|---------|--------|-------|
 | 50 | `within()` is re-resolved at each step, so it keeps working after a navigation | same | |
-| 51 | What `within(selector)` may match | differs | P: at least one element (actions inside then fail in strict mode if there are several). R: exactly one. **Decision needed (D1).** |
+| 51 | What `within(selector)` may match | same (D1) | Exactly one element in both; none or several fails, naming the count. |
 | 52 | Session options carried into `within()` (timeout, onStep) | same | `Session` passes `onStep` to scoped sessions; R's scoped drivers keep the options. |
 
 ### Errors and lifecycle
@@ -114,20 +114,40 @@ This matrix lists every public surface and behaviour, as of the `bun-port-stacke
 
 ## Counts
 
-| Status | Before the parity fixes | Now |
-|--------|------------------------|-----|
-| same | 27 | 35 |
-| differs (gap: closable) | 4 | 0 |
-| differs (decision needed) | 4 | 4 (#25, #27, #38, #51) |
-| differs (choice or upstream limitation) | 4 | 5 (#14, #22, #26, #34, #45) |
-| missing in R | 4 | 0 |
-| missing in P | 1 | 0 |
-| n/a | 13 | 13 |
-| **total** | **57** | **57** |
+| Status | Before the parity fixes | After the parity fixes | After the 0.7 decisions |
+|--------|------------------------|------------------------|-------------------------|
+| same | 27 | 35 | 38 (#27, #38, #51 decided) |
+| differs (gap: closable) | 4 | 0 | 0 |
+| differs (decision needed) | 4 | 4 | 0 |
+| differs (decided / choice / upstream limitation) | 4 | 5 | 6 (#25 decided: D3) |
+| missing in R / missing in P | 5 | 0 | 0 |
+| n/a | 13 | 13 | 13 |
+| **total** | **57** | **57** | **57** |
 
-The contract suite (`tests/contract/dsl.contract.test.ts`) has 32 tests covering the 35 "same" rows. Each test runs once per driver: 64 runs under `bun test` and 64 under vitest.
+Also now shared: per-step `{ timeout }` on every waiting verb (B1; the request adapter accepts and ignores it) and `assertSubmitBlocked(label)` (D2).
+
+## The RTL adapter (third driver)
+
+`feather-testing-core/rtl` drives rendered React components with Testing Library. It is not in the contract suite: that suite drives the pages of an HTTP app, and RTL has no pages. Against the matrix:
+
+| Area | RTL |
+|------|-----|
+| Entry point | `createSession({ onStep?, timeout? })`: no native handle; it works on what is rendered in `document.body`. `timeout` is the budget of Testing Library's `findBy` waits (default 1000 ms); a step's own `{ timeout }` is accepted and ignored. |
+| Secrets (#11–#13) | same: label rule, `sensitive`, password fields checked before the step starts (`fieldIsPassword`) and after a fill. |
+| `onStep`, `run()`, step names, `StepError` (#6, #8, #9, #53) | same (they live in `Session`). |
+| Navigation and pages (`visit`, `reload`, `assertPath`, `refutePath`; #15, #16, #42) | n/a: no pages. `visit`/`assertPath`/`refutePath` say so and what to use instead; `reload` throws `BrowserOnlyVerbError`. |
+| Forms (#17–#19, #41) | same verbs on rendered forms; nothing is sent anywhere. |
+| `assertSubmitBlocked` (#27) | `BrowserOnlyVerbError`: constraint validation on submit is not modelled. |
+| `assertHas` / `refuteHas` (#38, #39) | not available: Testing Library avoids CSS selectors; use `assertText` / `refuteText`. |
+| `hover`, `dropFile`, CSS and layout verbs (#31, #43) | `BrowserOnlyVerbError` (layout, CSS); `hover` is simulated by user-event. |
+| `within()` (#50, #51) | the first element matching the selector. |
+| `until`, `step`, `raw` (#46, #56) | same contract; context `{ user, container }`. |
+
+Every verb an adapter cannot run fails naming the adapter, the verb and what to use instead.
 
 ## Decisions for the author
+
+Decided for 0.7; see [DECISIONS-0.7.md](DECISIONS-0.7.md). The options that were laid out:
 
 - **D1. `within()` multiplicity (#51).**
   - Options:

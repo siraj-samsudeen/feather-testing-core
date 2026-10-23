@@ -1288,7 +1288,7 @@ line two</textarea>
           `${verb} is a browser-only verb`,
         );
         expect((error as Error).message).toContain(
-          "this adapter runs in plain HTTP requests and parsed HTML",
+          "the request adapter runs in plain HTTP requests and parsed HTML",
         );
       },
     );

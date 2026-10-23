@@ -98,7 +98,8 @@ export class RTLDriver implements TestDriver<RTLStepContext, RTLQueries> {
 
   async visit(): Promise<void> {
     throw new Error(
-      "visit() is not available in the RTL adapter. Render the desired component directly.",
+      "feather-testing-core: visit() is not available in the RTL adapter: there are no pages, " +
+        "only rendered components. Render the component directly, or use the request or Playwright adapter.",
     );
   }
 
@@ -287,7 +288,8 @@ export class RTLDriver implements TestDriver<RTLStepContext, RTLQueries> {
     _opts?: AssertHasOptions,
   ): Promise<void> {
     throw new Error(
-      "assertHas() with CSS selectors is not recommended in RTL. Use assertText() instead.",
+      "feather-testing-core: assertHas() is not available in the RTL adapter: it addresses " +
+        "elements by CSS selector, which Testing Library avoids. Use assertText() instead.",
     );
   }
 
@@ -296,7 +298,8 @@ export class RTLDriver implements TestDriver<RTLStepContext, RTLQueries> {
     _opts?: AssertHasOptions,
   ): Promise<void> {
     throw new Error(
-      "refuteHas() with CSS selectors is not recommended in RTL. Use refuteText() instead.",
+      "feather-testing-core: refuteHas() is not available in the RTL adapter: it addresses " +
+        "elements by CSS selector, which Testing Library avoids. Use refuteText() instead.",
     );
   }
 
@@ -468,13 +471,15 @@ export class RTLDriver implements TestDriver<RTLStepContext, RTLQueries> {
 
   async assertPath(): Promise<void> {
     throw new Error(
-      "assertPath() is not available in the RTL adapter (no real URL in JSDOM).",
+      "feather-testing-core: assertPath() is not available in the RTL adapter: JSDOM has no " +
+        "real URL. Assert what the component renders instead, or use the request or Playwright adapter.",
     );
   }
 
   async refutePath(): Promise<void> {
     throw new Error(
-      "refutePath() is not available in the RTL adapter (no real URL in JSDOM).",
+      "feather-testing-core: refutePath() is not available in the RTL adapter: JSDOM has no " +
+        "real URL. Assert what the component renders instead, or use the request or Playwright adapter.",
     );
   }
 

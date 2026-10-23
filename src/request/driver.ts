@@ -418,6 +418,7 @@ export class RequestDriver
         "The element is not a link, a button, or a label of a control, so " +
           "clicking it can only do something through JavaScript. Test that in a Playwright spec.",
         ENVIRONMENT,
+        "request",
       );
     }
     if (isButtonElement(control) || control.matches("[role=button]")) {
@@ -455,6 +456,7 @@ export class RequestDriver
         verb,
         "The link's href is a javascript: URL, which only a browser runs. Test it in a Playwright spec.",
         ENVIRONMENT,
+        "request",
       );
     }
     if (!link.hasAttribute("download")) {
@@ -493,6 +495,7 @@ export class RequestDriver
         "or outside any <form>). " +
         "Test what its script does in a Playwright spec.",
       ENVIRONMENT,
+        "request",
     );
   }
 
@@ -510,6 +513,7 @@ export class RequestDriver
         verb,
         "Clicking a file input opens the browser's file picker. Use attachFile(label, path) instead.",
         ENVIRONMENT,
+        "request",
       );
     }
     this.touched(control);
@@ -744,6 +748,7 @@ export class RequestDriver
         `page — test the destination with visit('${destination.pathname}${destination.search}') ` +
         "or use the Playwright adapter.",
       ENVIRONMENT,
+        "request",
     );
   }
 
@@ -792,6 +797,7 @@ export class RequestDriver
       "A drop zone is JavaScript. Use attachFile(label, path) on its file input, " +
         "or test the drop in a Playwright spec.",
       ENVIRONMENT,
+        "request",
     );
   }
 
@@ -808,6 +814,7 @@ export class RequestDriver
         "Without JavaScript only Enter does anything (it submits the focused field's form). " +
           "Type text with fillIn(), or test key handling in a Playwright spec.",
         ENVIRONMENT,
+        "request",
       );
     }
     const focused = this.browser.focused;
@@ -828,6 +835,7 @@ export class RequestDriver
         "The focused control is not a field of a form, so Enter only does " +
           "something through JavaScript. Test it in a Playwright spec.",
         ENVIRONMENT,
+        "request",
       );
     }
   }
@@ -837,6 +845,7 @@ export class RequestDriver
       "hover()",
       "Hovering only changes a page through CSS or JavaScript. Test hover behaviour in a Playwright spec.",
       ENVIRONMENT,
+        "request",
     );
   }
 
@@ -961,6 +970,7 @@ export class RequestDriver
       "No stylesheets are applied here. Run this assertion in a Playwright spec, " +
         "or assert the class or attribute that selects the style.",
       ENVIRONMENT,
+        "request",
     );
   }
 
@@ -969,6 +979,7 @@ export class RequestDriver
       `${verb}()`,
       "Nothing is laid out here. Run this layout operation in a Playwright spec.",
       ENVIRONMENT,
+        "request",
     );
   }
 

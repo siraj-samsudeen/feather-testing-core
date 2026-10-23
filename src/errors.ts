@@ -44,9 +44,15 @@ export class BrowserOnlyVerbError extends Error {
    * `environment` is what the adapter runs on instead of a browser, as the
    * message names it; it defaults to the RTL adapter's.
    */
-  constructor(verb: string, alternative: string, environment = "JSDOM") {
+  constructor(
+    verb: string,
+    alternative: string,
+    environment = "JSDOM",
+    /** The adapter, as the message names it. */
+    adapter = "RTL",
+  ) {
     super(
-      `feather-testing-core: ${verb} is a browser-only verb — this adapter runs ` +
+      `feather-testing-core: ${verb} is a browser-only verb — the ${adapter} adapter runs ` +
         `in ${environment}, which has no browser to do it. ${alternative}`,
     );
     this.name = "BrowserOnlyVerbError";
