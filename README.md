@@ -137,7 +137,7 @@ const session = createSession(app.handle /* or a Playwright page */, {
 | A 204/205 answer to a form | The browser stays, but Playwright 1.64's locators then hang | Stays on the page | Upstream Playwright |
 | Name of a wrapping `<label>` with a `<select>` inside | Includes the option texts | Excludes them | Give such labels `for` |
 | `target` on a form or link (another window or frame) | This page stays; the other window loads | `BrowserOnlyVerbError`, naming the destination to `visit()` | One page per session |
-| Adapter-only options | `navigationTimeout`, `navigationStartWindow`, `replacedNavigationWindow`, the `@playwright/test` fixture | `close()` on the driver | |
+| Adapter-only options | `navigationTimeout`, `navigationStartTimeout`, `replacedNavigationTimeout`, the `@playwright/test` fixture | `close()` on the driver | |
 
 ## Installation
 
@@ -306,8 +306,8 @@ test("a failing chain names the failed step", async () => {
 | `baseUrl` | The browser context's `baseURL` | What `visit()` paths resolve against, as `new URL(path, baseUrl)`, the same as the request adapter. |
 | `timeout` | Inside `@playwright/test`: Playwright's own `expect.timeout` / `actionTimeout`. Elsewhere: `4000` ms | Budget for every assertion, wait and action in the session. A per-call `timeout` (e.g. `assertHas(sel, { timeout })`) still wins. `0` means no limit. |
 | `navigationTimeout` | The page's navigation timeout (`setDefaultNavigationTimeout`, the runner's `navigationTimeout`, else 30 s) | Budget for page loads: `visit()`, `reload()`, and the new page after a submit or click that navigates. `0` means no limit. |
-| `navigationStartWindow` | `500` ms | After an action signals it is leaving the page but before any request is seen: how long to wait for the navigation to start. Raise it if submits return too early on a slow CI machine. |
-| `replacedNavigationWindow` | `250` ms | After a navigation of the page fails: how long to wait for a newer one that replaced it (a script setting `location`) before ending the wait. |
+| `navigationStartTimeout` | `500` ms | After an action signals it is leaving the page but before any request is seen: how long to wait for the navigation to start. Raise it if submits return too early on a slow CI machine. |
+| `replacedNavigationTimeout` | `250` ms | After a navigation of the page fails: how long to wait for a newer one that replaced it (a script setting `location`) before ending the wait. |
 | `cookies` | none | Cookies the session starts with, e.g. a signed-in user's session cookie: `[{ name, value, domain?, path?, expires?, httpOnly?, secure?, sameSite? }]` (`expires` in seconds). Without `domain` a cookie is set for `baseUrl`'s host; `path` defaults to `/`; `secure` is kept as given. Added to the browser context before the first step, by domain and path (a domain without a leading dot is that host only, in both adapters). Both send a `secure` cookie over https, and to `localhost`/`127.0.0.1` over http, as Chromium does. The app's own cookies behave as usual afterwards. |
 | (verb) `addCookies(cookies)` | — | Add cookies later in the chain (same shape as `cookies`), e.g. sign in after the first request. The step is named by the cookies' names only. Both adapters. |
 | (method) `await session.addCookiesNow(cookies)` | — | Add cookies now, not as a step: in effect for every step that runs afterwards, including steps already queued. Use it when the cookies must take effect at a known moment outside the chain (signing a user in across several clients at once). `addCookies` is a step in the chain: it takes effect when the chain reaches it. Both adapters, and `within()` scoped sessions. |
@@ -1110,7 +1110,7 @@ Deliberate exceptions stay possible and stay visible: an `eslint-disable-next-li
 - Outside the Playwright Test runner, assertions and actions default to a 4000 ms budget (`createSession(page, { timeout })` to change it). Inside the runner the configured Playwright timeouts apply, as before. Page loads (`visit()`, `reload()`, the page after a submit) keep Playwright's navigation timeout (30 s), as in 0.6; change it with `navigationTimeout`.
 - `fillIn()` waits for its field before the step starts, to hide a password field's value from step titles and `onStep`. A field that never appears fails the step with its value hidden.
 - `within()` and `assertDownload()` fail, naming the steps, when their callback queues steps without returning or awaiting them (`async s => { s.assertText(...); }`). Those steps used to be dropped silently. Callbacks that return the chain or await it are unaffected.
-- New: `createSession(page, { baseUrl, timeout, navigationTimeout, navigationStartWindow, replacedNavigationWindow, onStep })`, `session.run()`. The request adapter takes `{ baseUrl, timeout, onStep }` and the RTL adapter `{ onStep }`. The shared `SessionOptions` type, `StepEvent` and `DEFAULT_TIMEOUT` are exported from every entry point.
+- New: `createSession(page, { baseUrl, timeout, navigationTimeout, navigationStartTimeout, replacedNavigationTimeout, onStep })`, `session.run()`. The request adapter takes `{ baseUrl, timeout, onStep }` and the RTL adapter `{ onStep }`. The shared `SessionOptions` type, `StepEvent` and `DEFAULT_TIMEOUT` are exported from every entry point.
 - Playwright `fillIn()` on a label that matches several fields fails at once with "N fields are labelled '…'", and hides the value, as the request adapter does.
 
 ## Upgrading to 0.5.0

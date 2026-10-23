@@ -1998,15 +1998,15 @@ test.describe("links that do not load a page", () => {
 
 test.describe("navigation wait windows", () => {
   /** How long clickButton takes on a page that signals leaving but stays. */
-  async function timeFakeLeave(page: Page, navigationStartWindow?: number) {
-    const driver = new PlaywrightDriver(page, page, { navigationStartWindow });
+  async function timeFakeLeave(page: Page, navigationStartTimeout?: number) {
+    const driver = new PlaywrightDriver(page, page, { navigationStartTimeout });
     await driver.visit("/fake-leave");
     const started = Date.now();
     await driver.clickButton("Pretend to leave");
     return Date.now() - started;
   }
 
-  test("navigationStartWindow bounds the wait for a navigation to start", async ({
+  test("navigationStartTimeout bounds the wait for a navigation to start", async ({
     page,
   }) => {
     expect(await timeFakeLeave(page, 50)).toBeLessThan(300);
@@ -2019,7 +2019,7 @@ test.describe("navigation wait windows", () => {
     expect(elapsed).toBeLessThan(1200);
   });
 
-  test("replacedNavigationWindow sets how long a failed navigation waits for a replacement", async ({
+  test("replacedNavigationTimeout sets how long a failed navigation waits for a replacement", async ({
     page,
   }) => {
     const app = await serveTodoList(page);
@@ -2029,7 +2029,7 @@ test.describe("navigation wait windows", () => {
     );
     try {
       const driver = new PlaywrightDriver(page, page, {
-        replacedNavigationWindow: 1500,
+        replacedNavigationTimeout: 1500,
       });
       await driver.visit(`${app.url}/todos`);
       await driver.fillIn("What needs to be done?", "Buy milk");

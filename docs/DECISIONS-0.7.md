@@ -131,6 +131,12 @@ Core provides its own fixtures through `defineCoreTest(runner)`: `browser` (file
 
 **Caveat found while making the change, for the author:** `assertHas(selector)` uses `locator.filter({ visible: true })` (D4), which Playwright added in 1.51. Below 1.51 that call is an error. The options are to raise the floor to `>=1.51.0`, or to replace the call with one 1.40 has.
 
+### Navigation wait options renamed to `…Timeout`
+
+**Decided by:** the author.
+
+**Decision:** The Playwright session options `navigationStartWindow` and `replacedNavigationWindow` are now `navigationStartTimeout` and `replacedNavigationTimeout`, with the same defaults (500 ms and 250 ms). The exported defaults are now `NAVIGATION_START_TIMEOUT_MS` and `REPLACED_NAVIGATION_TIMEOUT_MS`. There are no aliases, since 0.7 is an unreleased beta. `feather-testing-elysia` does not use them.
+
 ## Deferred
 
 ### B2 (rest). A per-driver Session type that rejects unsupported verbs at compile time

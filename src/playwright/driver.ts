@@ -52,33 +52,33 @@ export interface PlaywrightSessionOptions extends SessionOptions {
    * After an action that signalled it is leaving the page (a navigating form
    * submission, a followed link, `beforeunload`) but before any navigation
    * request was seen: how long in ms to wait for one to start before
-   * deciding the page stays. Default {@link NAVIGATION_START_WINDOW_MS}
+   * deciding the page stays. Default {@link NAVIGATION_START_TIMEOUT_MS}
    * (500). Raise it on a slow CI machine if submits return too early.
    */
-  navigationStartWindow?: number;
+  navigationStartTimeout?: number;
   /**
    * After a navigation of the page fails: how long in ms to wait for a newer
    * navigation that replaced it (a script setting `location` cuts a POST
    * short) before ending the wait. Default
-   * {@link REPLACED_NAVIGATION_WINDOW_MS} (250).
+   * {@link REPLACED_NAVIGATION_TIMEOUT_MS} (250).
    */
-  replacedNavigationWindow?: number;
+  replacedNavigationTimeout?: number;
 }
 
 /**
  * How long a page that signalled it is leaving (a navigating form submission
  * or `beforeunload`) gets to actually start a main-frame navigation before
  * the wait is dropped. Only spent when the signal came but no request did.
- * Overridable with the `navigationStartWindow` session option.
+ * Overridable with the `navigationStartTimeout` session option.
  */
-export const NAVIGATION_START_WINDOW_MS = 500;
+export const NAVIGATION_START_TIMEOUT_MS = 500;
 
 /**
  * How long after a main-frame navigation fails to wait for a newer one that
  * replaced it, before treating the failure as the end of the navigation.
- * Overridable with the `replacedNavigationWindow` session option.
+ * Overridable with the `replacedNavigationTimeout` session option.
  */
-export const REPLACED_NAVIGATION_WINDOW_MS = 250;
+export const REPLACED_NAVIGATION_TIMEOUT_MS = 250;
 
 /** How long to wait for a stopped new-page poll to notice and exit. */
 const POLL_STOP_GRACE_MS = 1000;
@@ -515,7 +515,7 @@ export class PlaywrightDriver
       timers.push(
         setTimeout(() => {
           if (isLatest(request)) end();
-        }, this.options.replacedNavigationWindow ?? REPLACED_NAVIGATION_WINDOW_MS),
+        }, this.options.replacedNavigationTimeout ?? REPLACED_NAVIGATION_TIMEOUT_MS),
       );
     };
     this.page.on("request", onRequest);
@@ -555,7 +555,7 @@ export class PlaywrightDriver
         const started = await this.page
           .waitForRequest(isMainFrameNavigation, {
             timeout:
-              this.options.navigationStartWindow ?? NAVIGATION_START_WINDOW_MS,
+              this.options.navigationStartTimeout ?? NAVIGATION_START_TIMEOUT_MS,
           })
           .then(
             () => true,

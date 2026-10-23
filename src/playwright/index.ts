@@ -12,8 +12,8 @@ export { StepError, BrowserOnlyVerbError } from "../errors.js";
 export { DEFAULT_TIMEOUT } from "../types.js";
 export {
   DEFAULT_TIMEOUT_OUTSIDE_RUNNER,
-  NAVIGATION_START_WINDOW_MS,
-  REPLACED_NAVIGATION_WINDOW_MS,
+  NAVIGATION_START_TIMEOUT_MS,
+  REPLACED_NAVIGATION_TIMEOUT_MS,
   PlaywrightDriver,
   type PlaywrightSessionOptions,
   type PlaywrightStepContext,

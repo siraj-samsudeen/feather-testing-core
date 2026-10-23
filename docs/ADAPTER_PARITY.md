@@ -23,7 +23,7 @@ This matrix lists every public surface and behaviour, as of the `bun-port-stacke
 | 2 | `test` fixture with a `session` (`@playwright/test`) | n/a | R runs under any runner and has no fixture. |
 | 3 | `options.timeout` | same | The budget for everything that waits; a per-call timeout wins; `0` means no limit. P: assertions, waits and actions, default 4000 ms outside the Playwright runner (Playwright's own timeouts inside it). R: `until`, its only waiting verb, default 4000 ms (was a fixed 5000). Shared type `SessionOptions` and `DEFAULT_TIMEOUT`. |
 | 4 | `options.navigationTimeout` | n/a in R | R gets each response complete; nothing loads in the background. |
-| 5 | `options.navigationStartWindow`, `options.replacedNavigationWindow` | n/a in R | These tune P's wait for a browser navigation. |
+| 5 | `options.navigationStartTimeout`, `options.replacedNavigationTimeout` | n/a in R | These tune P's wait for a browser navigation. |
 | 6 | `options.onStep` | same | Emitted by `Session` for every driver (RTL too); it was P's `wrapStep`. |
 | 7 | `options.baseUrl` | same | Both resolve `visit()` paths as `new URL(path, baseUrl)`. Defaults: R `http://localhost`; P the browser context's `baseURL`. The contract harness gives P pages no context `baseURL`, so every contract test uses the option. |
 | 7a | `options.cookies` (start signed in) | same | P: `context.addCookies` before the first step; R: seeds the session's cookie jar. Domain defaults to `baseUrl`'s host (host-only), path to `/`. Contract-tested, including the app deleting the cookie later. |
