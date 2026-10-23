@@ -422,6 +422,8 @@ interface Entry {
   readyAt?: number;
   /** The setup has finished, either way. */
   settled?: boolean;
+  /** A late teardown is already scheduled (so it is reported at most once). */
+  lateTeardown?: boolean;
 }
 
 let readySequence = 0;
@@ -437,6 +439,8 @@ function reportLate(name: string, error: unknown): void {
 
 /** Tear a late setup down once it finishes; a failure is reported, never left unhandled. */
 function tearDownWhenReady(entry: Entry): void {
+  if (entry.lateTeardown) return;
+  entry.lateTeardown = true;
   entry.pending
     .then(
       (active) => active.teardown(),
@@ -707,7 +711,9 @@ function build<F>(
               const active = once(await start(fixture, def, deps, info));
               if (life.abandoned) {
                 // Finished after the test was given up on: tear it down now.
-                await active.teardown();
+                // A teardown failure here is the teardown's, not the setup's:
+                // reported as such, since no test is left to report it to.
+                await active.teardown().catch((error: unknown) => reportLate(fixture, error));
                 throw new Error(`fixture '${fixture}' finished setting up after the test was abandoned`);
               }
               return active;

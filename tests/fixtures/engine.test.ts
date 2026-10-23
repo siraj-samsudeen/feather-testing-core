@@ -657,11 +657,50 @@ describe("defineTest", () => {
         await new Promise((resolve) => setImmediate(resolve));
         await new Promise((resolve) => setImmediate(resolve));
         expect(unhandled).toEqual([]);
-        expect(reported.join("\n")).toContain("late teardown broke");
+        expect(reported.filter((line) => line.includes("late teardown broke"))).toHaveLength(1);
       } finally {
         process.off("unhandledRejection", onUnhandled);
         console.error = original;
       }
     });
+  });
+
+  it("a test-scoped setup that finishes after its test was abandoned reports a failing teardown, once", async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => void unhandled.push(reason);
+    process.on("unhandledRejection", onUnhandled);
+    const reported: string[] = [];
+    const original = console.error;
+    console.error = (...args: unknown[]) => void reported.push(args.map(String).join(" "));
+    try {
+      const { runner, run } = recordingRunner();
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => (release = resolve));
+      let tornDown!: () => void;
+      const teardownRan = new Promise<void>((resolve) => (tornDown = resolve));
+      const test = defineTest(
+        runner,
+        {
+          late: async ({}, use: (v: number) => Promise<void>) => {
+            await gate;
+            await use(1);
+            tornDown();
+            throw new Error("late test-scoped teardown broke");
+          },
+        } as never,
+        { testTimeout: 100, teardownTimeout: 100 },
+      );
+      test("needs late", async ({ late }: { late: number }) => void late);
+      await expect(run("needs late")).rejects.toThrow("did not finish within 100ms");
+      release();
+      await teardownRan;
+      await new Promise((resolve) => setImmediate(resolve));
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(unhandled).toEqual([]);
+      expect(reported.filter((line) => line.includes("late test-scoped teardown broke"))).toHaveLength(1);
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+      console.error = original;
+    }
   });
 });
