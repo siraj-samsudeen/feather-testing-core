@@ -70,8 +70,12 @@ export interface CoreFixtures {
   record: "off" | "on" | "on-failure";
   /** Option: where recordings go ("videos/", "screenshots/"). Default "test-results". */
   outputDir: string;
-  /** Supplied by the consumer (or a layered package): the app's base URL, for `session`. */
-  baseUrl: string;
+  /**
+   * The app's base URL, for `session`, supplied by the consumer (or a
+   * layered package). Default: none, and `session` resolves paths against
+   * the context's own baseURL (Playwright's newContext({ baseURL })).
+   */
+  baseUrl: string | undefined;
   /** Supplied by the consumer (or a layered package): the app's request handler, for `request`. */
   handler: RequestHandler;
   /** The browser, launched once per file. */
@@ -111,6 +115,7 @@ export function coreFixtures(): FixtureDefs<CoreFixtures, CoreFixtures> {
     ],
     record: recordFromEnv,
     outputDir: "test-results",
+    baseUrl: undefined,
 
     browser: [
       async ({ browserName, headed, slowMo }, use) => {
@@ -175,8 +180,9 @@ export function coreFixtures(): FixtureDefs<CoreFixtures, CoreFixtures> {
 
 /**
  * defineTest(runner, coreFixtures()), with a longer per-test timeout when
- * headed. Supply `baseUrl` (for `session`) and `handler` (for `request`)
- * with .extend() or .with(); a test that never asks for them never needs them.
+ * headed. Supply `baseUrl` (for `session`; without it, the context's own
+ * baseURL applies) and `handler` (for `request`) with .extend() or .with();
+ * a test that never asks for them never needs them.
  */
 export function defineCoreTest(
   runner: Runner,
