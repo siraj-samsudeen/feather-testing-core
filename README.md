@@ -110,6 +110,35 @@ Notice every example uses the **exact same methods** — `fillIn`, `clickButton`
 
 Inspired by [Phoenix Test](https://hexdocs.pm/phoenix_test/PhoenixTest.html) — Elixir's pipe-chain testing DSL.
 
+### One DSL, two drivers: Playwright and request
+
+A chain written for the request adapter runs unchanged on the Playwright adapter, and the other way round, as long as the page needs no JavaScript. Both entry points take the native handle and the same options:
+
+```ts
+import { createSession } from "feather-testing-core/request";        // no browser
+// import { createSession } from "feather-testing-core/playwright";  // a real browser
+
+const session = createSession(app.handle /* or a Playwright page */, {
+  baseUrl: "http://localhost:3000", // what visit() paths resolve against
+  timeout: 4000,                    // budget for anything that waits; 0 = no limit
+  onStep: (e) => console.log(e.status, e.name), // started / passed / failed, secrets hidden
+  cookies: [{ name: "session", value: token }], // start signed in (optional)
+});
+```
+
+`tests/contract/` runs one spec of DSL behaviour against both drivers (32 tests each, under `bun test` and vitest). [docs/ADAPTER_PARITY.md](docs/ADAPTER_PARITY.md) lists every surface and behaviour with its status. Here is what differs, and why:
+
+| Behaviour | Playwright | Request | Why |
+|-----------|------------|---------|-----|
+| JavaScript, CSS, layout (`hover`, `dropFile`, keys other than Enter, `assertComputedStyle`, layout verbs, `javascript:` links) | Runs them | `BrowserOnlyVerbError` | No browser |
+| Waiting | Assertions retry until `timeout`; page loads wait up to `navigationTimeout` | Nothing retries (responses arrive complete); only `until` uses `timeout` | Nothing changes on its own |
+| Visibility | CSS decides (`display: none` is hidden) | Markup decides (`hidden`, `<template>`, ...) | No stylesheets |
+| `debug()` | Saves a screenshot | Prints the HTML, password values hidden | |
+| A 204/205 answer to a form | The browser stays, but Playwright 1.64's locators then hang | Stays on the page | Upstream Playwright |
+| Name of a wrapping `<label>` with a `<select>` inside | Includes the option texts | Excludes them | Give such labels `for` |
+| `target` on a form or link (another window or frame) | This page stays; the other window loads | `BrowserOnlyVerbError`, naming the destination to `visit()` | One page per session |
+| Adapter-only options | `navigationTimeout`, `navigationStartTimeout`, `replacedNavigationTimeout`, the `@playwright/test` fixture | `close()` on the driver | |
+
 ## Installation
 
 ```bash
@@ -121,8 +150,11 @@ npm install feather-testing-core
 All test framework dependencies are optional peers — install only what you use:
 
 ```bash
-# For Playwright E2E tests
+# For Playwright E2E tests with the Playwright Test runner
 npm install @playwright/test
+
+# For Playwright as a library under another runner (bun test, vitest, ...)
+npm install playwright
 
 # For React Testing Library integration tests
 npm install @testing-library/react @testing-library/user-event
@@ -171,7 +203,208 @@ test("full auth lifecycle", async ({ session }) => {
 });
 ```
 
-The Playwright adapter also works with Playwright used as a library, outside `@playwright/test`'s runner — for instance inside `bun test`, with `createSession(page)` on a `page` from `playwright`'s `chromium.launch()`. Mind the timeouts there: Playwright's 5 s assertion wait equals `bun test`'s default 5 s per-test timeout, so a failing assertion surfaces as "Unhandled error between tests" instead of a clean failure. Raise the runner's budget (`bun test --timeout 15000`) or lower the DSL's (`expect` timeout / per-verb `timeout` options) so the assertion fails first.
+### Using with bun test
+
+The Playwright adapter does not need the Playwright Test runner. Launch a browser with the `playwright` library, hand `createSession` a raw `Page`, and run the test with `bun test` (or any other runner). Only `playwright` has to be installed (`>=1.51.0`); `@playwright/test` is not needed.
+
+Tested with Playwright 1.64.1, Bun 1.4.2, Node 24.12.0 and vitest 4.0.18.
+
+Browser tests spend time launching Chromium and loading pages, so first raise bun's per-test limit (5000 ms by default) on the command line:
+
+```sh
+bun test --timeout 20000
+```
+
+Bun 1.4.2 ignores `timeout` under `[test]` in `bunfig.toml`; a test that sleeps 7 s still times out at 5000 ms with it, and passes with `--timeout 20000`. Put the flag in your `package.json` script (`"test": "bun test --timeout 20000"`), or pass a timeout to each test (`test(name, fn, 20_000)`). The fixtures engine passes one for you.
+
+**With fixtures (recommended).** Define the test function once; each test asks for what it needs, and the browser, context, app and session are set up and torn down for it. See [Fixtures](#fixtures-async--session---under-any-runner).
+
+```ts
+// test/fixtures.ts
+import { afterAll, test as bunTest } from "bun:test";
+import { defineCoreTest } from "feather-testing-core/fixtures";
+import { app } from "../src/app"; // e.g. an Elysia app
+
+export const test = defineCoreTest({ test: bunTest, afterAll }).extend({
+  baseUrl: async ({}, use) => {
+    app.listen(0);
+    await use(`http://localhost:${app.server!.port}`);
+    await app.stop();
+  },
+});
+
+// test/todos.test.ts
+import { expect } from "bun:test";
+import { StepError } from "feather-testing-core/playwright";
+import { test } from "./fixtures";
+
+test("adds a to-do", async ({ session }) => {
+  await session
+    .visit("/")
+    .fillIn("What needs to be done?", "Buy milk")
+    .submit() // waits for the page that the POST redirects to
+    .assertHas("li", { text: "Buy milk" });
+});
+
+test("a failing chain names the failed step", async ({ session }) => {
+  await expect(session.visit("/").assertText("Nope").run()).rejects.toThrow(StepError);
+});
+```
+
+**Without fixtures.** The same by hand, with Playwright as a library:
+
+```ts
+// todos.test.ts
+import { afterAll, afterEach, beforeAll, beforeEach, expect, test } from "bun:test";
+import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
+import { createSession, StepError } from "feather-testing-core/playwright";
+import { app } from "./app"; // e.g. an Elysia app
+
+let browser: Browser;
+let context: BrowserContext;
+let page: Page;
+let baseUrl: string;
+
+beforeAll(async () => {
+  browser = await chromium.launch(); // one browser for the file
+});
+
+afterAll(async () => {
+  await browser.close();
+});
+
+beforeEach(async () => {
+  app.listen(0); // the app on a free port, started in this process
+  baseUrl = `http://localhost:${app.server!.port}`;
+  context = await browser.newContext(); // fresh cookies and storage per test
+  page = await context.newPage();
+});
+
+afterEach(async () => {
+  await context.close();
+  await app.stop();
+});
+
+test("adds a to-do", async () => {
+  await createSession(page)
+    .visit(`${baseUrl}/`)
+    .fillIn("What needs to be done?", "Buy milk")
+    .submit() // waits for the page that the POST redirects to
+    .assertHas("li", { text: "Buy milk" });
+});
+
+test("a failing chain names the failed step", async () => {
+  const chain = createSession(page).visit(`${baseUrl}/`).assertText("Nope");
+  await expect(chain.run()).rejects.toThrow(StepError);
+});
+```
+
+**`createSession(page, options?)`**
+
+| Option | Default | What it does |
+|--------|---------|--------------|
+| `baseUrl` | The browser context's `baseURL` | What `visit()` paths resolve against, as `new URL(path, baseUrl)`, the same as the request adapter. |
+| `timeout` | Inside `@playwright/test`: Playwright's own `expect.timeout` / `actionTimeout`. Elsewhere: `4000` ms | Budget for every assertion, wait and action in the session. A per-call `timeout` (e.g. `assertHas(sel, { timeout })`) still wins. `0` means no limit. |
+| `navigationTimeout` | The page's navigation timeout (`setDefaultNavigationTimeout`, the runner's `navigationTimeout`, else 30 s) | Budget for page loads: `visit()`, `reload()`, and the new page after a submit or click that navigates. `0` means no limit. The wait after a submit has no Playwright call to inherit the page's default from, so it falls back in this order: this option, then the page's default (read from Playwright; see Upgrading), then 30 s. |
+| `navigationStartTimeout` | `500` ms | After an action signals it is leaving the page but before any request is seen: how long to wait for the navigation to start. Raise it if submits return too early on a slow CI machine. |
+| `replacedNavigationTimeout` | `250` ms | After a navigation of the page fails: how long to wait for a newer one that replaced it (a script setting `location`) before ending the wait. |
+| `cookies` | none | Cookies the session starts with, e.g. a signed-in user's session cookie: `[{ name, value, domain?, path?, expires?, httpOnly?, secure?, sameSite? }]` (`expires` in seconds). Without `domain` a cookie is set for `baseUrl`'s host; `path` defaults to `/`; `secure` is kept as given. Added to the browser context before the first step, by domain and path (a domain without a leading dot is that host only, in both adapters). Both send a `secure` cookie over https, and to `localhost`/`127.0.0.1` over http, as Chromium does. The app's own cookies behave as usual afterwards. |
+| (verb) `addCookies(cookies)` | — | Add cookies later in the chain (same shape as `cookies`), e.g. sign in after the first request. The step is named by the cookies' names only. Both adapters. |
+| (method) `await session.addCookiesNow(cookies)` | — | Add cookies now, not as a step: in effect for every step that runs afterwards, including steps already queued. Use it when the cookies must take effect at a known moment outside the chain (signing a user in across several clients at once). `addCookies` is a step in the chain: it takes effect when the chain reaches it. Both adapters, and `within()` scoped sessions. |
+| `onStep` | none | Called with `{ name, status: "started" \| "passed" \| "failed", error? }` for each step — a stand-in for `test.step()`, e.g. to log progress. The value of a `fillIn` or `assertValue` shows as `••••••` in every event. |
+
+**Timeouts.** The 4000 ms session default sits below bun's 5000 ms per-test default, so a failing assertion or action reports its chain (`>>> [FAILED] assertText('Nope')`) instead of a bare "test timed out". Keep the session `timeout` below bun's limit. Page loads keep Playwright's longer navigation timeout, so a dev server that is slow to answer its first request is not cut short. `timeout: 0` (or `navigationTimeout: 0`) removes the limit, leaving only bun's per-test limit, so a failure then shows as "test timed out" without the chain.
+
+Outside the Playwright Test runner the session timeout also bounds actions (fillIn, click, ...), so `page.setDefaultTimeout()` does not apply to session steps — set `timeout` on the session instead.
+
+**What the session puts in your page.** No window globals and no patched prototypes: its page state lives under one Symbol-keyed store (`window[Symbol.for("feather-testing-core")]`). The first action that may navigate installs listeners on `window`: two `click` listeners (one in the capture phase, for submit buttons; one in the bubble phase, for followed links, so a page that cancels the click is respected), `keydown` (capture), `submit`, `invalid` (capture) and `beforeunload`. They only record what happens; they never prevent or change it. A page script's own `requestSubmit()` is not watched.
+
+**Waiting for the next page.** `submit()`, `click()`, `clickLink()`, `clickButton()` and `pressKey()` wait for the new document when the action starts a navigation of this page — such as a form POST answered with a redirect — so the next step never reads the page that was just left. When no navigation starts (a form handled by JavaScript, `method="dialog"`, a form or link aimed at another window or an iframe), they return at once. A 204/205 answer, a download or a failed request ends the wait; a navigation replaced by a newer one (a script setting `location`) waits for the newer page.
+
+**`.rejects` needs `run()`.** `await session...` works everywhere. But bun's `expect(...).rejects` / `.resolves` accept only a real Promise, and a session chain is a thenable, so hand them `chain.run()`, which runs the queued steps and returns a real Promise.
+
+**Step names.** There is no `test.step()` outside the Playwright Test runner. Failures still name the failed step in the `StepError` chain; pass `onStep` to see steps as they run.
+
+### Fixtures: `async ({ session }) => …` under any runner
+
+`feather-testing-core/fixtures` brings Playwright Test's fixture style to `bun test` and Vitest. A test destructures what it needs, and only that is set up. Fixtures are torn down in reverse order after the test, even when it fails.
+
+**Before** (bun test, Playwright as a library):
+
+```ts
+let app: ReturnType<typeof makeApp>;
+let browser: Browser;
+let context: BrowserContext;
+let page: Page;
+let baseUrl: string;
+
+beforeAll(async () => { browser = await chromium.launch(); });
+afterAll(async () => { await browser.close(); });
+beforeEach(async () => {
+  app = makeApp().listen(0);
+  baseUrl = `http://localhost:${app.server!.port}`;
+  context = await browser.newContext();
+  page = await context.newPage();
+});
+afterEach(async () => { await context.close(); await app.stop(); });
+
+test("adds a to-do", async () => {
+  await createSession(page, { baseUrl }).visit("/").fillIn("What needs to be done?", "Buy milk").submit();
+});
+```
+
+**After:**
+
+```ts
+// test/fixtures.ts
+import { afterAll, test as bunTest } from "bun:test";
+import { defineCoreTest, value } from "feather-testing-core/fixtures";
+import { makeApp } from "../src/app";
+
+export const test = defineCoreTest({ test: bunTest, afterAll }).extend({
+  baseUrl: async ({}, use) => {
+    const app = makeApp().listen(0);
+    await use(`http://localhost:${app.server!.port}`);
+    await app.stop();
+  },
+  handler: value(makeApp().handle), // a function used as a value
+});
+
+// test/todos.test.ts
+test("adds a to-do", async ({ session }) => {
+  await session.visit("/").fillIn("What needs to be done?", "Buy milk").submit().assertHas("li", { count: 1 });
+});
+
+test("the same, without a browser", async ({ request }) => {
+  await request.visit("/").fillIn("What needs to be done?", "Buy milk").submit().assertHas("li", { count: 1 });
+});
+```
+
+Core's fixtures:
+
+| Fixture | Scope | What it is |
+|---------|-------|------------|
+| `browser` | file | Chromium (option `browserName`), launched the first time a test in the file needs it. `HEADED=1` (option `headed`): a visible browser with `slowMo` 700 and a per-test timeout of 120 s |
+| `context` | test | A fresh browser context (cookies, storage). `RECORD=1` (option `record: "on"`): a video of every page in `test-results/videos` and a screenshot of the last page in `test-results/screenshots`; `record: "on-failure"` keeps them only for failed tests; option `outputDir` |
+| `page` | test | A page in `context` |
+| `session` | test | A Playwright-adapter session on `page`, with the `baseUrl` fixture; without one, paths resolve against the context's own `baseURL` |
+| `handler` | test | Not supplied: the app's request handler, for `request`. Give it as a value: `.with({ handler: value(app.handle) })` (a bare function would be read as a fixture function) |
+| `request` | test | A request-adapter session on `handler`. A test that asks only for `request` never loads or launches a browser |
+| `rtl` | test | An RTL-adapter session on what is rendered (needs a DOM) |
+
+**Defining your own.**
+- A fixture is a plain value, a function `async (fixtures, use, info) => { …; await use(value); …teardown }`, or a function with options: `[fn, { scope: "file" }]`. To use a function (or anything that looks like `[fn, options]`) as a plain value, wrap it: `value(app.handle)`.
+- Its dependencies are the names its first parameter destructures (or `{ deps: [...] }`).
+- `.extend({...})` layers more fixtures on a test function, so other packages can build on core's.
+- `.with({ browserName: "firefox" })` gives a file its own definitions for fixtures that are already defined; an unknown name is an error, in types and at runtime. It takes anything a definition takes: a value, a fixture function, `[fn, options]`, `value(x)`. `defineTest(runner, fixtures, { overrides })` does the same for every test.
+- A two-item array is `[fn, options]` only when its first item is a function and its second a plain object with only option keys (`scope`, `deps`, `value`; `{}` too). Anything else, such as two rows, is a plain value.
+- A file-scoped fixture is shared by the tests that see the same definitions of it and of what it depends on: changing `headed` with `.with()` gets its own browser, changing `record` does not.
+- In minified code, name the fixtures explicitly: `test(name, ["session"], fn)`.
+- Under Vitest, pass `currentSuite: getCurrentSuite` (from `"vitest/suite"`) with `test` and `afterAll`. Then the hook that tears down file-scoped fixtures is registered once per `describe`; otherwise it is registered once per test that uses one. bun:test has no such API.
+- **Timeouts.** A test (setup and body) gets a 30 s budget unless you set one: `defineTest(runner, fixtures, { testTimeout })`, or 120 s when headed. Its fixtures then get a teardown allowance, `teardownTimeout` (10 s), shared by all of them. The runner is handed the sum plus 1 s of slack, so it never gives up while cleanup is running.
+  - When the budget is spent, the engine abandons the test: nothing more is set up, the body never starts if it had not yet, and the fixtures are torn down in the exact reverse of the order they became ready.
+  - A hung teardown, or a setup still running (test- or file-scoped), is waited for only within the allowance and reported. The rest still run, and a late setup is torn down once, when it finishes.
+  - On a timeout, bun:test and Vitest fail the test but leave its body running, which is why the engine keeps its own clock.
 
 ### React Testing Library
 
@@ -213,6 +446,13 @@ See [Request adapter](#request-adapter) for what it does and does not do.
 
 Every method returns `this` for chaining. A single `await` at the start of the chain executes all steps sequentially.
 
+
+**Per-step timeouts.** Every verb that waits takes a last `{ timeout }` argument: the assertions (`assertText`, `refuteText`, `assertValue`, `assertChecked`, `refuteChecked`, `assertSelected`, `assertOptions`, `assertPath`, `refutePath`, `assertHas`, ...) and the actions (`click`, `clickLink`, `clickButton`, `fillIn`, `selectOption`, `check`, `uncheck`, `choose`, `submit`, `pressKey`, `hover`, `attachFile`). The step's own timeout wins over the session's `timeout`, which wins over the adapter's default. The request adapter never waits, so it accepts and ignores a step timeout (only `until` uses one). The RTL adapter takes a session `timeout` in `createSession({ timeout })` for its Testing Library waits, and ignores a step's own.
+
+```ts
+await session.clickButton("Save").assertText("Saved", { timeout: 10_000 });
+```
+
 ### Navigation
 
 | Method | Description |
@@ -229,7 +469,7 @@ Every method returns `this` for chaining. A single `await` at the start of the c
 | `click(text)` | Find any element by text and click it |
 | `clickLink(text)` | Click `<a>` by accessible name |
 | `clickButton(text)` | Click `<button>` by accessible name |
-| `fillIn(label, value, opts?)` | Fill input by label or placeholder. Secret values show as `'••••••'` in reports; `{ sensitive: true }` hides any other value (see [Secrets in failure reports](#secrets-in-failure-reports)) |
+| `fillIn(label, value, opts?)` | Fill input by label or placeholder. The value shows as `'••••••'` in reports; `{ sensitive: true }` also marks the field secret in error messages (see [Secrets in failure reports](#secrets-in-failure-reports)) |
 | `selectOption(label, option)` | Select dropdown option by label |
 | `check(label)` / `uncheck(label)` | Toggle checkbox by label |
 | `choose(label)` | Select radio button by label |
@@ -317,6 +557,17 @@ await session
 ```
 
 In Playwright these are backed by `toHaveValue` / `toBeChecked` / `toHaveText`, so they auto-retry. The RTL adapter polls the DOM with `waitFor` for the same retry semantics.
+
+
+#### Required fields and `assertSubmitBlocked(label)`
+
+A submit (`clickButton`, `click`, `submit()`, `pressKey("Enter")`) that the browser refuses because a field is invalid fails loudly, naming the field: `form not sent: 'Title' is required`. Both adapters do this; on Playwright the adapter checks after the action that the form was not refused by constraint validation.
+
+When the refusal is what the spec is about, say so with `assertSubmitBlocked(label)`. It submits the form the field belongs to, as Enter in that field would. It passes only if the form is not sent because that field is required and empty. It fails if the form is sent, or held back by another field. The RTL adapter does not model constraint validation and throws `BrowserOnlyVerbError`.
+
+```ts
+await session.visit("/todos/new").assertSubmitBlocked("Title").fillIn("Title", "Write tests").clickButton("Add");
+```
 
 #### Exact whole-element text
 
@@ -467,7 +718,7 @@ The description is required at the call site, before the chain runs — a blank 
 
 | Method | Description |
 |--------|-------------|
-| `within(selector, fn)` | Scope actions to a container element |
+| `within(selector, fn)` | Scope actions to a container element. The selector must match exactly one element; none or several fails the step, naming the count |
 
 ```ts
 // All actions inside the callback are scoped to the matched element
@@ -533,6 +784,10 @@ session.visit("/").fillIn("Name", "x").clickButton("Go")
 
 This means you write one `await` per chain, not one per line.
 
+### Discarding queued steps
+
+`session.discard()` drops the steps queued on a session that have not started, and returns how many it dropped. A chain that is already running is not touched. It works on `within()` scoped sessions too.
+
 ### Breaking chains
 
 If you need conditional logic mid-flow, break into multiple chains:
@@ -578,7 +833,7 @@ Cause: locator.click: getByRole('button', { name: 'Sign up' }) resolved to 0 ele
 Chain:
     [ok] visit('/')
     [ok] assertText('Hello, Anonymous!')
-    [ok] fillIn('Email', 'e2e@example.com')
+    [ok] fillIn('Email', '••••••')
 >>> [FAILED] clickButton('Sign up')
     [skipped] fillIn('Password', '••••••')
     [skipped] assertText('Hello! You are signed in.')
@@ -590,22 +845,41 @@ With the Playwright adapter, each queued step is also wrapped in `test.step()`, 
 
 ### Secrets in failure reports
 
-The chain prints the value each `fillIn` typed, because an ordinary value helps you debug. A secret value is shown as `'••••••'` instead — always six dots, so its length is hidden too. A value counts as secret when:
+The value a `fillIn` types or an `assertValue` expects is never printed: it shows as `'••••••'` in the chain, `Failed at:`, `onStep` events and Playwright `test.step()` titles — always six dots, so its length is hidden too. An empty value is shown as `''`. A field can become a password field after any check made before the step (its type changes, or another field takes its place), and the step's name is out (a `started` event, a `test.step()` title) before the action runs, so no value is shown, secret or not. The real value is still typed.
 
-| Rule | Example | Known |
-|------|---------|-------|
-| The label looks secret: it contains `password`, `passcode`, `secret`, `token` or `api key` (also `api_key`, `apikey`), or the whole word `pin` or `otp`, in any case | `fillIn('Password:', pw)` | before the step runs |
-| You mark it sensitive | `fillIn('Recovery phrase', phrase, { sensitive: true })` | before the step runs |
-| The field turns out to be a password field (`type="password"`), whatever its label | `fillIn('Login code', code)` | once the step has run |
+A field counts as secret — its error is the withheld form below, with no value or state — when:
 
-The real value is still typed; only what is printed changes. The hidden form is used in the chain, in `Failed at:`, and in the cause when the fill itself failed (Playwright's call log repeats the value as `fill("…")`, so the session replaces it there too). The RTL adapter's `debug()` also prints password inputs' values as `'••••••'`.
+| Rule | Example |
+|------|---------|
+| The label looks secret: it contains `password`, `passcode`, `secret`, `token` or `api key` (also `api_key`, `apikey`), or the whole word `pin` or `otp`, in any case | `fillIn('Password:', pw)` |
+| You mark it sensitive | `fillIn('Recovery phrase', phrase, { sensitive: true })` |
+| The field is a password field (`type="password"`), whatever its label | `fillIn('Login code', code)` |
 
-Two limits to know about:
+The driver checks the field before the step starts, after a `fillIn`, and again on the field it reads for a failure message.
 
-- The first two rules also keep the value out of the Playwright `test.step()` title. The third can't: the title is written before the step runs, so a password field with an ordinary-looking label gets its value in the title. Name the field's label, or pass `{ sensitive: true }`, when that matters.
-- Playwright's own trace and HTML report record every action with its arguments, including its own `Fill "…"` step, whatever this library does. Treat traces and HTML reports from runs that type real credentials as secret, or sign in with throwaway test accounts.
+`fillIn` and `assertValue` never forward a driver's message, on any path and whether or not the field is secret. A driver's message can quote a field's value in a form that exact hiding misses (trimmed, lower-cased, quoted in part), or dump the whole page. Their errors are built from the session's own facts:
+- the step;
+- the label or placeholder looked for;
+- whether the field is secret;
+- "no field labelled 'X'", or "2 fields match 'X'" with a hint to scope with `within()`;
+- a suggestion to run `debug()` to see the page;
+- for a field that is not secret, its state as the driver reads it: `assertValue` says "found 'Bob'" (read in the same read that found the field not secret; the expected value is not repeated), and `fillIn` says whether the field is disabled, read-only, not visible, or not a text field (`it is an <input type="checkbox">, which cannot be typed into`).
 
-A custom `TestDriver` can take part in the third rule by implementing the optional `lastFilledFieldIsPassword()`: answer at once, without waiting, whether the field the most recent `fillIn()` targeted is a password field. Without it, the label rule and `{ sensitive: true }` still apply.
+A secret field never gets its value or state in the message. Whether it is secret is checked again on the exact field read for the message: a field that became a password field while the step waited (its type changed, or a password field took its place) is reported as secret. Richer diagnostics for secret fields are tracked in [issue #16](https://github.com/siraj-samsudeen/feather-testing-core/issues/16).
+
+The RTL and request adapters' `debug()` print password inputs' values as `'••••••'`.
+
+**What is protected:**
+- feather's own outputs never show a `fillIn` or `assertValue` value: step names, the chain, `onStep` events and `test.step()` titles;
+- a secret field's value never appears in a `fillIn` or `assertValue` error.
+
+**Not yet protected ([issue #16](https://github.com/siraj-samsudeen/feather-testing-core/issues/16)):**
+- errors from other verbs can include driver text, such as a Testing Library DOM dump that contains input `value` attributes (and an error the app itself throws can contain anything);
+- Playwright's own trace and HTML report record the values given to `fill()` and `expect`.
+
+If you record traces or reports, don't use real credentials in tests. That is good practice anyway.
+
+A custom `TestDriver` takes part in the password rule by implementing the optional `fieldIsPassword(label, timeout?)` (asked before the step with the step's own timeout, if it set one; it may wait for the field, and throws if it never appears) and `lastFilledFieldIsPassword()` (asked after a `fillIn`, at once). It gives the facts above for fields that are not secret by implementing the optional `fieldState(label)`, read at once on the field the step targeted: `{ secret: true }` for a password field (decided on that element, in the same read), else `{ secret: false, value, disabled, readOnly, visible, editable, kind }`, or `null` when it cannot tell. The session shows a value only for `secret: false`.
 
 ## RTL Adapter Limitations
 
@@ -655,11 +929,13 @@ The third constructor argument is a per-lookup timeout in ms; omit it to keep RT
 ### The handler contract
 
 ```ts
-createSession(handler, { baseUrl? })
+createSession(handler, { baseUrl?, timeout?, onStep?, cookies? })
 ```
 
 - `handler` is any `(request: Request) => Response | Promise<Response>`: Elysia's `app.handle`, Hono's `app.fetch`, or `fetch` itself pointed at a running server. Pass a function that keeps its `this` (both of those are already bound). The adapter has no framework dependency.
 - `baseUrl` is what `visit()` paths resolve against — an origin, optionally with a base path (`"http://localhost/app/"`). It defaults to `http://localhost`. Every request carries a full URL on that origin.
+- `cookies` starts the session with cookies in its jar (a signed-in session cookie, say), as in the Playwright adapter: without `domain` a cookie is host-only for `baseUrl`'s host, `path` defaults to `/`, `expires` is in seconds.
+- `timeout` is the budget of `until()`, the one verb that waits here (default 4000 ms, `0` = no limit), and `onStep` reports each step as it starts, passes or fails, as in the Playwright adapter.
 - Each request is sent with `redirect: "manual"`; the adapter follows redirects itself.
 
 ### What it does, as a browser would
@@ -667,7 +943,7 @@ createSession(handler, { baseUrl? })
 | Behaviour | How |
 |-----------|-----|
 | Form submission | Per the HTML spec: `method` and `action` (relative to the page or its `<base href>`; missing or empty means the current URL), the submitter's `formaction` / `formmethod` / `formenctype`, successful controls only (named, not disabled, not in a disabled `<fieldset>` outside its first `<legend>`, not in a `<datalist>`), in tree order, including controls outside the form with `form="id"`. Defaults come from the markup; checkboxes and radios send `value` or `"on"` when checked; `<select>` sends every selected option (multiple too); `<textarea>` newlines go out as CRLF; `_charset_` hidden inputs send `UTF-8`; only the clicked submit button's `name`/`value` is sent |
-| Encodings | `application/x-www-form-urlencoded`, `multipart/form-data` (files from `attachFile`, with name and a type from the extension; an empty file input sends an empty, nameless file), and `text/plain`. A GET form replaces the action's query string. `method="dialog"` throws |
+| Encodings | `application/x-www-form-urlencoded`, `multipart/form-data` (files from `attachFile`, with name and a type from the extension; an empty file input sends an empty, nameless file), and `text/plain`. A GET form replaces the action's query string. `method="dialog"` closes its `<dialog>` and sends nothing |
 | Validation | A form with an empty `required` control is not sent — the step fails saying which — unless the form has `novalidate` or the submitter `formnovalidate`. Other constraints (`pattern`, `min`, `type="email"`, …) are not checked: the server's validation is what a request test is for |
 | Buttons | A submit button submits its form, a reset button restores the defaults. A link styled as a button (`<a role="button" href>`) is followed. A `type="button"` button, any other `role="button"` element, or a button outside any form does nothing without JavaScript, so it throws `BrowserOnlyVerbError` |
 | `submit()` / `pressKey("Enter")` | `submit()` uses the same order as the Playwright adapter (explicit `type="submit"`, a button named like "submit", then Enter). Enter is [implicit submission](https://html.spec.whatwg.org/multipage/form-control-infrastructure.html#implicit-submission): the form's first submit button, or with none, the form itself when it has at most one text field. In a `<textarea>` Enter types a newline |
@@ -675,14 +951,14 @@ createSession(handler, { baseUrl? })
 | Redirects | 301/302 turn a POST into a GET, 303 turns anything but HEAD into a GET, 307/308 resend the method and body. At most 20 hops |
 | Cookies | Kept across requests and redirect hops: host-only and `Domain` cookies, `Path`, `Max-Age` / `Expires` (including deletion), `Secure` (sent over https and to localhost). No public-suffix list |
 | Headers | `Accept: text/html,…`, `Cookie`, and `Origin` on every non-GET request, as browsers send for CSRF checks |
-| Responses | Any status is shown as a page (a 422 validation page, a 404). A non-HTML body is shown as text, as a browser shows JSON. A `Content-Disposition: attachment` response, or any response to an `<a download>` link, is a download: the session stays on its page and `assertDownload` sees the suggested filename |
+| Responses | Any status is shown as a page (a 422 validation page, a 404), except 204 and 205, which leave the session on its page as a browser does. A non-HTML body is shown as text, as a browser shows JSON. A `Content-Disposition: attachment` response, or any response to an `<a download>` link, is a download: the session stays on its page and `assertDownload` sees the suggested filename |
 | Current URL | Tracked through redirects for `assertPath` / `refutePath` / `reload` |
 
-Addressing follows the other adapters: interactions match a label, placeholder, or accessible name **exactly** (whitespace-normalized, case-sensitive), and more than one match is an error naming the count — scope with `within()`. Labels are `<label for>`, a wrapping `<label>` (which labels only its first labelable descendant), `aria-labelledby`, and `aria-label`, then the placeholder. A wrapping label is named without the text of controls nested in it (`<select>`, `<textarea>`, `<button>`, `<output>`, `<meter>`, `<progress>`), as Testing Library names it; Playwright keeps that text, so on Playwright `<label>Plan <select>…</select></label>` is called "Plan Free Pro" — give such a label `for` when one spec must run on both. `fillIn` refuses a value the field cannot hold (`"abc"` in a number input, a malformed date) instead of letting it be sent empty, as Playwright's `fill()` does. Text assertions match a case-insensitive substring of the rendered text, like Playwright's `getByText`. "Rendered" is judged from markup alone: `<head>`, `<script>`, `<style>`, `<template>`, `<noscript>`, `hidden` subtrees and hidden inputs are not page text; there is no CSS, so `display: none` is not seen. `assertHas` needs a rendered match (any of them; Playwright checks only the first); its `count`, and `refuteHas`, count every match, as Playwright's `toHaveCount` does. A `within()` scope is a selector recipe, re-resolved against the current page at every step, so it keeps working after a navigation inside it. It must match exactly one element, which is stricter than Playwright's `within()` (that only requires the selector to match something): scope with a selector that names one container. Focus is part of the session, so `pressKey("Enter")` after a `fillIn` inside `within()` submits that field's form, as in a browser.
+Addressing follows the other adapters: interactions match a label, placeholder, or accessible name **exactly** (whitespace-normalized, case-sensitive), and more than one match is an error naming the count — scope with `within()`. Labels are `<label for>`, a wrapping `<label>` (which labels only its first labelable descendant), `aria-labelledby`, and `aria-label`, then the placeholder. A wrapping label is named without the text of controls nested in it (`<select>`, `<textarea>`, `<button>`, `<output>`, `<meter>`, `<progress>`), as Testing Library names it; Playwright keeps that text, so on Playwright `<label>Plan <select>…</select></label>` is called "Plan Free Pro" — give such a label `for` when one spec must run on both. `fillIn` refuses a value the field cannot hold (`"abc"` in a number input, a malformed date) instead of letting it be sent empty, as Playwright's `fill()` does. Text assertions match a case-insensitive substring of the rendered text, like Playwright's `getByText`. "Rendered" is judged from markup alone: `<head>`, `<script>`, `<style>`, `<template>`, `<noscript>`, `hidden` subtrees and hidden inputs are not page text; there is no CSS, so `display: none` is not seen. `assertHas` needs a rendered match (any of them, as on Playwright); its `count`, and `refuteHas`, count every match, as Playwright's `toHaveCount` does. A `within()` scope is a selector recipe, re-resolved against the current page at every step, so it keeps working after a navigation inside it. It must match exactly one element, as in the Playwright adapter: scope with a selector that names one container. Focus is part of the session, so `pressKey("Enter")` after a `fillIn` inside `within()` submits that field's form, as in a browser.
 
 ### Waiting
 
-Responses arrive complete, so no verb waits or retries: each looks at the current page once, and the `timeout` options assertions accept are ignored. `until(description, fn, opts)` still polls, because the server's state can change: between checks, a page that came from a GET is fetched again; a page that came from a POST is not re-sent, and the predicate is just evaluated again (it can call the context's `fetch` itself). The budget defaults to 5000 ms and the interval to 100 ms.
+Responses arrive complete, so no verb waits or retries: each looks at the current page once, and the `timeout` options assertions accept are ignored. `until(description, fn, opts)` still polls, because the server's state can change: between checks, a page that came from a GET is fetched again; a page that came from a POST is not re-sent, and the predicate is just evaluated again (it can call the context's `fetch` itself). The budget is the session `timeout` (default 4000 ms, `0` for no limit) unless the call sets one, and the interval defaults to 100 ms.
 
 The step and `until` context is `{ page, scope, fetch }`: the current page as `raw()` gets it, the scope element, and a `fetch(url, init?)` that sends a request with the session's cookies without navigating, as the page's own script would. Unlike a browser's `fetch`, it does not follow redirects: a 3xx comes back as it is, so you can assert on it.
 
@@ -717,6 +993,7 @@ These throw `BrowserOnlyVerbError`, which the chain reports as the failed step, 
 | `assertNoHorizontalOverflow` / `assertHorizontalOverflow` / `assertHorizontallyContained` / `scrollToHorizontalEnd` | Nothing is laid out | A Playwright spec |
 | `clickButton` / `click` on a `type="button"` button, a `role="button"` element that is not a link, or a button outside any form | It does nothing without JavaScript | A Playwright spec |
 | `clickLink` on a `javascript:` URL, `click` on text that is no link, button or label | Same | A Playwright spec |
+| A link or form aimed at another window or frame (`target`, `formtarget` or `<base target>` other than `_self`, `_top`, `_parent`; a `download` link still downloads) | The session has one page | `visit()` the destination, or a Playwright spec |
 
 Every other verb is implemented, `assertDownload` included (see Responses above).
 
@@ -736,7 +1013,7 @@ class WrapperLabelDriver extends RequestDriver {
   }
 
   protected override scoped(selectors: readonly string[]) {
-    return new WrapperLabelDriver(this.browser, {}, selectors);
+    return new WrapperLabelDriver(this.browser, this.options, selectors);
   }
 }
 
@@ -754,14 +1031,21 @@ import {
   type TestDriver,
 } from "feather-testing-core";
 
-// Playwright adapter
+// Playwright adapter (createSession(page, { timeout?, onStep? }) works under any runner;
+// test and expect are for @playwright/test users)
 import { test, createSession, expect } from "feather-testing-core/playwright";
 
 // RTL adapter
 import { createSession } from "feather-testing-core/rtl";
 
-// Request adapter (no browser)
-import { createSession, RequestDriver } from "feather-testing-core/request";
+// Request adapter (no browser); cookieHeaderFor(cookies, url) builds a Cookie header by the same rules
+import { createSession, RequestDriver, cookieHeaderFor } from "feather-testing-core/request";
+
+// Fixtures for bun:test and Vitest (see Fixtures)
+import { defineCoreTest, defineTest } from "feather-testing-core/fixtures";
+
+// Cookie matching without any adapter (no browser, no happy-dom); also from the root
+import { cookieHeaderFor, type CookieLike, type SessionCookie } from "feather-testing-core/cookies";
 
 // ESLint plugin (see below)
 import featherTesting from "feather-testing-core/eslint-plugin";
@@ -819,6 +1103,29 @@ Deliberate exceptions stay possible and stay visible: an `eslint-disable-next-li
 
 **Why these five.** They are not style preferences. Each one is a way a suite goes green while proving nothing: a sleep passes on a slow machine and fails on a fast one, a conditional skip silently un-tests a spec for its entire life, `toBeTruthy()` accepts almost any value, a swallowed cleanup error surfaces three tests later as something else, and serial mode turns one failure into a wall of red that hides its own cause. `session.until()` exists so the first rule has an honest alternative to point at — see [the document set](docs/document-set.md) for why conventions belong in executable form rather than in a style guide nobody re-reads.
 
+## Known limitations
+
+- Secret values can still appear in other verbs' errors (e.g. Testing Library DOM dumps with input `value` attributes, app-thrown errors) and in Playwright's own trace and HTML report — see [What is protected](#secrets-in-failure-reports) and [issue #16](https://github.com/siraj-samsudeen/feather-testing-core/issues/16). Don't use real credentials in tests.
+
+## Upgrading to 0.7.0 (beta: 0.7.0-beta.1)
+
+0.7.0 is in beta. Install it with `npm install feather-testing-core@0.7.0-beta.1`; see [Known limitations](#known-limitations) first.
+
+- **Breaking (Playwright adapter):** a submit the browser refuses because a field is invalid (an empty `required` field above all) now fails the step: `form not sent: 'Title' is required`. It used to pass silently. Where the refusal is the point of the spec, use the new `assertSubmitBlocked(label)`.
+- **Changed (all adapters):** `fillIn` and `assertValue` no longer print their value in the chain, `Failed at:`, `onStep` events or `test.step()` titles: it shows as `'••••••'` (`''` when empty), secret or not. A field can turn secret after any check, and the step's name goes out before the action. Tests or tooling that match on `fillIn('Email', 'a@b.com')` in output need the redacted form. See [Secrets in failure reports](#secrets-in-failure-reports).
+- New: every waiting verb takes `{ timeout }` (step > session > adapter default); `createSession({ timeout })` on the RTL adapter.
+- **More lenient (Playwright adapter):** `assertHas(selector)` passes when any matching element is visible; it used to need the first match to be visible. `count` and `refuteHas` still count every match, visible or not.
+- **Breaking (Playwright adapter):** `within(selector)` must match exactly one element, as in the request adapter. A selector matching none or several now fails the `within()` step, naming the count. Fix: narrow the selector (an id, a class, a data attribute), or use `:first-of-type` if the first one is really meant.
+- The optional peer dependency is now `playwright` (`>=1.51.0`) instead of `@playwright/test` (`>=1.40.0`). 1.51 is the lowest that works: `assertHas` uses `locator.filter({ visible: true })`. `@playwright/test` installs `playwright`, so Playwright Test users on 1.51 or later change nothing; library users no longer need `@playwright/test`. Projects below 1.51 get a peer-dependency warning (or an install error with strict npm/pnpm settings) until they upgrade.
+- Without the `navigationTimeout` option, `visit()` and `reload()` simply use Playwright's own default (`setDefaultNavigationTimeout`, or the runner's `navigationTimeout`). Only the wait for the new page after a submit has no Playwright call to inherit it from: it reads the page's default from a private Playwright field (there is no public getter). The test suite pins that field, so a Playwright rename fails CI instead of silently becoming 30 s. Set `navigationTimeout` explicitly to avoid relying on it.
+- pnpm with `auto-install-peers=false`, and Yarn Plug'n'Play: add `playwright` to your own `devDependencies`, so the adapter can resolve `playwright/test`.
+- `submit()`, `click()`, `clickLink()`, `clickButton()` and `pressKey()` wait for the new page after starting a navigation of this page.
+- Outside the Playwright Test runner, assertions and actions default to a 4000 ms budget (`createSession(page, { timeout })` to change it). Inside the runner the configured Playwright timeouts apply, as before. Page loads (`visit()`, `reload()`, the page after a submit) keep Playwright's navigation timeout (30 s), as in 0.6; change it with `navigationTimeout`.
+- `fillIn()` waits for its field before the step starts, to hide a password field's value from step titles and `onStep`. A field that never appears fails the step with its value hidden.
+- `within()` and `assertDownload()` fail, naming the steps, when their callback queues steps without returning or awaiting them (`async s => { s.assertText(...); }`). Those steps used to be dropped silently. Callbacks that return the chain or await it are unaffected.
+- New: `createSession(page, { baseUrl, timeout, navigationTimeout, navigationStartTimeout, replacedNavigationTimeout, onStep })`, `session.run()`. The request adapter takes `{ baseUrl, timeout, onStep }` and the RTL adapter `{ onStep }`. The shared `SessionOptions` type, `StepEvent` and `DEFAULT_TIMEOUT` are exported from every entry point.
+- Playwright `fillIn()` on a label that matches several fields fails at once with "N fields are labelled '…'", and hides the value, as the request adapter does.
+
 ## Upgrading to 0.5.0
 
 Version 0.5.0 extends the required `TestDriver` interface. Custom drivers must implement these new methods before upgrading:
@@ -838,13 +1145,15 @@ Implement capabilities the adapter can prove, but do not fake browser behavior o
 Releases are manual and publish exactly the version committed to `main`:
 
 1. Run `npm version <version> --no-git-tag-version` so `package.json` and `package-lock.json` contain the intended new version.
-2. Run `npm run lint` and `npm run test:all`, then commit and merge the version change to `main`.
+2. Run `npm run lint`, `npm run test:all` and `npm run test:bun`, then commit and merge the version change to `main`.
 3. In GitHub Actions, open **Publish to npm**, choose **Run workflow**, select `main`, and run it.
 
 The workflow refuses non-`main` refs, mismatched lockfile versions, versions already present on npm, and registry lookup failures. It never changes or commits a version. Ordinary pushes and merges do not run it.
 
 ## Documentation
 
+- [Decisions for 0.7](docs/DECISIONS-0.7.md) — the design decisions taken for 0.7 (and what was deferred), with their reasoning.
+- [Adapter parity](docs/ADAPTER_PARITY.md) — every surface of the Playwright, request and RTL adapters, and where they differ.
 - [The document set](docs/document-set.md) — the minimal set of documents a project needs, what each one answers, and why hand-maintained cross-reference matrices lose to generated reports plus CI checks.
 
 ## License

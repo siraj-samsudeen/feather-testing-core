@@ -1,22 +1,27 @@
 import { readFile } from "node:fs/promises";
 import { basename, extname } from "node:path";
 import type {
+  SessionCookie,
+  SessionOptions,
   AssertHasOptions,
   AssertPathOptions,
   AssertionOptions,
   DownloadOptions,
+  FieldState,
   LayoutAssertionOptions,
   TestDriver,
   UntilOptions,
   UntilPredicate,
 } from "../types.js";
 import { BrowserOnlyVerbError } from "../errors.js";
+import { DEFAULT_TIMEOUT, withinCountMessage } from "../types.js";
 import { HIDDEN_VALUE } from "../secrets.js";
 import { RequestBrowser, type RequestHandler } from "./browser.js";
 import {
   accessibleName,
   baseUrl,
   controlLabels,
+  describeControl,
   formOwner,
   inputType,
   isDisabled,
@@ -25,13 +30,15 @@ import {
   renderedText,
 } from "./dom.js";
 import {
+  attachedFile,
+  firstMissingRequired,
   formControls,
   isButtonElement,
   isResetButton,
   isSubmitButton,
 } from "./form.js";
 
-export interface RequestDriverOptions {
+export interface RequestDriverOptions extends SessionOptions {
   /**
    * What visit() paths resolve against: an origin, optionally with a base
    * path. Defaults to http://localhost.
@@ -65,8 +72,8 @@ export interface RequestStepContext {
   fetch(input: string | URL, init?: RequestInit): Promise<Response>;
 }
 
-/** until()'s budget and cadence when the caller sets none, in ms. */
-const DEFAULT_UNTIL_TIMEOUT = 5000;
+/** until()'s cadence when the caller sets none, in ms. Its budget is the
+ * session `timeout` (default DEFAULT_TIMEOUT), as in the Playwright adapter. */
 const DEFAULT_UNTIL_INTERVAL = 100;
 
 /** Where BrowserOnlyVerbError says this adapter runs. */
@@ -144,11 +151,15 @@ export class RequestDriver
    * `app.fetch` (Hono), `fetch` itself. Scoped drivers pass the shared
    * RequestBrowser instead.
    */
+  /** The session options; within() hands them to the scoped driver. */
+  protected options: RequestDriverOptions;
+
   constructor(
     handler: RequestHandler | RequestBrowser,
     options: RequestDriverOptions = {},
     scopeSelectors: readonly string[] = [],
   ) {
+    this.options = options;
     this.browser =
       handler instanceof RequestBrowser
         ? handler
@@ -157,6 +168,9 @@ export class RequestDriver
             new URL(options.baseUrl ?? "http://localhost"),
           );
     this.scopeSelectors = scopeSelectors;
+    if (!(handler instanceof RequestBrowser) && options.cookies) {
+      this.browser.seedCookies(options.cookies);
+    }
   }
 
   // --- Scope ---
@@ -184,8 +198,7 @@ export class RequestDriver
       const matches = root.querySelectorAll<HTMLElement>(selector);
       if (matches.length !== 1) {
         throw new Error(
-          `within('${path.join("' > '")}'): expected exactly one element, ` +
-            `but found ${matches.length} on ${this.browser.describe()}.`,
+          withinCountMessage(path.join("' > '"), matches.length, this.browser.describe()),
         );
       }
       scope = matches[0];
@@ -204,7 +217,7 @@ export class RequestDriver
   protected scoped(
     selectors: readonly string[],
   ): TestDriver<RequestStepContext, RequestPage> {
-    return new RequestDriver(this.browser, {}, selectors);
+    return new RequestDriver(this.browser, this.options, selectors);
   }
 
   // --- Navigation ---
@@ -410,6 +423,7 @@ export class RequestDriver
         "The element is not a link, a button, or a label of a control, so " +
           "clicking it can only do something through JavaScript. Test that in a Playwright spec.",
         ENVIRONMENT,
+        "request",
       );
     }
     if (isButtonElement(control) || control.matches("[role=button]")) {
@@ -447,7 +461,11 @@ export class RequestDriver
         verb,
         "The link's href is a javascript: URL, which only a browser runs. Test it in a Playwright spec.",
         ENVIRONMENT,
+        "request",
       );
+    }
+    if (!link.hasAttribute("download")) {
+      this.requireThisWindow(verb, link.getAttribute("target"), target);
     }
     await this.browser.followLink(verb, target, {
       download: link.getAttribute("download") ?? undefined,
@@ -467,6 +485,7 @@ export class RequestDriver
     this.browser.focused = button;
     const form = isButtonElement(button) ? formOwner(button) : null;
     if (form && isSubmitButton(button)) {
+      this.requireFormInThisWindow(verb, form, button);
       await this.browser.submit(verb, form, button);
       return;
     }
@@ -481,6 +500,7 @@ export class RequestDriver
         "or outside any <form>). " +
         "Test what its script does in a Playwright spec.",
       ENVIRONMENT,
+        "request",
     );
   }
 
@@ -498,6 +518,7 @@ export class RequestDriver
         verb,
         "Clicking a file input opens the browser's file picker. Use attachFile(label, path) instead.",
         ENVIRONMENT,
+        "request",
       );
     }
     this.touched(control);
@@ -556,10 +577,45 @@ export class RequestDriver
     }
   }
 
+  /**
+   * Asked before fillIn's step starts, so the value is hidden from step
+   * names and onStep events from the first one. The page is already parsed,
+   * so the field is looked up once, as fillIn() will look it up; a field
+   * that is missing or ambiguous throws the same error fillIn() would.
+   */
+  async fieldIsPassword(label: string): Promise<boolean> {
+    return isInput(this.findField(label, `fillIn('${label}')`), "password");
+  }
+
   async lastFilledFieldIsPassword(): Promise<boolean> {
     return (
       this.lastFilledField !== null && isInput(this.lastFilledField, "password")
     );
+  }
+
+  /** The field fillIn() and assertValue() look up, read as it is now. */
+  async fieldState(label: string): Promise<FieldState | null> {
+    let field: Element;
+    try {
+      field = this.findField(label, `fieldState('${label}')`);
+    } catch {
+      return null;
+    }
+    // Decided on the element read here: never a value from a password field.
+    if (isInput(field, "password")) return { secret: true };
+    return {
+      secret: false,
+      value: (field as HTMLInputElement).value ?? "",
+      disabled: isDisabled(field),
+      readOnly: field.hasAttribute("readonly"),
+      // findField() keeps only rendered fields; with no layout, that is all
+      // "visible" can mean here.
+      visible: isRendered(field),
+      editable:
+        field.tagName === "TEXTAREA" ||
+        (field.tagName === "INPUT" && !NOT_TYPEABLE.has(inputType(field))),
+      kind: describeTag(field),
+    };
   }
 
   async selectOption(label: string, option: string): Promise<void> {
@@ -608,6 +664,50 @@ export class RequestDriver
 
   /** Submit the form the latest form verb touched, finding its submit
    * control the same way the Playwright adapter does. */
+  /** Put cookies in the session's jar, as the `cookies` option does, at any point. */
+  async addCookies(cookies: readonly SessionCookie[]): Promise<void> {
+    this.browser.seedCookies(cookies);
+  }
+
+  async assertSubmitBlocked(label: string): Promise<void> {
+    const verb = `assertSubmitBlocked('${label}')`;
+    const field = this.findField(label, verb);
+    const form = formOwner(field);
+    if (!form) {
+      throw new Error(`${verb}: the field labelled '${label}' is not in a form.`);
+    }
+    // Enter in the field: implicit submission, with its own guards.
+    const controls = formControls(form);
+    const defaultButton = controls.find(isSubmitButton) ?? null;
+    const nothing = (why: string) =>
+      new Error(`${verb}: nothing would submit — Enter in '${label}' does not submit its form (${why}).`);
+    if (defaultButton && isDisabled(defaultButton)) {
+      throw nothing("its default button is disabled");
+    }
+    if (
+      !defaultButton &&
+      controls.filter(
+        (el) => el.tagName === "INPUT" && BLOCKS_IMPLICIT_SUBMISSION.has(inputType(el)),
+      ).length > 1
+    ) {
+      throw nothing("it has no submit button and more than one text field");
+    }
+    const blocking = firstMissingRequired(form, defaultButton, this.browser.files);
+    if (blocking === field) {
+      return; // Not sent, because of this field: nothing is requested.
+    }
+    if (blocking) {
+      throw new Error(
+        `${verb}: the form was blocked by '${describeControl(blocking)}', not by '${label}'.`,
+      );
+    }
+    // Nothing blocks it: a browser would send it, so the session does too.
+    this.browser.focused = field;
+    await this.submitImplicitly(form, verb);
+    throw new Error(`${verb}: the form was sent — '${label}' did not stop it.`);
+  }
+
+
   async submit(): Promise<void> {
     const verb = "submit()";
     const form = this.lastForm;
@@ -669,7 +769,55 @@ export class RequestDriver
         `${verb}: a browser would not submit this form: it has no submit button and more than one text field.`,
       );
     }
+    this.requireFormInThisWindow(verb, form, null);
     await this.browser.submit(verb, form, null);
+  }
+
+  /**
+   * A link or form aimed at another window or frame (`target`, a
+   * submitter's `formtarget`, else `<base target>`; anything but empty,
+   * `_self`, `_top` and `_parent`, which at the top level is the page
+   * itself) cannot be followed: the session has one page.
+   */
+  private requireThisWindow(
+    verb: string,
+    ownTarget: string | null,
+    destination: URL,
+  ): void {
+    const { document } = this.browser.current;
+    // Not trimmed: Chromium treats target=" _self " as a window named
+    // " _self " (it opens a new one); keywords match case-insensitively.
+    const raw =
+      ownTarget ??
+      document.querySelector("base[target]")?.getAttribute("target") ??
+      "";
+    if (["", "_self", "_top", "_parent"].includes(raw.toLowerCase())) return;
+    throw new BrowserOnlyVerbError(
+      verb,
+      `It opens another window (target="${raw}"); the request adapter has one ` +
+        `page — test the destination with visit('${destination.pathname}${destination.search}') ` +
+        "or use the Playwright adapter.",
+      ENVIRONMENT,
+        "request",
+    );
+  }
+
+  /** requireThisWindow() for a form submission, unless it only closes a dialog. */
+  private requireFormInThisWindow(
+    verb: string,
+    form: HTMLFormElement,
+    submitter: Element | null,
+  ): void {
+    const attr = (own: string, formAttr: string) =>
+      (submitter?.hasAttribute(own) ? submitter.getAttribute(own) : null) ??
+      form.getAttribute(formAttr);
+    if ((attr("formmethod", "method") ?? "").trim().toLowerCase() === "dialog") {
+      return;
+    }
+    const { document, url } = this.browser.current;
+    const action = (attr("formaction", "action") ?? "").trim();
+    const destination = action === "" ? new URL(url) : new URL(action, baseUrl(document, url));
+    this.requireThisWindow(verb, attr("formtarget", "target"), destination);
   }
 
   /** Reads the file from disk; the form sends its bytes, name, and a type
@@ -683,7 +831,7 @@ export class RequestDriver
     const bytes = await readFile(path);
     this.browser.files.set(
       input,
-      new File([bytes], basename(path), { type: mimeType(path) }),
+      attachedFile([bytes], basename(path), mimeType(path)),
     );
     this.touched(input);
   }
@@ -699,6 +847,7 @@ export class RequestDriver
       "A drop zone is JavaScript. Use attachFile(label, path) on its file input, " +
         "or test the drop in a Playwright spec.",
       ENVIRONMENT,
+        "request",
     );
   }
 
@@ -715,6 +864,7 @@ export class RequestDriver
         "Without JavaScript only Enter does anything (it submits the focused field's form). " +
           "Type text with fillIn(), or test key handling in a Playwright spec.",
         ENVIRONMENT,
+        "request",
       );
     }
     const focused = this.browser.focused;
@@ -735,6 +885,7 @@ export class RequestDriver
         "The focused control is not a field of a form, so Enter only does " +
           "something through JavaScript. Test it in a Playwright spec.",
         ENVIRONMENT,
+        "request",
       );
     }
   }
@@ -744,6 +895,7 @@ export class RequestDriver
       "hover()",
       "Hovering only changes a page through CSS or JavaScript. Test hover behaviour in a Playwright spec.",
       ENVIRONMENT,
+        "request",
     );
   }
 
@@ -868,6 +1020,7 @@ export class RequestDriver
       "No stylesheets are applied here. Run this assertion in a Playwright spec, " +
         "or assert the class or attribute that selects the style.",
       ENVIRONMENT,
+        "request",
     );
   }
 
@@ -876,6 +1029,7 @@ export class RequestDriver
       `${verb}()`,
       "Nothing is laid out here. Run this layout operation in a Playwright spec.",
       ENVIRONMENT,
+        "request",
     );
   }
 
@@ -1027,9 +1181,10 @@ export class RequestDriver
     predicate: UntilPredicate<RequestStepContext>,
     opts?: UntilOptions,
   ): Promise<void> {
-    const timeout = opts?.timeout ?? DEFAULT_UNTIL_TIMEOUT;
+    const timeout = opts?.timeout ?? this.options.timeout ?? DEFAULT_TIMEOUT;
     const interval = opts?.interval ?? DEFAULT_UNTIL_INTERVAL;
-    const deadline = Date.now() + timeout;
+    // 0 means no limit, as in Playwright.
+    const deadline = timeout === 0 ? Infinity : Date.now() + timeout;
     let checks = 0;
     for (;;) {
       checks++;

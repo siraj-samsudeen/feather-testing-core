@@ -3,15 +3,21 @@ import type {
   AssertPathOptions,
   AssertionOptions,
   DownloadOptions,
+  FieldState,
+  PlainFieldState,
   FillInOptions,
   LayoutAssertionOptions,
   QueuedStep,
+  SessionCookie,
+  SessionOptions,
+  StepEvent,
+  StepOptions,
   TestDriver,
   UntilOptions,
   UntilPredicate,
 } from "./types.js";
 import { StepError } from "./errors.js";
-import { HIDDEN_VALUE, hideValueInError, labelLooksSecret } from "./secrets.js";
+import { HIDDEN_VALUE, labelLooksSecret } from "./secrets.js";
 
 /**
  * Verbs that take a human description exist so a failure names intent rather
@@ -32,6 +38,75 @@ function describe(expected: string | RegExp): string {
   return typeof expected === "string" ? expected : String(expected);
 }
 
+/**
+ * How a step that never ran is reported (skipped in a failed chain, or left
+ * unrun by a within()/assertDownload() callback): its name with any typed
+ * value hidden. It never reached prepare(), which is what checks whether a
+ * value went into a password field. Index is kept, so the chain still marks
+ * it as skipped.
+ */
+/**
+ * What a failed step on a secret field reports instead of the driver's
+ * error, which can contain the value or part of it.
+ */
+/**
+ * fillIn and assertValue never forward a driver's text — on any path,
+ * secret field or not: it can quote a field's value (in a form exact
+ * hiding misses: trimmed, lower-cased, cut) or dump the page with every
+ * value in it. Their errors are built from the session's own facts only.
+ * Richer diagnostics for secret fields: issue #16.
+ */
+function ownFactsError(stepName: string, label: string, secretField: boolean): Error {
+  return new Error(
+    `${stepName} failed on the field labelled '${label}'${secretField ? " (a secret field)" : ""}. ` +
+      "The driver's message is not shown for fillIn and assertValue: it can quote a field's " +
+      "value or a dump of the page. Run debug() to see the page.",
+  );
+}
+
+/**
+ * Why fillIn or assertValue failed on a field that is not secret, from the
+ * field's state as the driver read it (facts, not its message): the value
+ * found for assertValue; for fillIn, whether the field is disabled,
+ * read-only, hidden or not a text field.
+ */
+function fieldFactsError(
+  verb: "fillIn" | "assertValue",
+  stepName: string,
+  label: string,
+  expected: string,
+  state: PlainFieldState,
+): Error {
+  let facts: string;
+  if (verb === "assertValue") {
+    // The expected value is not repeated (it may have been typed into a
+    // field that was secret when the step ran); the value found was read
+    // in the same read that found the field not secret.
+    facts =
+      state.value === expected
+        ? ": it holds the expected value only now, after the step's wait ran out."
+        : `: found '${state.value}'.`;
+  } else {
+    const problems = [
+      state.disabled && "disabled",
+      state.readOnly && "read-only",
+      !state.visible && "not visible",
+      !state.editable && `${state.kind}, which cannot be typed into`,
+    ].filter((p): p is string => Boolean(p));
+    facts =
+      problems.length > 0
+        ? `: it is ${problems.length > 1 ? `${problems.slice(0, -1).join(", ")} and ${problems.at(-1)}` : problems[0]}.`
+        : ` (${state.kind}: enabled, editable and visible). It may not accept that value.`;
+  }
+  return new Error(`${stepName} failed on the field labelled '${label}'${facts} Run debug() to see the page.`);
+}
+
+function unrunView(step: QueuedStep): QueuedStep {
+  return step.nameHidingValue === undefined
+    ? step
+    : { ...step, name: step.nameHidingValue };
+}
+
 export class Session<TContext = unknown, TNative = unknown>
   implements PromiseLike<void>
 {
@@ -39,7 +114,27 @@ export class Session<TContext = unknown, TNative = unknown>
   private executedSteps: QueuedStep[] = [];
   private stepIndex = 0;
 
-  constructor(private driver: TestDriver<TContext, TNative>) {}
+  /**
+   * `options.onStep` is told about every step this session runs, and about
+   * the steps of the sessions within() and assertDownload() create from it.
+   */
+  constructor(
+    private driver: TestDriver<TContext, TNative>,
+    private options: Pick<SessionOptions, "onStep"> = {},
+  ) {}
+
+  /** Tell onStep about a step, by the name it has right now. */
+  private report(
+    step: QueuedStep,
+    status: StepEvent["status"],
+    error?: unknown,
+  ): void {
+    this.options.onStep?.(
+      status === "failed"
+        ? { name: step.name, status, error }
+        : { name: step.name, status },
+    );
+  }
 
   then<TResult1 = void, TResult2 = never>(
     onfulfilled?:
@@ -49,30 +144,108 @@ export class Session<TContext = unknown, TNative = unknown>
       | ((reason: unknown) => TResult2 | PromiseLike<TResult2>)
       | null,
   ): Promise<TResult1 | TResult2> {
-    return this.executeSteps().then(onfulfilled, onrejected);
+    return this.run().then(onfulfilled, onrejected);
+  }
+
+  /**
+   * Run the queued steps and return a real Promise. `await session...` does
+   * the same; use run() where a thenable is not enough — bun test's
+   * `expect(...).rejects` / `.resolves` only accept a real Promise:
+   *
+   *   await expect(session.visit("/").assertText("Nope").run()).rejects.toThrow(StepError);
+   */
+  run(): Promise<void> {
+    return this.executeSteps();
+  }
+
+  /**
+   * Drop the steps queued on this session that have not started, and say
+   * how many. A chain already running is not touched: it took its steps
+   * when it started. Works the same on a within() scoped session, which
+   * has its own step counter: discarding there renumbers only its steps.
+   */
+  discard(): number {
+    const dropped = this.steps.length;
+    // Rewinding is right only when the queued steps hold the last numbers
+    // given out, in order: steps are numbered as they are queued, and a
+    // running chain takes its (earlier) steps off the queue when it starts.
+    const first = this.stepIndex - dropped;
+    if (this.steps.some((step, i) => step.index !== first + i)) {
+      throw new Error(
+        `feather-testing-core: discard() found queued steps numbered ` +
+          `${this.steps.map((s) => s.index).join(", ")}, but the last numbers given out were ` +
+          `${this.steps.map((_, i) => first + i).join(", ")}. This is a bug in feather-testing-core.`,
+      );
+    }
+    this.steps = [];
+    // The dropped steps were the last numbered; the next ones reuse their
+    // numbers, so a failure still reads "Step 1 of 1", not "Step 3 of 1".
+    this.stepIndex -= dropped;
+    return dropped;
   }
 
   private async executeSteps(): Promise<void> {
     const steps = [...this.steps];
     this.steps = [];
 
-    const wrap: (name: string, fn: () => Promise<void>) => Promise<void> =
+    const wrap: (
+      name: string,
+      fn: () => Promise<void>,
+      step: QueuedStep,
+    ) => Promise<void> =
       this.driver.wrapStep?.bind(this.driver) ?? ((_name, fn) => fn());
 
     for (const [i, step] of steps.entries()) {
       try {
-        await wrap(step.name, step.action);
+        // prepare() settles the name (a secret value hidden) before anyone
+        // hears of the step; the name is read again when it ends.
+        await step.prepare?.();
+        this.report(step, "started");
+        try {
+          await wrap(step.name, step.action, step);
+        } catch (error) {
+          this.report(step, "failed", error);
+          throw error;
+        }
+        this.report(step, "passed");
         this.executedSteps.push(step);
       } catch (error) {
         // Include steps executed in earlier chains so the full walk is
         // visible even when the user broke the chain across multiple awaits.
         throw new StepError(
           step,
-          [...this.executedSteps, ...steps.slice(i)],
+          [
+            ...this.executedSteps,
+            step,
+            // Skipped steps never ran prepare(), so whether a typed value
+            // was a password was never checked: report them with every
+            // typed value hidden.
+            ...steps.slice(i + 1).map((skipped) => unrunView(skipped)),
+          ],
           error,
         );
       }
     }
+  }
+
+  /**
+   * Throw if steps were queued on this session but never run — a callback
+   * that neither returned the session nor awaited it. Running them now
+   * instead would run them after whatever else the callback did.
+   */
+  private requireNothingLeft(verb: string): void {
+    if (this.steps.length === 0) return;
+    // These steps never ran, so whether a typed value was a password was
+    // never checked: hide every typed value.
+    const names = this.steps.map((step) => unrunView(step).name).join(", ");
+    const count = this.steps.length;
+    this.steps = [];
+    throw new Error(
+      `${verb}: the callback queued ${names} but never ran ` +
+        `${count === 1 ? "it" : "them"}. Return the ` +
+        "chain from the callback (s => s.assertText(...)) or await it inside " +
+        "(async s => { await s.assertText(...); }).",
+    );
   }
 
   private enqueue(name: string, action: () => Promise<void>): this {
@@ -93,19 +266,19 @@ export class Session<TContext = unknown, TNative = unknown>
 
   // --- Interactions ---
 
-  click(text: string): this {
-    return this.enqueue(`click('${text}')`, () => this.driver.click(text));
+  click(text: string, opts?: StepOptions): this {
+    return this.enqueue(`click('${text}')`, () => this.driver.click(text, opts));
   }
 
-  clickLink(text: string): this {
+  clickLink(text: string, opts?: StepOptions): this {
     return this.enqueue(`clickLink('${text}')`, () =>
-      this.driver.clickLink(text),
+      this.driver.clickLink(text, opts),
     );
   }
 
-  clickButton(text: string): this {
+  clickButton(text: string, opts?: StepOptions): this {
     return this.enqueue(`clickButton('${text}')`, () =>
-      this.driver.clickButton(text),
+      this.driver.clickButton(text, opts),
     );
   }
 
@@ -115,37 +288,139 @@ export class Session<TContext = unknown, TNative = unknown>
    *
    * A value counts as secret when `opts.sensitive` is set, when the label
    * looks secret ("Password", "API key", "PIN", ...), or when the driver
-   * reports that the field turned out to be a password field. The first two
-   * are known before the step runs, so they also keep the value out of
-   * Playwright's test.step title; the last is only known once it has run.
+   * reports that the field is a password field. A driver that can inspect
+   * the field before filling it (fillTargetIsPassword) settles that before
+   * the step starts, so the value stays out of test.step titles and onStep
+   * events too; if the field never appears, the value is hidden as well.
    */
   fillIn(label: string, value: string, opts?: FillInOptions): this {
-    const nameShowingValue = `fillIn('${label}', '${value}')`;
-    const nameHidingValue = `fillIn('${label}', '${HIDDEN_VALUE}')`;
-    const knownSecret = opts?.sensitive === true || labelLooksSecret(label);
+    return this.fieldValueStep({
+      verb: "fillIn",
+      label,
+      value,
+      knownSecret: opts?.sensitive === true || labelLooksSecret(label),
+      timeout: opts?.timeout,
+      run: () => this.driver.fillIn(label, value, opts),
+      askAfterRun: true,
+    });
+  }
+
+  /**
+   * A step that carries a field's value: fillIn() and assertValue(). The
+   * value is shown in the step's name unless it is secret: `sensitive`, a
+   * label that looks secret, or a password field. The driver is asked about
+   * the field before the step starts (fieldIsPassword), so a secret value
+   * never reaches a step name, test.step title or onStep event; a field the
+   * driver cannot find is treated as secret.
+   *
+   * When a secret step fails, the driver's message is withheld, cause
+   * included: it can quote the value typed, the value found in the field
+   * (assertValue's mismatch), or a fragment of either (Testing Library's
+   * key-syntax errors), and replacing the known value cannot catch those.
+   */
+  private fieldValueStep(spec: {
+    verb: "fillIn" | "assertValue";
+    label: string;
+    value: string;
+    knownSecret: boolean;
+    /** The step's own timeout, for the field check before it starts. */
+    timeout?: number;
+    run: () => Promise<void>;
+    /** fillIn: ask lastFilledFieldIsPassword() after running, too. */
+    askAfterRun: boolean;
+  }): this {
+    const { verb, label, value, knownSecret, timeout, run, askAfterRun } = spec;
+    // The value is never in the step's name, on any path: started events and
+    // wrapStep titles go out before the action, and the field can become a
+    // password field after any check (its type changes, another field takes
+    // its place); Playwright's fill() and toHaveValue() resolve the field
+    // themselves, so no later check can be sure it read the element used.
+    // An empty value has nothing to hide: it is shown as ''.
+    const nameHidingValue =
+      value === "" ? `${verb}('${label}', '')` : `${verb}('${label}', '${HIDDEN_VALUE}')`;
+
+    // Whether the field is secret: then the error is the withheld form
+    // (an empty expected value does not stop the driver quoting the secret
+    // found), and fieldState() is not asked.
+    let secretField = false;
+    let fieldNotFound: Error | undefined;
+    const hide = () => {
+      secretField = true;
+    };
 
     const step: QueuedStep = {
-      name: knownSecret ? nameHidingValue : nameShowingValue,
+      name: nameHidingValue,
+      nameHidingValue,
       index: this.stepIndex++,
-      action: async () => {
-        try {
-          await this.driver.fillIn(label, value);
-        } catch (error) {
-          if (await this.lastFilledFieldIsPassword()) {
-            step.name = nameHidingValue;
-          }
-          if (step.name === nameHidingValue) {
-            throw hideValueInError(error, value);
-          }
-          throw error;
+      prepare: async () => {
+        if (knownSecret) hide();
+        if (!this.driver.fieldIsPassword) {
+          return;
         }
-        if (await this.lastFilledFieldIsPassword()) {
-          step.name = nameHidingValue;
+        // Asked for every value step, secret or not: it also tells a missing
+        // field apart from a failing fill or a value mismatch.
+        try {
+          if (await this.driver.fieldIsPassword(label, timeout)) {
+            hide();
+          }
+        } catch (error) {
+          // The field never appeared, so whether it is secret is unknown:
+          // hide a non-empty value, and fail saying the field was not found
+          // instead of waiting for the same field a second time.
+          hide();
+          // Only our own facts: whether one, none or several matched, and
+          // how many when the driver says. Its text (a DOM dump, say) is
+          // never forwarded.
+          const detail = error instanceof Error ? error.message : String(error);
+          const count = /(\d+) fields? (?:are labelled|match)/i.exec(detail)?.[1];
+          const several = count !== undefined || /multiple elements/i.test(detail);
+          fieldNotFound = new Error(
+            several
+              ? `${verb}('${label}'): ${count ?? "several"} fields match '${label}' — scope the ` +
+                  "step with within(selector, ...) to pick one. Run debug() to see the page."
+              : `${verb}('${label}'): no field labelled '${label}' (or with that placeholder) ` +
+                  "was found. Run debug() to see the page.",
+          );
+        }
+      },
+      action: async () => {
+        if (fieldNotFound !== undefined) {
+          throw fieldNotFound;
+        }
+        try {
+          await run();
+        } catch (error) {
+          if (askAfterRun && (await this.lastFilledFieldIsPassword())) {
+            hide();
+          }
+          // Facts only for a field the driver read and reported, in the
+          // same read, as not secret; a field reported secret now is hidden.
+          const state = secretField ? null : await this.readFieldState(label);
+          if (state?.secret === true) hide();
+          throw state?.secret === false
+            ? fieldFactsError(verb, step.name, label, value, state)
+            : ownFactsError(step.name, label, secretField);
+        }
+        if (askAfterRun && (await this.lastFilledFieldIsPassword())) {
+          hide();
         }
       },
     };
+    if (knownSecret) {
+      // Known before the step runs: hidden from the moment it is queued.
+      hide();
+    }
     this.steps.push(step);
     return this;
+  }
+
+  /** The driver's fieldState(), or null when it has none, cannot tell, or fails. */
+  private async readFieldState(label: string): Promise<FieldState | null> {
+    try {
+      return (await this.driver.fieldState?.(label)) ?? null;
+    } catch {
+      return null;
+    }
   }
 
   /** Ask the driver whether the field just filled is a password field. */
@@ -161,36 +436,36 @@ export class Session<TContext = unknown, TNative = unknown>
     }
   }
 
-  selectOption(label: string, option: string): this {
+  selectOption(label: string, option: string, opts?: StepOptions): this {
     return this.enqueue(`selectOption('${label}', '${option}')`, () =>
-      this.driver.selectOption(label, option),
+      this.driver.selectOption(label, option, opts),
     );
   }
 
-  check(label: string): this {
-    return this.enqueue(`check('${label}')`, () => this.driver.check(label));
+  check(label: string, opts?: StepOptions): this {
+    return this.enqueue(`check('${label}')`, () => this.driver.check(label, opts));
   }
 
-  uncheck(label: string): this {
+  uncheck(label: string, opts?: StepOptions): this {
     return this.enqueue(`uncheck('${label}')`, () =>
-      this.driver.uncheck(label),
+      this.driver.uncheck(label, opts),
     );
   }
 
-  choose(label: string): this {
+  choose(label: string, opts?: StepOptions): this {
     return this.enqueue(`choose('${label}')`, () =>
-      this.driver.choose(label),
+      this.driver.choose(label, opts),
     );
   }
 
-  submit(): this {
-    return this.enqueue("submit()", () => this.driver.submit());
+  submit(opts?: StepOptions): this {
+    return this.enqueue("submit()", () => this.driver.submit(opts));
   }
 
   /** Set a file input, found by its label, to the file at `path`. */
-  attachFile(label: string, path: string): this {
+  attachFile(label: string, path: string, opts?: StepOptions): this {
     return this.enqueue(`attachFile('${label}', '${path}')`, () =>
-      this.driver.attachFile(label, path),
+      this.driver.attachFile(label, path, opts),
     );
   }
 
@@ -210,20 +485,20 @@ export class Session<TContext = unknown, TNative = unknown>
   }
 
   /** Press a key on the focused element, e.g. 'Enter' or 'Control+A'. */
-  pressKey(key: string): this {
-    return this.enqueue(`pressKey('${key}')`, () => this.driver.pressKey(key));
+  pressKey(key: string, opts?: StepOptions): this {
+    return this.enqueue(`pressKey('${key}')`, () => this.driver.pressKey(key, opts));
   }
 
   /** Hover the element with this text. */
-  hover(text: string): this {
-    return this.enqueue(`hover('${text}')`, () => this.driver.hover(text));
+  hover(text: string, opts?: StepOptions): this {
+    return this.enqueue(`hover('${text}')`, () => this.driver.hover(text, opts));
   }
 
   // --- Assertions ---
 
-  assertText(text: string): this {
+  assertText(text: string, opts?: StepOptions): this {
     return this.enqueue(`assertText('${text}')`, () =>
-      this.driver.assertText(text),
+      this.driver.assertText(text, opts),
     );
   }
 
@@ -234,9 +509,9 @@ export class Session<TContext = unknown, TNative = unknown>
     );
   }
 
-  refuteText(text: string): this {
+  refuteText(text: string, opts?: StepOptions): this {
     return this.enqueue(`refuteText('${text}')`, () =>
-      this.driver.refuteText(text),
+      this.driver.refuteText(text, opts),
     );
   }
 
@@ -302,35 +577,95 @@ export class Session<TContext = unknown, TNative = unknown>
     );
   }
 
-  assertValue(label: string, value: string): this {
-    return this.enqueue(`assertValue('${label}', '${value}')`, () =>
-      this.driver.assertValue(label, value),
-    );
+  /** Hides `value` exactly as fillIn() does when the field is secret. */
+  assertValue(label: string, value: string, opts?: StepOptions): this {
+    return this.fieldValueStep({
+      verb: "assertValue",
+      label,
+      value,
+      knownSecret: labelLooksSecret(label),
+      timeout: opts?.timeout,
+      run: () => this.driver.assertValue(label, value, opts),
+      askAfterRun: false,
+    });
   }
 
-  assertChecked(label: string): this {
+  /**
+   * Submit the form the field labelled `label` belongs to (as Enter in that
+   * field would) and pass only if it is not sent because that required field
+   * is empty — the deliberate counterpart of the loud failure every other
+   * submit gives. Fails if the form is sent, or is held back by another field.
+   */
+  assertSubmitBlocked(label: string): this {
+    return this.enqueue(`assertSubmitBlocked('${label}')`, async () => {
+      if (!this.driver.assertSubmitBlocked) {
+        throw new Error(
+          `assertSubmitBlocked('${label}'): this adapter's driver does not implement it. ` +
+            "Use the request or Playwright adapter.",
+        );
+      }
+      await this.driver.assertSubmitBlocked(label);
+    });
+  }
+
+  /**
+   * Add cookies to the session NOW, not as a step: they are in effect for
+   * every step that runs after this resolves, including steps already
+   * queued. Use it when the cookies must take effect at a known moment
+   * outside the chain (signing a user in across several clients at once);
+   * use addCookies() to add them at a point in a chain.
+   */
+  async addCookiesNow(cookies: readonly SessionCookie[]): Promise<void> {
+    if (!this.driver.addCookies) {
+      throw new Error(
+        "addCookiesNow(): this adapter's driver does not implement addCookies. " +
+          "Use the request or Playwright adapter.",
+      );
+    }
+    await this.driver.addCookies(cookies);
+  }
+
+  /**
+   * Add cookies to the session from this point on — e.g. sign a user in
+   * after the first request. Same shape as createSession's `cookies`. The
+   * step is named by the cookies' names only: their values are secrets.
+   */
+  addCookies(cookies: readonly SessionCookie[]): this {
+    const names = cookies.map((c) => c.name).join(", ");
+    return this.enqueue(`addCookies(${names})`, async () => {
+      if (!this.driver.addCookies) {
+        throw new Error(
+          `addCookies(${names}): this adapter's driver does not implement it. ` +
+            "Use the request or Playwright adapter.",
+        );
+      }
+      await this.driver.addCookies(cookies);
+    });
+  }
+
+  assertChecked(label: string, opts?: StepOptions): this {
     return this.enqueue(`assertChecked('${label}')`, () =>
-      this.driver.assertChecked(label),
+      this.driver.assertChecked(label, opts),
     );
   }
 
-  refuteChecked(label: string): this {
+  refuteChecked(label: string, opts?: StepOptions): this {
     return this.enqueue(`refuteChecked('${label}')`, () =>
-      this.driver.refuteChecked(label),
+      this.driver.refuteChecked(label, opts),
     );
   }
 
-  assertSelected(label: string, optionLabel: string): this {
+  assertSelected(label: string, optionLabel: string, opts?: StepOptions): this {
     return this.enqueue(
       `assertSelected('${label}', '${optionLabel}')`,
-      () => this.driver.assertSelected(label, optionLabel),
+      () => this.driver.assertSelected(label, optionLabel, opts),
     );
   }
 
-  assertOptions(label: string, optionLabels: string[]): this {
+  assertOptions(label: string, optionLabels: string[], opts?: StepOptions): this {
     const list = optionLabels.map((l) => `'${l}'`).join(", ");
     return this.enqueue(`assertOptions('${label}', [${list}])`, () =>
-      this.driver.assertOptions(label, optionLabels),
+      this.driver.assertOptions(label, optionLabels, opts),
     );
   }
 
@@ -354,9 +689,9 @@ export class Session<TContext = unknown, TNative = unknown>
     );
   }
 
-  refutePath(path: string): this {
+  refutePath(path: string, opts?: StepOptions): this {
     return this.enqueue(`refutePath('${path}')`, () =>
-      this.driver.refutePath(path),
+      this.driver.refutePath(path, opts),
     );
   }
 
@@ -378,7 +713,9 @@ export class Session<TContext = unknown, TNative = unknown>
       this.driver.assertDownload(
         expected,
         async () => {
-          await trigger(new Session(this.driver));
+          const scoped = new Session(this.driver, this.options);
+          await trigger(scoped);
+          scoped.requireNothingLeft(`assertDownload('${describe(expected)}')`);
         },
         opts,
       ),
@@ -436,6 +773,9 @@ export class Session<TContext = unknown, TNative = unknown>
    * `fn` must either return the scoped session — so its queued steps run — or
    * a promise it already awaited. Returning anything else would silently drop
    * the scoped chain, which is why the callback's return type is not `unknown`.
+   * An async callback that queues steps without awaiting them type-checks,
+   * so a scoped chain with steps left over fails the within() step, naming
+   * them, instead of passing without running them.
    */
   within(
     selector: string,
@@ -445,8 +785,9 @@ export class Session<TContext = unknown, TNative = unknown>
   ): this {
     return this.enqueue(`within('${selector}')`, async () => {
       const scopedDriver = await this.driver.within(selector);
-      const scopedSession = new Session(scopedDriver);
+      const scopedSession = new Session(scopedDriver, this.options);
       await fn(scopedSession);
+      scopedSession.requireNothingLeft(`within('${selector}')`);
     });
   }
 

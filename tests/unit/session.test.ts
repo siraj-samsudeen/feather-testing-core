@@ -15,7 +15,10 @@ function createMockDriver(overrides?: Partial<TestDriver>): {
 
   const handler = (name: string) => {
     return (...args: unknown[]) => {
-      calls.push(`${name}(${args.map((a) => JSON.stringify(a)).join(", ")})`);
+      // Options a step did not set arrive as trailing undefined: leave them out.
+      const given = [...args];
+      while (given.length > 0 && given[given.length - 1] === undefined) given.pop();
+      calls.push(`${name}(${given.map((a) => JSON.stringify(a)).join(", ")})`);
       return Promise.resolve();
     };
   };
@@ -242,22 +245,22 @@ describe("Session", () => {
 
       expect(driver.visit).toHaveBeenCalledWith("/path");
       expect(driver.reload).toHaveBeenCalledWith();
-      expect(driver.click).toHaveBeenCalledWith("some text");
-      expect(driver.clickLink).toHaveBeenCalledWith("my link");
-      expect(driver.clickButton).toHaveBeenCalledWith("my button");
-      expect(driver.fillIn).toHaveBeenCalledWith("Email", "a@b.com");
-      expect(driver.selectOption).toHaveBeenCalledWith("Color", "Red");
-      expect(driver.check).toHaveBeenCalledWith("Newsletter");
-      expect(driver.uncheck).toHaveBeenCalledWith("Ads");
-      expect(driver.choose).toHaveBeenCalledWith("Plan A");
+      expect(driver.click).toHaveBeenCalledWith("some text", undefined);
+      expect(driver.clickLink).toHaveBeenCalledWith("my link", undefined);
+      expect(driver.clickButton).toHaveBeenCalledWith("my button", undefined);
+      expect(driver.fillIn).toHaveBeenCalledWith("Email", "a@b.com", undefined);
+      expect(driver.selectOption).toHaveBeenCalledWith("Color", "Red", undefined);
+      expect(driver.check).toHaveBeenCalledWith("Newsletter", undefined);
+      expect(driver.uncheck).toHaveBeenCalledWith("Ads", undefined);
+      expect(driver.choose).toHaveBeenCalledWith("Plan A", undefined);
       expect(driver.submit).toHaveBeenCalled();
       expect(driver.upload).toHaveBeenCalledWith("Avatar", "avatar.png");
       expect(driver.dropFile).toHaveBeenCalledWith("#zone", "doc.pdf");
-      expect(driver.assertText).toHaveBeenCalledWith("Hello");
+      expect(driver.assertText).toHaveBeenCalledWith("Hello", undefined);
       expect(driver.assertExactText).toHaveBeenCalledWith("Exact total", {
         timeout: 250,
       });
-      expect(driver.refuteText).toHaveBeenCalledWith("Goodbye");
+      expect(driver.refuteText).toHaveBeenCalledWith("Goodbye", undefined);
       expect(driver.assertAttribute).toHaveBeenCalledWith(
         "data-state",
         "ready",
@@ -287,14 +290,15 @@ describe("Session", () => {
         timeout: 250,
         tolerance: 2,
       });
-      expect(driver.assertValue).toHaveBeenCalledWith("Email", "a@b.com");
-      expect(driver.assertChecked).toHaveBeenCalledWith("Newsletter");
-      expect(driver.refuteChecked).toHaveBeenCalledWith("Ads");
-      expect(driver.assertSelected).toHaveBeenCalledWith("Color", "Red");
-      expect(driver.assertOptions).toHaveBeenCalledWith("Color", [
-        "Red",
-        "Blue",
-      ]);
+      expect(driver.assertValue).toHaveBeenCalledWith("Email", "a@b.com", undefined);
+      expect(driver.assertChecked).toHaveBeenCalledWith("Newsletter", undefined);
+      expect(driver.refuteChecked).toHaveBeenCalledWith("Ads", undefined);
+      expect(driver.assertSelected).toHaveBeenCalledWith("Color", "Red", undefined);
+      expect(driver.assertOptions).toHaveBeenCalledWith(
+        "Color",
+        ["Red", "Blue"],
+        undefined,
+      );
       expect(driver.assertHas).toHaveBeenCalledWith("div.card", {
         text: "hi",
         count: 2,
@@ -303,7 +307,7 @@ describe("Session", () => {
       expect(driver.assertPath).toHaveBeenCalledWith("/done", {
         queryParams: { id: "1" },
       });
-      expect(driver.refutePath).toHaveBeenCalledWith("/login");
+      expect(driver.refutePath).toHaveBeenCalledWith("/login", undefined);
       expect(driver.debug).toHaveBeenCalled();
     });
   });
@@ -317,9 +321,21 @@ describe("Session", () => {
       });
       const session = new Session(driver);
 
+      // run() hands expect() a real Promise: bun test's .rejects needs one.
       await expect(
-        session.visit("/").clickButton("Go").assertText("Done"),
+        session.visit("/").clickButton("Go").assertText("Done").run(),
       ).rejects.toThrow(StepError);
+    });
+
+    it("run() returns a real Promise that runs the queued steps", async () => {
+      const { driver, calls } = createMockDriver();
+      const session = new Session(driver);
+
+      const running = session.visit("/").clickButton("Go").run();
+
+      expect(running).toBeInstanceOf(Promise);
+      await expect(running).resolves.toBeUndefined();
+      expect(calls).toEqual(['visit("/")', 'clickButton("Go")']);
     });
 
     it("StepError contains the correct step number", async () => {
@@ -383,7 +399,7 @@ describe("Session", () => {
       } catch (e) {
         const msg = (e as StepError).message;
         expect(msg).toContain("[ok] visit('/')");
-        expect(msg).toContain("[FAILED] fillIn('Name', 'x')");
+        expect(msg).toContain("[FAILED] fillIn('Name', '••••••')");
         expect(msg).toContain("[skipped] clickButton('Go')");
         expect(msg).toContain("[skipped] assertText('Done')");
       }
@@ -451,6 +467,96 @@ describe("Session", () => {
       expect(calls[0]).toBe('visit("/")');
       // within is calls[1]
       expect(calls[2]).toBe('assertText("Done")');
+    });
+
+    /** A driver whose within() scopes to itself, so one call log shows everything. */
+    function selfScopingDriver() {
+      const mock = createMockDriver();
+      mock.driver.within = vi.fn(async () => mock.driver);
+      return mock;
+    }
+
+    it("still runs steps the callback awaited itself", async () => {
+      const { driver, calls } = selfScopingDriver();
+      await new Session(driver).within(".form", async (s) => {
+        await s.fillIn("Name", "Ada");
+        await s.assertText("Saved");
+      });
+      expect(calls).toContain('fillIn("Name", "Ada")');
+      expect(calls).toContain('assertText("Saved")');
+    });
+
+    it("fails, naming the steps, when an async callback leaves steps unawaited", async () => {
+      const { driver, calls } = selfScopingDriver();
+      const error = await new Session(driver)
+        .within("form", async (s) => {
+          s.assertText("impossible");
+        })
+        .run()
+        .then(
+          () => null,
+          (e: unknown) => e as StepError,
+        );
+      expect(error).toBeInstanceOf(StepError);
+      expect(error!.message).toContain("[FAILED] within('form')");
+      expect(error!.message).toContain(
+        "the callback queued assertText('impossible') but never ran it",
+      );
+      // Nothing ran silently afterwards either.
+      expect(calls).not.toContain('assertText("impossible")');
+    });
+
+    it("never puts a typed value in the leftover-steps error or the onStep payload", async () => {
+      const SECRET = "fake-secret-value-123";
+      const { driver } = selfScopingDriver();
+      const failed: unknown[] = [];
+      const error = await new Session(driver, {
+        onStep: (e) => {
+          if (e.status === "failed") failed.push(e.error);
+        },
+      })
+        .within("form", async (s) => {
+          s.fillIn("Login code", SECRET);
+        })
+        .run()
+        .then(
+          () => null,
+          (e: unknown) => e as StepError,
+        );
+      expect(error!.message).toContain("fillIn('Login code', '••••••')");
+      expect(error!.message).not.toContain(SECRET);
+      expect(String((failed[0] as Error).message)).not.toContain(SECRET);
+    });
+
+    it("never puts a typed value in assertDownload's leftover-steps error", async () => {
+      const SECRET = "fake-secret-value-123";
+      const { driver } = createMockDriver();
+      const error = await new Session(driver)
+        .assertDownload("report.csv", async (s) => {
+          s.fillIn("Login code", SECRET);
+        })
+        .run()
+        .then(
+          () => null,
+          (e: unknown) => e as StepError,
+        );
+      expect(error).toBeInstanceOf(StepError);
+      expect(error!.message).not.toContain(SECRET);
+    });
+
+    it("assertDownload's trigger is held to the same rule", async () => {
+      const { driver } = createMockDriver();
+      const error = await new Session(driver)
+        .assertDownload("report.csv", async (s) => {
+          s.clickLink("Report");
+        })
+        .run()
+        .then(
+          () => null,
+          (e: unknown) => e as StepError,
+        );
+      expect(error).toBeInstanceOf(StepError);
+      expect(error!.message).toContain("clickLink('Report')");
     });
   });
 
@@ -539,7 +645,7 @@ describe("Session", () => {
       const { driver, calls } = createMockDriver();
       await new Session(driver).attachFile("Avatar", "photo.png");
 
-      expect(driver.attachFile).toHaveBeenCalledWith("Avatar", "photo.png");
+      expect(driver.attachFile).toHaveBeenCalledWith("Avatar", "photo.png", undefined);
       expect(calls).toEqual(['attachFile("Avatar", "photo.png")']);
     });
 
@@ -696,7 +802,7 @@ describe("Session", () => {
         expect(msg).toContain("Step 4 of 4 failed");
         expect(msg).toContain("    [ok] visit('/')");
         expect(msg).toContain("    [ok] clickButton('Go')");
-        expect(msg).toContain("    [ok] fillIn('Name', 'x')");
+        expect(msg).toContain("    [ok] fillIn('Name', '••••••')");
         expect(msg).toContain(">>> [FAILED] assertText('Done')");
       }
     });
@@ -718,7 +824,7 @@ describe("Session", () => {
         const msg = (e as StepError).message;
         expect(msg).toContain("Step 2 of 3 failed");
         expect(msg).toContain("    [ok] visit('/')");
-        expect(msg).toContain(">>> [FAILED] fillIn('Name', 'x')");
+        expect(msg).toContain(">>> [FAILED] fillIn('Name', '••••••')");
         expect(msg).toContain("    [skipped] clickButton('Go')");
       }
     });
@@ -808,13 +914,16 @@ describe("secrets in failure reports", () => {
   it.each(["Email", "Shipping address", "Pincode", "Footprint"])(
     "does not treat the label %s as secret",
     async (label) => {
-      const session = new Session(driverFailingAtAssertPath());
+      const { driver } = createMockDriver({
+        fillIn: vi.fn(async () => {
+          throw new Error("cannot fill");
+        }),
+      });
 
-      const error = await failureOf(
-        session.fillIn(label, "ordinary value").assertPath("/home"),
-      );
+      const error = await failureOf(new Session(driver).fillIn(label, "ordinary value"));
 
-      expect(error.message).toContain(`fillIn('${label}', 'ordinary value')`);
+      expect(error.message).toContain(`fillIn('${label}', '••••••') failed on the field labelled '${label}'.`);
+      expect(error.message).not.toContain("(a secret field)");
     },
   );
 
@@ -888,11 +997,11 @@ describe("secrets in failure reports", () => {
 
     expect(calls).toEqual([
       `fillIn("Password", "${FAKE_SECRET}")`,
-      `fillIn("Recovery phrase", "${FAKE_SECRET}")`,
+      `fillIn("Recovery phrase", "${FAKE_SECRET}", {"sensitive":true})`,
     ]);
   });
 
-  it("keeps showing ordinary values, which help debugging", async () => {
+  it("redacts ordinary values too: a field can turn secret after any check", async () => {
     const driver = driverFailingAtAssertPath({
       lastFilledFieldIsPassword: vi.fn(async () => false),
     });
@@ -903,7 +1012,7 @@ describe("secrets in failure reports", () => {
     );
 
     expect(error.message).toContain(
-      "[ok] fillIn('Email', 'someone@example.com')",
+      "[ok] fillIn('Email', '••••••')",
     );
   });
 
@@ -922,9 +1031,406 @@ describe("secrets in failure reports", () => {
       .fillIn("Recovery phrase", FAKE_SECRET, { sensitive: true });
 
     expect(titles).toEqual([
-      "fillIn('Email', 'someone@example.com')",
+      "fillIn('Email', '••••••')",
       `fillIn('Password', '${HIDDEN}')`,
       `fillIn('Recovery phrase', '${HIDDEN}')`,
     ]);
+  });
+});
+
+describe("secrets in step names before a step starts", () => {
+  const FAKE_SECRET = "fake-secret-value-123";
+  const HIDDEN = "••••••";
+
+  /** A driver that records the name wrapStep sees at start and at end. */
+  function recordingDriver(overrides?: Partial<TestDriver>) {
+    const names: string[] = [];
+    const { driver } = createMockDriver(overrides);
+    driver.wrapStep = vi.fn(
+      async (
+        name: string,
+        fn: () => Promise<void>,
+        step?: { readonly name: string },
+      ) => {
+        names.push(`start ${name}`);
+        try {
+          await fn();
+        } finally {
+          names.push(`end ${step?.name ?? name}`);
+        }
+      },
+    );
+    return { driver, names };
+  }
+
+  it("hides the value before the step starts when the field is a password field", async () => {
+    const { driver, names } = recordingDriver({
+      fieldIsPassword: vi.fn(async () => true),
+    });
+
+    await new Session(driver).fillIn("Login code", FAKE_SECRET);
+
+    expect(names).toEqual([
+      `start fillIn('Login code', '${HIDDEN}')`,
+      `end fillIn('Login code', '${HIDDEN}')`,
+    ]);
+  });
+
+  it("hands wrapStep a name that is redacted from the start, even for a field found secret only after the fill", async () => {
+    const { driver, names } = recordingDriver({
+      lastFilledFieldIsPassword: vi.fn(async () => true),
+    });
+
+    await new Session(driver).fillIn("Login code", FAKE_SECRET);
+
+    expect(names).toEqual([
+      `start fillIn('Login code', '••••••')`,
+      `end fillIn('Login code', '${HIDDEN}')`,
+    ]);
+  });
+
+  it("hides the value and fails without filling when the field never appears", async () => {
+    const fillIn = vi.fn(async () => {});
+    const { driver, names } = recordingDriver({
+      fillIn,
+      fieldIsPassword: vi.fn(async () => {
+        throw new Error(`no field labelled 'Login code' (typed ${FAKE_SECRET})`);
+      }),
+    });
+
+    const error = await new Session(driver)
+      .fillIn("Login code", FAKE_SECRET)
+      .run()
+      .then(
+        () => null,
+        (e: unknown) => e as StepError,
+      );
+
+    expect(error).toBeInstanceOf(StepError);
+    expect(error!.message).not.toContain(FAKE_SECRET);
+    expect(names.join("\n")).not.toContain(FAKE_SECRET);
+    expect(fillIn).not.toHaveBeenCalled();
+  });
+
+  it("redacts an ordinary value too, from start to end", async () => {
+    const { driver, names } = recordingDriver({
+      fieldIsPassword: vi.fn(async () => false),
+    });
+
+    await new Session(driver).fillIn("Email", "someone@example.com");
+
+    expect(names).toEqual([
+      "start fillIn('Email', '••••••')",
+      "end fillIn('Email', '••••••')",
+    ]);
+  });
+});
+
+describe("steps that never ran keep typed values hidden", () => {
+  const SECRET = "fake-secret-value-123";
+  const HIDDEN = "••••••";
+
+  it("hides a skipped fillIn's value in the chain", async () => {
+    const { driver } = createMockDriver({
+      visit: vi.fn(async () => {
+        throw new Error("server down");
+      }),
+    });
+    const error = await new Session(driver)
+      .visit("/")
+      .fillIn("Credential", SECRET)
+      .run()
+      .then(
+        () => null,
+        (e: unknown) => e as StepError,
+      );
+    expect(error).toBeInstanceOf(StepError);
+    expect(error!.message).toContain(`[skipped] fillIn('Credential', '${HIDDEN}')`);
+    expect(error!.message).not.toContain(SECRET);
+  });
+
+  it("hides it in the parent's failed onStep event when the chain is inside within()", async () => {
+    const mock = createMockDriver({
+      assertText: vi.fn(async () => {
+        throw new Error("not there");
+      }),
+    });
+    mock.driver.within = vi.fn(async () => mock.driver);
+    const failed: string[] = [];
+    const error = await new Session(mock.driver, {
+      onStep: (e) => {
+        if (e.status === "failed") failed.push(String((e.error as Error).message));
+      },
+    })
+      .within("form", (s) => s.assertText("Nope").fillIn("Credential", SECRET))
+      .run()
+      .then(
+        () => null,
+        (e: unknown) => e as StepError,
+      );
+    expect(error!.message).not.toContain(SECRET);
+    expect(failed.length).toBeGreaterThan(0);
+    expect(failed.join("\n")).not.toContain(SECRET);
+  });
+});
+
+describe("a field that is not there", () => {
+  /** A driver whose field lookup fails the way a missing field does. */
+  function missingFieldDriver() {
+    return createMockDriver({
+      fieldIsPassword: vi.fn(async (label: string) => {
+        throw new Error(`waiting for getByLabel('${label}')`);
+      }),
+    }).driver;
+  }
+
+  async function failureOf(chain: { run(): Promise<void> }): Promise<StepError> {
+    const error = await chain.run().then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(error).toBeInstanceOf(StepError);
+    return error as StepError;
+  }
+
+  it.each([
+    ["assertValue", (s: Session) => s.assertValue("What needs to be done?", "")],
+    ["fillIn", (s: Session) => s.fillIn("What needs to be done?", "")],
+  ] as const)("%s with an empty value shows '' and says the field was not found", async (_verb, chain) => {
+    const error = await failureOf(chain(new Session(missingFieldDriver())));
+    expect(error.message).toContain(`('What needs to be done?', '')`);
+    expect(error.message).not.toContain("••••••");
+    expect(error.message).toContain(
+      "no field labelled 'What needs to be done?' (or with that placeholder) was found",
+    );
+  });
+
+  it("a non-empty value stays hidden, and the failure still says the field was not found", async () => {
+    const error = await failureOf(
+      new Session(missingFieldDriver()).fillIn("Login code", "fake-secret-value-123"),
+    );
+    expect(error.message).toContain("fillIn('Login code', '••••••')");
+    expect(error.message).not.toContain("fake-secret-value-123");
+    expect(error.message).toContain("no field labelled 'Login code' (or with that placeholder) was found");
+  });
+
+  it("a secret-looking label on a missing field says not found, not 'secret field'", async () => {
+    const error = await failureOf(
+      new Session(missingFieldDriver()).fillIn("Password", "fake-secret-value-123"),
+    );
+    expect(error.message).toContain("no field labelled 'Password' (or with that placeholder) was found");
+    expect(error.message).not.toContain("fake-secret-value-123");
+  });
+
+  it("several matching fields are reported as ambiguous, not as missing", async () => {
+    const driver = createMockDriver({
+      fieldIsPassword: vi.fn(async () => {
+        throw new Error("fillIn('Code'): 2 fields are labelled 'Code'.");
+      }),
+    }).driver;
+    const error = await failureOf(new Session(driver).assertValue("Code", "x"));
+    expect(error.message).toContain("assertValue('Code'): 2 fields match 'Code'");
+    expect(error.message).not.toContain("was found");
+  });
+});
+
+describe("fieldState() after a failed fillIn/assertValue", () => {
+  const SECRET = "fake-secret-value-123";
+
+  async function failWith(state: unknown) {
+    const { driver } = createMockDriver({
+      assertValue: vi.fn(async () => {
+        throw new Error(`found '${SECRET}'`);
+      }),
+    });
+    driver.fieldIsPassword = vi.fn(async () => false);
+    driver.fieldState = vi.fn(async () => state) as never;
+    const events: string[] = [];
+    const error = await new Session(driver, {
+      onStep: (e) => void events.push(`${e.status} ${e.name} ${e.error ? (e.error as Error).message : ""}`),
+    })
+      .assertValue("Code", "wrong")
+      .run()
+      .then(
+        () => null,
+        (e: unknown) => e as StepError,
+      );
+    const text = [error!.message, String((error!.cause as Error)?.message), ...events].join("\n");
+    return { error: error!, text };
+  }
+
+  it("a field the driver now reports as secret: the step is hidden and no value or state is shown", async () => {
+    const { error, text } = await failWith({ secret: true });
+    expect(error.message).toContain("[FAILED] assertValue('Code', '••••••')");
+    expect(error.message).toContain("failed on the field labelled 'Code' (a secret field)");
+    expect(text).not.toContain(SECRET);
+  });
+
+  it("a state that does not say secret: false shows no value", async () => {
+    const { error, text } = await failWith({
+      value: SECRET,
+      disabled: false,
+      readOnly: false,
+      visible: true,
+      editable: true,
+      kind: 'an <input type="text">',
+    });
+    expect(error.message).toContain("failed on the field labelled 'Code'.");
+    expect(text).not.toContain(SECRET);
+  });
+});
+
+describe("a field that turns secret after the pre-check", () => {
+  const CREDENTIAL = "credential-123";
+
+  for (const verb of ["fillIn", "assertValue"] as const) {
+    for (const outcome of ["passes", "fails"] as const) {
+      it(`${verb} that ${outcome}: the credential reaches no event, wrapStep title, chain, message or cause`, async () => {
+        const { driver } = createMockDriver({
+          [verb]: vi.fn(async () => {
+            if (outcome === "fails") throw new Error(`mismatch on ${CREDENTIAL}`);
+          }),
+        });
+        // Not a password field when asked; the page makes it one right after.
+        driver.fieldIsPassword = vi.fn(async () => false);
+        const seen: string[] = [];
+        driver.wrapStep = vi.fn(async (name: string, fn: () => Promise<void>, step?: { readonly name: string }) => {
+          seen.push(`wrap start ${name}`);
+          try {
+            await fn();
+          } finally {
+            seen.push(`wrap end ${step?.name ?? name}`);
+          }
+        });
+        const error = await new Session(driver, {
+          onStep: (e) => void seen.push(`${e.status} ${e.name} ${e.error ? (e.error as Error).message : ""}`),
+        })
+          [verb]("Code", CREDENTIAL)
+          .step("next", async () => {
+            throw new Error("stop, to print the chain");
+          })
+          .run()
+          .then(
+            () => null,
+            (e: unknown) => e as StepError,
+          );
+        expect(error).toBeInstanceOf(StepError);
+        seen.push(error!.message, String((error!.cause as Error)?.message), String(error!.stack));
+        expect(seen.join("\n")).not.toContain(CREDENTIAL);
+        expect(seen).toContain(`started ${verb}('Code', '••••••') `);
+      });
+    }
+  }
+});
+
+describe("fieldIsPassword()", () => {
+  it("is asked with the label and the step's own timeout, and nothing else", async () => {
+    const { driver } = createMockDriver();
+    const fieldIsPassword = vi.fn(async (..._args: unknown[]) => false);
+    driver.fieldIsPassword = fieldIsPassword;
+    await new Session(driver).fillIn("Name", "x", { timeout: 123 }).assertValue("Name", "x", { timeout: 45 });
+    expect(fieldIsPassword.mock.calls).toEqual([
+      ["Name", 123],
+      ["Name", 45],
+    ]);
+  });
+});
+
+describe("discard()", () => {
+  it("drops queued steps that have not started and says how many; awaiting then runs nothing", async () => {
+    const { driver, calls } = createMockDriver();
+    const session = new Session(driver);
+    session.visit("/").clickButton("Go").assertText("Done");
+    expect(session.discard()).toBe(3);
+    await session;
+    expect(calls).toEqual([]);
+    expect(session.discard()).toBe(0);
+  });
+
+  it("does not touch a chain that is already running", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const { driver, calls } = createMockDriver({
+      visit: vi.fn(async () => {
+        calls.push('visit("/")');
+        await gate;
+      }),
+    });
+    const session = new Session(driver);
+    const running = session.visit("/").clickButton("Go").run();
+    // Queued after the chain started: not part of it.
+    session.assertText("Later");
+    expect(session.discard()).toBe(1);
+    release();
+    await running;
+    expect(calls).toEqual(['visit("/")', 'clickButton("Go")']);
+  });
+
+  it("works on a within() scoped session", async () => {
+    const { driver, calls } = createMockDriver();
+    driver.within = vi.fn(async () => driver);
+    let dropped = -1;
+    await new Session(driver).within("form", async (s) => {
+      s.fillIn("Name", "x");
+      dropped = s.discard();
+    });
+    expect(dropped).toBe(1);
+    expect(calls).toEqual([]);
+  });
+
+  it("refuses to rewind when the dropped steps are not the last numbered", () => {
+    const { driver } = createMockDriver();
+    const session = new Session(driver);
+    session.visit("/").clickButton("Go");
+    // Only reachable by breaking the session's own bookkeeping.
+    (session as unknown as { stepIndex: number }).stepIndex = 7;
+    expect(() => session.discard()).toThrow(
+      "feather-testing-core: discard() found queued steps numbered 0, 1, but the last numbers given out were 5, 6",
+    );
+  });
+
+  it("on a within() scoped session, rewinds only that session's own counter", async () => {
+    const { driver } = createMockDriver({
+      assertText: vi.fn(async () => {
+        throw new Error("not there");
+      }),
+    });
+    driver.within = vi.fn(async () => driver);
+    const error = await new Session(driver)
+      .visit("/")
+      .within("form", (s) => {
+        s.fillIn("Name", "x").clickButton("Go");
+        s.discard();
+        return s.assertText("Done");
+      })
+      .run()
+      .then(
+        () => null,
+        (e: unknown) => e as StepError,
+      );
+    // The outer chain: visit, then within (step 2 of 2).
+    expect(error!.message).toContain("Step 2 of 2 failed");
+    // The scoped chain: its own numbering, from 1 again after the discard.
+    const inner = String((error!.cause as Error).message);
+    expect(inner).toContain("Step 1 of 1 failed");
+  });
+
+  it("numbers the steps of the next chain from where the discarded ones began", async () => {
+    const { driver } = createMockDriver({
+      assertText: vi.fn(async () => {
+        throw new Error("not there");
+      }),
+    });
+    const session = new Session(driver);
+    session.visit("/").clickButton("Go");
+    session.discard();
+    const error = await session
+      .assertText("Done")
+      .run()
+      .then(
+        () => null,
+        (e: unknown) => e as StepError,
+      );
+    expect(error!.message).toContain("Step 1 of 1 failed");
   });
 });

@@ -1,9 +1,14 @@
 import { stripVTControlCharacters } from "node:util";
 import { test, expect } from "./fixtures.js";
-import { PlaywrightDriver } from "../../src/playwright/driver.js";
+import { PlaywrightDriver, pageDefaultNavigationTimeout } from "../../src/playwright/driver.js";
 import { Session } from "../../src/session.js";
 import { StepError } from "../../src/errors.js";
 import type { TestDriver } from "../../src/types.js";
+import { createSession, type StepEvent } from "../../src/playwright/index.js";
+import { createServer } from "node:http";
+import { test as playwrightTest } from "playwright/test";
+import type { AddressInfo } from "node:net";
+import type { Page } from "playwright";
 
 test.describe("PlaywrightDriver", () => {
   test.describe("visit()", () => {
@@ -1006,7 +1011,7 @@ test.describe("Session with PlaywrightDriver", () => {
     } catch (e) {
       const msg = (e as StepError).message;
       expect(msg).toContain("[ok] visit('/form')");
-      expect(msg).toContain("[ok] fillIn('Name', 'Alice')");
+      expect(msg).toContain("[ok] fillIn('Name', '••••••')");
       expect(msg).toContain(">>> [FAILED] assertText('Nonexistent text')");
     }
   });
@@ -1268,11 +1273,11 @@ test.describe("secrets in failure reports", () => {
     );
   });
 
-  test("keeps showing ordinary values", async ({ page }) => {
+  test("redacts ordinary values too", async ({ page }) => {
     const error = await signInFailure(new PlaywrightDriver(page));
 
     expect(error.message).toContain(
-      "[ok] fillIn('Email', 'someone@example.com')",
+      "[ok] fillIn('Email', '••••••')",
     );
   });
 
@@ -1282,9 +1287,135 @@ test.describe("secrets in failure reports", () => {
     const driver = new TitleRecordingDriver(page);
     await signInFailure(driver);
 
-    expect(driver.titles).toContain("fillIn('Email', 'someone@example.com')");
+    expect(driver.titles).toContain("fillIn('Email', '••••••')");
     expect(driver.titles).toContain(`fillIn('Password', '${HIDDEN}')`);
     expect(driver.titles).toContain(`fillIn('Recovery phrase', '${HIDDEN}')`);
+    // A password field with an ordinary label is found by its type before
+    // the step starts, so its title is hidden too.
+    expect(driver.titles).toContain(`fillIn('Login code', '${HIDDEN}')`);
+    expect(driver.titles.join("\n")).not.toContain(FAKE_SECRET);
+  });
+
+  /** Every onStep event of a chain, as "status name". */
+  function recordSteps() {
+    const events: string[] = [];
+    const onStep = (event: StepEvent) =>
+      events.push(`${event.status} ${event.name}`);
+    return { events, onStep };
+  }
+
+  for (const [verb, outcome] of [
+    ["fillIn", "passes"],
+    ["assertValue", "passes"],
+    ["assertValue", "fails"],
+  ] as const) {
+    test(`a field that turns password after the pre-check: ${verb} that ${outcome} never shows the credential`, async ({
+      page,
+    }) => {
+      const CREDENTIAL = "credential-123";
+      const events: string[] = [];
+      let flipped: Promise<unknown> = Promise.resolve();
+      const onStep = (e: StepEvent) => {
+        events.push(`${e.status} ${e.name} ${e.error ? (e.error as Error).message : ""}`);
+        // After the pre-check, before the action: sent ahead of the action's
+        // own commands, so the page has flipped when the action runs.
+        if (e.status === "started" && e.name.startsWith(verb)) {
+          flipped = page.evaluate(() => {
+            (document.getElementById("code") as HTMLInputElement).type = "password";
+          });
+        }
+      };
+      const value = outcome === "passes" ? CREDENTIAL : `${CREDENTIAL}-other`;
+      const error = await createSession(page, { onStep, timeout: 500 })
+        .visit("/turns-password")
+        [verb]("Code", value)
+        .step("then stop, to print the chain", async () => {
+          throw new Error("stop");
+        })
+        .then(
+          () => null,
+          (e: unknown) => e as StepError,
+        );
+      await flipped;
+      expect(await page.locator("#code").getAttribute("type")).toBe("password");
+      expect(error).toBeInstanceOf(StepError);
+      const text = [error!.message, String((error!.cause as Error)?.message), ...events].join("\n");
+      expect(text).not.toContain(CREDENTIAL);
+    });
+  }
+
+  test("onStep never sees a value typed into a password field: started and passed", async ({
+    page,
+  }) => {
+    const { events, onStep } = recordSteps();
+    await createSession(page, { onStep })
+      .visit("/sign-in")
+      .fillIn("Login code", FAKE_SECRET);
+
+    expect(events).toContain(`started fillIn('Login code', '${HIDDEN}')`);
+    expect(events).toContain(`passed fillIn('Login code', '${HIDDEN}')`);
+    expect(events.join("\n")).not.toContain(FAKE_SECRET);
+  });
+
+  test("onStep never sees a value typed into a password field: failed", async ({
+    page,
+  }) => {
+    const { events, onStep } = recordSteps();
+    await createSession(page, { onStep, timeout: 500 })
+      .visit("/sign-in")
+      .fillIn("Locked code", FAKE_SECRET)
+      .then(
+        () => null,
+        () => null,
+      );
+
+    expect(events).toContain(`started fillIn('Locked code', '${HIDDEN}')`);
+    expect(events).toContain(`failed fillIn('Locked code', '${HIDDEN}')`);
+    expect(events.join("\n")).not.toContain(FAKE_SECRET);
+  });
+
+  test("onStep never sees a value typed into a password field that renders late", async ({
+    page,
+  }) => {
+    const { events, onStep } = recordSteps();
+    await createSession(page, { onStep })
+      .visit("/late-password")
+      .fillIn("Passphrase", FAKE_SECRET);
+
+    expect(events).toContain(`started fillIn('Passphrase', '${HIDDEN}')`);
+    expect(events.join("\n")).not.toContain(FAKE_SECRET);
+    await expect(page.getByLabel("Passphrase")).toHaveValue(FAKE_SECRET);
+  });
+
+  test("a field that never appears hides the value and fails once", async ({
+    page,
+  }) => {
+    const { events, onStep } = recordSteps();
+    const started = Date.now();
+    const error = await createSession(page, { onStep, timeout: 500 })
+      .visit("/sign-in")
+      .fillIn("No such field", FAKE_SECRET)
+      .then(
+        () => null,
+        (e: unknown) => e,
+      );
+
+    expect(error).toBeInstanceOf(StepError);
+    expect((error as StepError).message).not.toContain(FAKE_SECRET);
+    expect(events.join("\n")).not.toContain(FAKE_SECRET);
+    // One wait for the missing field, not two.
+    expect(Date.now() - started).toBeLessThan(900 + 1500);
+  });
+
+  test("onStep redacts ordinary values too", async ({ page }) => {
+    const { events, onStep } = recordSteps();
+    await createSession(page, { onStep })
+      .visit("/sign-in")
+      .fillIn("Email", "someone@example.com");
+
+    expect(events).toContain(
+      "passed fillIn('Email', '••••••')",
+    );
   });
 
   test("hides the value when filling a password field fails, cause included", async ({
@@ -1317,5 +1448,836 @@ test.describe("secrets in failure reports", () => {
 
     await expect(page.getByLabel("Login code")).toHaveValue(FAKE_SECRET);
     await expect(page.getByLabel("Recovery phrase")).toHaveValue(FAKE_SECRET);
+  });
+});
+
+test.describe("session options", () => {
+  test("timeout bounds every assertion of the session", async ({ page }) => {
+    const started = Date.now();
+    const error = await createSession(page, { timeout: 300 })
+      .visit("/")
+      .assertText("Not on this page")
+      .then(
+        () => null,
+        (e: unknown) => e,
+      );
+    expect(error).toBeInstanceOf(StepError);
+    expect((error as StepError).message).toContain(
+      "[FAILED] assertText('Not on this page')",
+    );
+    expect((error as StepError).message).toContain("300ms");
+    expect(Date.now() - started).toBeLessThan(3000);
+  });
+
+  test("timeout bounds actions too", async ({ page }) => {
+    const started = Date.now();
+    const error = await createSession(page, { timeout: 300 })
+      .visit("/form")
+      .fillIn("No such field", "x")
+      .then(
+        () => null,
+        (e: unknown) => e,
+      );
+    expect(error).toBeInstanceOf(StepError);
+    expect(Date.now() - started).toBeLessThan(3000);
+  });
+
+  test("a per-call timeout still wins over the session timeout", async ({
+    page,
+  }) => {
+    await page.route("**/late", (route) =>
+      route.fulfill({
+        contentType: "text/html",
+        body: `<p id="p"></p><script>setTimeout(() => { p.textContent = "late" }, 800)</script>`,
+      }),
+    );
+    await createSession(page, { timeout: 200 })
+      .visit("/late")
+      .assertHas("#p", { text: "late", timeout: 3000 });
+  });
+
+  test("onStep reports each step starting, passing and failing", async ({
+    page,
+  }) => {
+    const events: string[] = [];
+    const onStep = (event: StepEvent) =>
+      events.push(`${event.status} ${event.name}`);
+    await createSession(page, { timeout: 300, onStep })
+      .visit("/")
+      .assertText("Welcome")
+      .assertText("Not here")
+      .then(
+        () => null,
+        () => null,
+      );
+    expect(events).toEqual([
+      "started visit('/')",
+      "passed visit('/')",
+      "started assertText('Welcome')",
+      "passed assertText('Welcome')",
+      "started assertText('Not here')",
+      "failed assertText('Not here')",
+    ]);
+  });
+});
+
+/**
+ * A real HTTP server for a server-rendered to-do list: POST /todos, then a
+ * 303 redirect back to the list. The GET is slowed down so a step that ran
+ * before the new page loaded would read the old one. `post` picks other
+ * answers to the POST; `getDelay` slows the list further. Route interception
+ * cannot stand in here: a fulfilled redirect does not behave like a real one.
+ */
+async function serveTodoList(
+  page: Page,
+  opts: {
+    post?: "redirect" | "204" | "download" | "drop" | "slow";
+    getDelay?: number;
+    /** Send the list's headers and first bytes at once, the rest this many ms later. */
+    slowBody?: number;
+  } = {},
+): Promise<{ url: string; close: () => Promise<void> }> {
+  const todos: string[] = [];
+  const otherPages: Record<string, string> = {
+    "/js-todos": `<form id="f"><input placeholder="What needs to be done?"></form><ul id="l"></ul>
+<script>f.onsubmit = (e) => { e.preventDefault(); const i = f.querySelector("input");
+  setTimeout(() => { const li = document.createElement("li"); li.textContent = i.value; l.append(li); }, 100); };</script>`,
+    "/dialog": `<dialog open><form method="dialog">
+  <input placeholder="What needs to be done?"><button>Close</button>
+</form></dialog>`,
+    "/iframe-target": `<iframe name="side"></iframe>
+<form method="post" action="/todos" target="side">
+  <input name="title" placeholder="What needs to be done?"><button type="submit">Add</button>
+</form>`,
+    "/superseded": `<form method="post" action="/todos" id="f">
+  <input name="title" placeholder="What needs to be done?">
+</form>
+<script>f.addEventListener("submit", () => setTimeout(() => { location.href = "/todos?from=script"; }, 100));</script>`,
+    "/links": `<a href="/todos">See the list</a>`,
+  };
+  const server = createServer((req, res) => {
+    const path = (req.url ?? "/").split("?")[0]!;
+    if (req.method === "POST") {
+      let body = "";
+      req.on("data", (chunk) => (body += chunk));
+      req.on("end", () => {
+        const title = new URLSearchParams(body).get("title");
+        if (title) todos.push(title);
+        switch (opts.post) {
+          case "204":
+            res.writeHead(204).end();
+            return;
+          case "download":
+            res
+              .writeHead(200, {
+                "content-type": "text/csv",
+                "content-disposition": 'attachment; filename="todos.csv"',
+              })
+              .end(todos.join("\n"));
+            return;
+          case "drop":
+            req.socket.destroy();
+            return;
+          case "slow":
+            setTimeout(
+              () => res.writeHead(303, { location: "/todos" }).end(),
+              2000,
+            );
+            return;
+          default:
+            res.writeHead(303, { location: "/todos" }).end();
+        }
+      });
+      return;
+    }
+    const html =
+      otherPages[path] ??
+      `<form method="post" action="/todos">
+  <input name="title" placeholder="What needs to be done?">
+  <button type="submit">Add</button>
+</form>
+<ul>${todos.map((t) => `<li>${t}</li>`).join("")}</ul>`;
+    if (opts.slowBody !== undefined && path === "/todos") {
+      // The new document commits at once but does not finish loading.
+      res.writeHead(200, { "content-type": "text/html" });
+      res.write(`<!doctype html><p>Loading`);
+      setTimeout(() => res.end(html), opts.slowBody);
+      return;
+    }
+    setTimeout(
+      () => {
+        res.writeHead(200, { "content-type": "text/html" }).end(html);
+      },
+      path === "/todos" ? (opts.getDelay ?? 300) : 0,
+    );
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address() as AddressInfo;
+  // The fixture context answers every request from its page table; let this
+  // server's requests through to the network.
+  await page.route(`http://127.0.0.1:${port}/**`, (route) => route.continue());
+  return {
+    url: `http://127.0.0.1:${port}`,
+    close: () =>
+      new Promise<void>((resolve) => {
+        server.closeAllConnections();
+        server.close(() => resolve());
+      }),
+  };
+}
+
+/** Reads the list right now, without waiting — what a stale page would show. */
+async function itemsNow(page: Page): Promise<string[]> {
+  return page.locator("li").allTextContents();
+}
+
+test.describe("waiting for the new page after a submit", () => {
+  test("submit() pressing Enter waits for the POST-redirect-GET page", async ({
+    page,
+  }) => {
+    const app = await serveTodoList(page);
+    try {
+      const driver = new PlaywrightDriver(page);
+      await driver.visit(`${app.url}/todos`);
+      // Remove the submit button so submit() falls back to pressing Enter.
+      await page.locator("button").evaluate((b) => b.remove());
+      await driver.fillIn("What needs to be done?", "Buy milk");
+      await driver.submit();
+      expect(await itemsNow(page)).toEqual(["Buy milk"]);
+    } finally {
+      await app.close();
+    }
+  });
+
+  test("submit() clicking the submit button waits for the new page", async ({
+    page,
+  }) => {
+    const app = await serveTodoList(page);
+    try {
+      const driver = new PlaywrightDriver(page);
+      await driver.visit(`${app.url}/todos`);
+      await driver.fillIn("What needs to be done?", "Buy milk");
+      await driver.submit();
+      expect(await itemsNow(page)).toEqual(["Buy milk"]);
+    } finally {
+      await app.close();
+    }
+  });
+
+  test("clickButton() waits for the new page", async ({ page }) => {
+    const app = await serveTodoList(page);
+    try {
+      const driver = new PlaywrightDriver(page);
+      await driver.visit(`${app.url}/todos`);
+      await driver.fillIn("What needs to be done?", "Buy milk");
+      await driver.clickButton("Add");
+      expect(await itemsNow(page)).toEqual(["Buy milk"]);
+    } finally {
+      await app.close();
+    }
+  });
+
+  test("pressKey('Enter') waits for the new page", async ({ page }) => {
+    const app = await serveTodoList(page);
+    try {
+      const driver = new PlaywrightDriver(page);
+      await driver.visit(`${app.url}/todos`);
+      await driver.fillIn("What needs to be done?", "Buy milk");
+      await driver.pressKey("Enter");
+      expect(await itemsNow(page)).toEqual(["Buy milk"]);
+    } finally {
+      await app.close();
+    }
+  });
+
+  test("a form handled by JavaScript does not wait for a navigation", async ({
+    page,
+  }) => {
+    const app = await serveTodoList(page);
+    try {
+      const driver = new PlaywrightDriver(page);
+      await driver.visit(`${app.url}/js-todos`);
+      await driver.fillIn("What needs to be done?", "Client side");
+      const started = Date.now();
+      await driver.submit();
+      expect(Date.now() - started).toBeLessThan(1000);
+      await driver.assertHas("li", { text: "Client side" });
+    } finally {
+      await app.close();
+    }
+  });
+
+  test("a 204 response after pressKey('Enter') ends the wait", async ({
+    page,
+  }) => {
+    const app = await serveTodoList(page, { post: "204" });
+    try {
+      const driver = new PlaywrightDriver(page, page, { timeout: 5000 });
+      await driver.visit(`${app.url}/todos`);
+      await driver.fillIn("What needs to be done?", "Buy milk");
+      const started = Date.now();
+      await driver.pressKey("Enter");
+      expect(Date.now() - started).toBeLessThan(3000);
+    } finally {
+      await app.close();
+    }
+  });
+});
+
+test.describe("when the wait for a new page ends", () => {
+  /** Run `fn` against a fresh server, closing it afterwards. */
+  async function withApp(
+    page: Page,
+    opts: Parameters<typeof serveTodoList>[1],
+    fn: (url: string) => Promise<void>,
+  ) {
+    const app = await serveTodoList(page, opts);
+    try {
+      await fn(app.url);
+    } finally {
+      await app.close();
+    }
+  }
+
+  test("a download ends the wait without a new page", async ({ page }) => {
+    await withApp(page, { post: "download" }, async (url) => {
+      const driver = new PlaywrightDriver(page, page, { timeout: 5000 });
+      await driver.visit(`${url}/todos`);
+      await driver.fillIn("What needs to be done?", "Buy milk");
+      const started = Date.now();
+      await driver.pressKey("Enter");
+      expect(Date.now() - started).toBeLessThan(3000);
+    });
+  });
+
+  test("a failed request ends the wait without a new page", async ({ page }) => {
+    await withApp(page, { post: "drop" }, async (url) => {
+      const driver = new PlaywrightDriver(page, page, { timeout: 5000 });
+      await driver.visit(`${url}/todos`);
+      await driver.fillIn("What needs to be done?", "Buy milk");
+      const started = Date.now();
+      await driver.pressKey("Enter");
+      expect(Date.now() - started).toBeLessThan(3000);
+    });
+  });
+
+  test("a navigation replaced by a newer one waits for the newer page", async ({
+    page,
+  }) => {
+    await withApp(page, { post: "slow" }, async (url) => {
+      const driver = new PlaywrightDriver(page);
+      await driver.visit(`${url}/superseded`);
+      await driver.fillIn("What needs to be done?", "Buy milk");
+      await driver.pressKey("Enter");
+      // The script's GET /todos?from=script replaced the slow POST; the wait
+      // lasted until that page had loaded.
+      expect(new URL(page.url()).search).toBe("?from=script");
+      expect(await page.evaluate(() => document.readyState)).toBe("complete");
+      expect(await page.locator("form").count()).toBe(1);
+    });
+  });
+
+  test("a page that never loads fails with a message saying so", async ({
+    page,
+  }) => {
+    await withApp(page, { slowBody: 3000 }, async (url) => {
+      await page.goto(`${url}/todos`);
+      // The list after the POST commits at once but takes 3 s to finish
+      // loading. Whether or not Playwright waits for the navigation itself,
+      // that wait ends at the commit; only feather's wait for a loaded page
+      // (500 ms here) is still waiting, and it fails.
+      const failure = await new Session(
+        new PlaywrightDriver(page, page, { navigationTimeout: 500 }),
+      )
+        .fillIn("What needs to be done?", "Buy milk")
+        .pressKey("Enter")
+        .then(
+          () => null,
+          (e: unknown) => e,
+        );
+      expect(failure).toBeInstanceOf(StepError);
+      expect((failure as StepError).message).toContain(
+        "the page started to navigate, but no new page finished loading within 500ms",
+      );
+    });
+  });
+
+  test("the new page after a submit gets the page's navigation timeout, not its action timeout", async ({
+    page,
+  }) => {
+    await withApp(page, { slowBody: 1000 }, async (url) => {
+      page.setDefaultTimeout(500);
+      page.setDefaultNavigationTimeout(10000);
+      const driver = new PlaywrightDriver(page);
+      await driver.visit(`${url}/todos`);
+      await driver.fillIn("What needs to be done?", "Buy milk");
+      // The list commits at once but takes 1 s to load: past the 500 ms
+      // action timeout, well within the 10 s navigation timeout.
+      await driver.pressKey("Enter");
+      expect(await itemsNow(page)).toEqual(["Buy milk"]);
+    });
+  });
+
+  test("a wait that ends without a new page stops polling the page", async ({
+    page,
+  }) => {
+    await withApp(page, { post: "download" }, async (url) => {
+      const driver = new PlaywrightDriver(page, page, { navigationTimeout: 0 });
+      await driver.visit(`${url}/todos`);
+      // Count how often anything reads the adapter's page marker: the wait
+      // for a new page polls it until that wait is settled.
+      await page.evaluate(() => {
+        const w = window as unknown as Record<string, unknown>;
+        let value: unknown;
+        w.__reads = 0;
+        // The session's page state lives under one Symbol-keyed store.
+        const key = Symbol.for("feather-testing-core");
+        const store = ((w as Record<symbol, Record<string, unknown>>)[key] ??= {});
+        Object.defineProperty(store, "documentBeforeAction", {
+          configurable: true,
+          get() {
+            (w.__reads as number)++;
+            return value;
+          },
+          set(v) {
+            value = v;
+          },
+        });
+      });
+      await driver.fillIn("What needs to be done?", "Buy milk");
+      // The download ends the wait; with no navigation timeout, a poll left
+      // behind would run until the page closed.
+      await driver.pressKey("Enter");
+      const reads = () => page.evaluate(() => (window as unknown as { __reads: number }).__reads);
+      // eslint-disable-next-line feather-testing/no-wait-for-timeout -- lets the stop signal reach the poll; there is no event to wait for
+      await page.waitForTimeout(300);
+      const settled = await reads();
+      // eslint-disable-next-line feather-testing/no-wait-for-timeout -- the check is that nothing happens during this window
+      await page.waitForTimeout(500);
+      expect(await reads()).toBe(settled);
+    });
+  });
+
+  test("consecutive waits that end without a new page all stop polling", async ({
+    page,
+  }) => {
+    await withApp(page, { post: "download" }, async (url) => {
+      const driver = new PlaywrightDriver(page, page, { navigationTimeout: 0 });
+      await driver.visit(`${url}/todos`);
+      // Count how often anything reads the adapter's page marker: the wait
+      // for a new page polls it until that wait is settled.
+      await page.evaluate(() => {
+        const w = window as unknown as Record<string, unknown>;
+        let value: unknown;
+        w.__reads = 0;
+        // The session's page state lives under one Symbol-keyed store.
+        const key = Symbol.for("feather-testing-core");
+        const store = ((w as Record<symbol, Record<string, unknown>>)[key] ??= {});
+        Object.defineProperty(store, "documentBeforeAction", {
+          configurable: true,
+          get() {
+            (w.__reads as number)++;
+            return value;
+          },
+          set(v) {
+            value = v;
+          },
+        });
+      });
+      // Two downloads back to back: each wait's poll must stop, not just the
+      // last one's.
+      await driver.fillIn("What needs to be done?", "Buy milk");
+      await driver.pressKey("Enter");
+      await driver.fillIn("What needs to be done?", "Buy bread");
+      await driver.pressKey("Enter");
+      // Each poll took its own stop token when it exited: none is left over.
+      expect(
+        await page.evaluate(
+          () =>
+            (
+              (window as unknown as Record<symbol, { stoppedWaits?: Set<string> }>)[
+                Symbol.for("feather-testing-core")
+              ]
+            )?.stoppedWaits?.size,
+        ),
+      ).toBe(0);
+      const reads = () => page.evaluate(() => (window as unknown as { __reads: number }).__reads);
+      // eslint-disable-next-line feather-testing/no-wait-for-timeout -- lets the stop signal reach the poll; there is no event to wait for
+      await page.waitForTimeout(300);
+      const settled = await reads();
+      // eslint-disable-next-line feather-testing/no-wait-for-timeout -- the check is that nothing happens during this window
+      await page.waitForTimeout(500);
+      expect(await reads()).toBe(settled);
+    });
+  });
+
+  for (const how of ["clickButton", "submit", "clickLink"] as const) {
+    test(`${how}() gives a slow page the navigation timeout, not the action timeout`, async ({
+      page,
+    }) => {
+      await withApp(page, { getDelay: 800 }, async (url) => {
+        await page.goto(`${url}/links`);
+        if (how !== "clickLink") {
+          await page.goto(`${url}/todos`);
+        }
+        const session = createSession(page, { timeout: 200, navigationTimeout: 5000 });
+        const chain =
+          how === "clickLink"
+            ? session.clickLink("See the list")
+            : how === "submit"
+              ? session.fillIn("What needs to be done?", "Buy milk").submit()
+              : session.fillIn("What needs to be done?", "Buy milk").clickButton("Add");
+        // The page after the click takes 800 ms: past the 200 ms action
+        // timeout, well within the 5 s navigation timeout.
+        await chain;
+        expect(await page.locator("form").count()).toBe(1);
+      });
+    });
+  }
+
+  test("method=\"dialog\" does not wait for a navigation", async ({ page }) => {
+    await withApp(page, {}, async (url) => {
+      const driver = new PlaywrightDriver(page, page, { timeout: 5000 });
+      await driver.visit(`${url}/dialog`);
+      await driver.fillIn("What needs to be done?", "x");
+      const started = Date.now();
+      await driver.pressKey("Enter");
+      expect(Date.now() - started).toBeLessThan(1000);
+      await expect(page.locator("dialog")).not.toHaveAttribute("open");
+    });
+  });
+
+  test("a form aimed at an iframe does not wait for this page to navigate", async ({
+    page,
+  }) => {
+    await withApp(page, {}, async (url) => {
+      const driver = new PlaywrightDriver(page, page, { timeout: 5000 });
+      await driver.visit(`${url}/iframe-target`);
+      await driver.fillIn("What needs to be done?", "Buy milk");
+      const started = Date.now();
+      await driver.submit();
+      expect(Date.now() - started).toBeLessThan(1000);
+      await expect(
+        page.frameLocator("iframe[name=side]").locator("li"),
+      ).toHaveText(["Buy milk"]);
+    });
+  });
+
+  test("clickLink() waits for the new page", async ({ page }) => {
+    await withApp(page, {}, async (url) => {
+      const driver = new PlaywrightDriver(page);
+      await driver.visit(`${url}/links`);
+      await driver.clickLink("See the list");
+      expect(await page.locator("form").count()).toBe(1);
+    });
+  });
+
+  test("visit() keeps Playwright's navigation timeout, not the session timeout", async ({
+    page,
+  }) => {
+    await withApp(page, { getDelay: 800 }, async (url) => {
+      await createSession(page, { timeout: 200 })
+        .visit(`${url}/todos`)
+        .assertHas("form");
+    });
+  });
+});
+
+test.describe("session options reach every step", () => {
+  test("within() keeps the session timeout", async ({ page }) => {
+    const started = Date.now();
+    const error = await createSession(page, { timeout: 300 })
+      .visit("/scoped")
+      .within(".main", (scoped) => scoped.assertText("Sidebar content"))
+      .then(
+        () => null,
+        (e: unknown) => e,
+      );
+    expect(error).toBeInstanceOf(StepError);
+    expect(Date.now() - started).toBeLessThan(3000);
+  });
+
+  test("within() keeps onStep", async ({ page }) => {
+    const names: string[] = [];
+    await createSession(page, {
+      onStep: (event) => {
+        if (event.status === "passed") names.push(event.name);
+      },
+    })
+      .visit("/scoped")
+      .within(".main", (scoped) => scoped.assertText("Main content"));
+    expect(names).toContain("assertText('Main content')");
+    expect(names).toContain("within('.main')");
+  });
+
+  test("timeout: 0 means no limit", async ({ page }) => {
+    await page.route("**/late-zero", (route) =>
+      route.fulfill({
+        contentType: "text/html",
+        body: `<p id="p"></p><script>setTimeout(() => { p.textContent = "late" }, 600)</script>`,
+      }),
+    );
+    await createSession(page, { timeout: 0 })
+      .visit("/late-zero")
+      .assertHas("#p", { text: "late" });
+  });
+});
+
+test.describe("links that do not load a page", () => {
+  for (const name of ["Empty hash", "Fragment", "Script link", "Email us"]) {
+    test(`clickLink('${name}') returns at once`, async ({ page }) => {
+      const driver = new PlaywrightDriver(page, page, { timeout: 5000 });
+      await driver.visit("/inert-links");
+      const started = Date.now();
+      await driver.clickLink(name);
+      // Well under the 500 ms wait for a navigation to start.
+      expect(Date.now() - started).toBeLessThan(400);
+    });
+  }
+});
+
+test.describe("navigation wait windows", () => {
+  /** How long clickButton takes on a page that signals leaving but stays. */
+  async function timeFakeLeave(page: Page, navigationStartTimeout?: number) {
+    const driver = new PlaywrightDriver(page, page, { navigationStartTimeout });
+    await driver.visit("/fake-leave");
+    const started = Date.now();
+    await driver.clickButton("Pretend to leave");
+    return Date.now() - started;
+  }
+
+  test("navigationStartTimeout bounds the wait for a navigation to start", async ({
+    page,
+  }) => {
+    expect(await timeFakeLeave(page, 50)).toBeLessThan(300);
+    expect(await timeFakeLeave(page, 1500)).toBeGreaterThanOrEqual(1400);
+  });
+
+  test("the navigation start window defaults to 500 ms", async ({ page }) => {
+    const elapsed = await timeFakeLeave(page);
+    expect(elapsed).toBeGreaterThanOrEqual(450);
+    expect(elapsed).toBeLessThan(1200);
+  });
+
+  test("replacedNavigationTimeout sets how long a failed navigation waits for a replacement", async ({
+    page,
+  }) => {
+    const app = await serveTodoList(page);
+    // An aborted POST shows no error page, so only the failure ends the wait.
+    await page.route(`${app.url}/todos`, (route, request) =>
+      request.method() === "POST" ? route.abort("aborted") : route.fallback(),
+    );
+    try {
+      const driver = new PlaywrightDriver(page, page, {
+        replacedNavigationTimeout: 1500,
+      });
+      await driver.visit(`${app.url}/todos`);
+      await driver.fillIn("What needs to be done?", "Buy milk");
+      const started = Date.now();
+      await driver.pressKey("Enter");
+      expect(Date.now() - started).toBeGreaterThanOrEqual(1400);
+    } finally {
+      await app.close();
+    }
+  });
+});
+
+test.describe("fillIn shares one budget", () => {
+  test("a field that appears late but is never editable fails within one timeout", async ({
+    page,
+  }) => {
+    await page.goto("/late-locked");
+    const started = Date.now();
+    const error = await createSession(page, { timeout: 1000 })
+      .fillIn("Code", "x")
+      .then(
+        () => null,
+        (e: unknown) => e,
+      );
+    expect(error).toBeInstanceOf(StepError);
+    // One 1000 ms budget for finding and filling, not 1000 + 1000.
+    expect(Date.now() - started).toBeLessThan(1700);
+  });
+
+  test("a field that renders late still gets filled", async ({ page }) => {
+    await createSession(page, { timeout: 2000 })
+      .visit("/late-password")
+      .fillIn("Passphrase", "x");
+    await expect(page.getByLabel("Passphrase")).toHaveValue("x");
+  });
+});
+
+test.describe("an action that closes the page", () => {
+  test("reports the closed page, not a navigation that never finished", async ({
+    page,
+  }) => {
+    // The button makes a synchronous request, which blocks the page (and so
+    // the click) until it is answered; the test closes the page instead of
+    // answering. The page is always closed before the click can finish.
+    await page.route("**/close-this-page", () => void page.close());
+    const error = await createSession(page, { timeout: 1000 })
+      .visit("/closing")
+      .clickButton("Close this window")
+      .then(
+        () => null,
+        (e: unknown) => e,
+      );
+    expect(error).toBeInstanceOf(StepError);
+    const message = (error as StepError).message;
+    expect(message).toContain("[FAILED] clickButton('Close this window')");
+    expect(message).toMatch(/closed/i);
+    expect(message).not.toContain("no new page finished loading");
+  });
+});
+
+test.describe("asking whether the Playwright runner is active", () => {
+  test("happens once per session, scoped drivers included", async ({ page }) => {
+    const original = playwrightTest.info;
+    let asked = 0;
+    playwrightTest.info = (() => {
+      asked++;
+      return original.call(playwrightTest);
+    }) as typeof original;
+    try {
+      await createSession(page)
+        .visit("/scoped")
+        .within(".main", (scoped) =>
+          scoped.within("p", (inner) => inner.assertText("Main content")),
+        )
+        .assertText("Sidebar content");
+    } finally {
+      playwrightTest.info = original;
+    }
+    expect(asked).toBe(1);
+  });
+});
+
+test.describe("fillIn on a missing field", () => {
+  test("fails within the same budget as assertValue (the assertion budget inside the runner)", async ({
+    page,
+  }) => {
+    test.setTimeout(20_000);
+    const started = Date.now();
+    const error = await new Session(new PlaywrightDriver(page))
+      .visit("/form")
+      .fillIn("No such field", "x")
+      .then(
+        () => null,
+        (e: unknown) => e,
+      );
+    expect(error).toBeInstanceOf(StepError);
+    expect((error as StepError).message).toContain("no field labelled 'No such field'");
+    expect(Date.now() - started).toBeLessThan(10_000);
+  });
+});
+
+test.describe("assertValue on a missing field", () => {
+  test("fails within the assertion budget, not the (unlimited) action timeout", async ({
+    page,
+  }) => {
+    // Inside Playwright Test the default action timeout is 0 (no limit);
+    // expect's is 5 s. Outside it, the session default applies to both.
+    test.setTimeout(20_000);
+    const started = Date.now();
+    const error = await new Session(new PlaywrightDriver(page))
+      .visit("/form")
+      .assertValue("No such field", "x")
+      .then(
+        () => null,
+        (e: unknown) => e,
+      );
+    expect(error).toBeInstanceOf(StepError);
+    expect((error as StepError).message).toContain("no field labelled 'No such field'");
+    expect(Date.now() - started).toBeLessThan(10_000);
+  });
+});
+
+test.describe("a refused submit is only a submit attempt's refusal", () => {
+  test("a type=button that checks validity (a wizard's Next) does not fail the step", async ({
+    page,
+  }) => {
+    await page.route("**/wizard", (route) =>
+      route.fulfill({
+        contentType: "text/html",
+        body: `<form id="w"><label for="t">Title</label><input id="t" required>
+          <button type="button" onclick="document.getElementById('w').reportValidity()">Next</button></form>
+          <form id="other"><label for="q">Query</label><input id="q"><button type="button">Preview</button></form>`,
+      }),
+    );
+    await createSession(page, { timeout: 1000 })
+      .visit("/wizard")
+      .clickButton("Next")
+      .assertPath("/wizard");
+  });
+
+  test("invalid fields of another form do not fail this form's submit", async ({ page }) => {
+    await page.route("**/two-forms", (route) =>
+      route.fulfill({
+        contentType: "text/html",
+        body: `<form id="a"><label for="t">Title</label><input id="t" required></form>
+          <form id="b" onsubmit="event.preventDefault(); document.getElementById('a').checkValidity(); document.getElementById('done').textContent = 'Searched'">
+            <label for="q">Query</label><input id="q"><button>Search</button></form><p id="done"></p>`,
+      }),
+    );
+    await createSession(page, { timeout: 1000 })
+      .visit("/two-forms")
+      .clickButton("Search")
+      .assertText("Searched");
+  });
+});
+
+test.describe("cookies option", () => {
+  test("a secure cookie stays secure on an http baseUrl (seeded by domain and path)", async ({ page }) => {
+    await createSession(page, {
+      baseUrl: "http://testapp.local",
+      cookies: [{ name: "s", value: "1", secure: true }],
+    }).visit("/");
+    const [cookie] = await page.context().cookies();
+    expect(cookie).toMatchObject({ name: "s", domain: "testapp.local", path: "/", secure: true });
+  });
+});
+
+test.describe("what the session leaves in the app's page", () => {
+  test("no patched prototypes and no window globals; refused submits still fail loudly", async ({ page }) => {
+    await page.route("**/clean", (route) =>
+      route.fulfill({
+        contentType: "text/html",
+        body: `<script>
+            window.originalRequestSubmit = HTMLFormElement.prototype.requestSubmit;
+            window.keysAtLoad = Object.keys(window);
+          </script>
+          <form><label for="t">Title</label><input id="t" required><button>Add</button></form>`,
+      }),
+    );
+    const error = await createSession(page, { timeout: 1000 })
+      .visit("/clean")
+      .fillIn("Title", "")
+      .clickButton("Add")
+      .then(
+        () => null,
+        (e: unknown) => e as StepError,
+      );
+    expect(error).toBeInstanceOf(StepError);
+    expect(error!.message).toContain("form not sent: 'Title' is required");
+    const seen = await page.evaluate(() => {
+      const w = window as unknown as { originalRequestSubmit: unknown; keysAtLoad: string[] };
+      return {
+        samePrototypeMethod: HTMLFormElement.prototype.requestSubmit === w.originalRequestSubmit,
+        newKeys: Object.keys(window).filter((k) => !w.keysAtLoad.includes(k) && k !== "keysAtLoad"),
+      };
+    });
+    expect(seen).toEqual({ samePrototypeMethod: true, newKeys: [] });
+  });
+});
+
+test.describe("reading the page's default navigation timeout (private Playwright API)", () => {
+  // Pinned: if Playwright renames page._timeoutSettings, this fails CI
+  // instead of the post-submit wait silently falling back to 30 s.
+  test("the page's own setting, and one inherited from its context", async ({ page, context }) => {
+    page.setDefaultNavigationTimeout(1234);
+    expect(pageDefaultNavigationTimeout(page)).toBe(1234);
+    context.setDefaultNavigationTimeout(4321);
+    const other = await context.newPage();
+    expect(pageDefaultNavigationTimeout(other)).toBe(4321);
   });
 });

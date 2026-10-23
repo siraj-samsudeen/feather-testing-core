@@ -1,6 +1,6 @@
 {
   "name": "feather-testing-core",
-  "version": "0.7.0",
+  "version": "0.7.0-beta.1",
   "description": "Phoenix Test-inspired fluent testing DSL for Playwright, React Testing Library, and browserless HTTP requests",
   "license": "MIT",
   "repository": {
@@ -40,6 +40,16 @@
       "import": "./dist/request/index.js",
       "default": "./dist/request/index.js"
     },
+    "./cookies": {
+      "types": "./dist/cookies/index.d.ts",
+      "import": "./dist/cookies/index.js",
+      "default": "./dist/cookies/index.js"
+    },
+    "./fixtures": {
+      "types": "./dist/fixtures/index.d.ts",
+      "import": "./dist/fixtures/index.js",
+      "default": "./dist/fixtures/index.js"
+    },
     "./eslint-plugin": {
       "types": "./dist/eslint-plugin/index.d.ts",
       "import": "./dist/eslint-plugin/index.js",
@@ -50,13 +60,13 @@
     "dist"
   ],
   "peerDependencies": {
-    "@playwright/test": ">=1.40.0",
     "@testing-library/react": ">=14.0.0",
     "@testing-library/user-event": ">=14.0.0",
-    "happy-dom": ">=20.0.0"
+    "happy-dom": ">=20.0.0",
+    "playwright": ">=1.51.0"
   },
   "peerDependenciesMeta": {
-    "@playwright/test": {
+    "playwright": {
       "optional": true
     },
     "@testing-library/react": {
@@ -74,13 +84,16 @@
     "test": "vitest run",
     "test:pw": "playwright test",
     "test:all": "vitest run && playwright test",
-    "lint": "npm run build && eslint ."
+    "test:bun": "bun test --timeout 20000",
+    "lint": "npm run build && eslint . && tsc -p tsconfig.typecheck-tests.json"
   },
   "devDependencies": {
-    "@playwright/test": "^1.58.0",
+    "@happy-dom/global-registrator": "^21.0.4",
+    "@playwright/test": "^1.64.1",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.0",
     "@testing-library/user-event": "^14.6.0",
+    "@types/bun": "^1.4.3",
     "@types/node": "^26.1.2",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
@@ -88,6 +101,7 @@
     "eslint": "^9.39.5",
     "happy-dom": "~20.14.6",
     "jsdom": "^28.1.0",
+    "playwright": "^1.64.1",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "typescript": "~5.9.3",

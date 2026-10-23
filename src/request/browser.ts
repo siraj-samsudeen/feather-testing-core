@@ -1,5 +1,6 @@
 import { Window } from "happy-dom";
 import { CookieJar } from "./cookies.js";
+import type { SessionCookie } from "../types.js";
 import { describeControl } from "./dom.js";
 import {
   buildSubmission,
@@ -82,6 +83,11 @@ export class RequestBrowser {
     openWindows.register(this, this.holder);
   }
 
+  /** Start the tab with these cookies (createSession's `cookies` option). */
+  seedCookies(cookies: readonly SessionCookie[]): void {
+    for (const cookie of cookies) this.cookies.seed(cookie, this.baseUrl);
+  }
+
   get current(): CurrentPage {
     if (!this.page) {
       throw new Error("No page loaded yet: start the chain with visit(path).");
@@ -143,6 +149,12 @@ export class RequestBrowser {
         }
         target = new URL(location, target);
         continue;
+      }
+
+      // 204 No Content / 205 Reset Content: a browser stays on the page it
+      // was on (no new document), so the session does too.
+      if (response.status === 204 || response.status === 205) {
+        return;
       }
 
       const disposition = response.headers.get("content-disposition") ?? "";
@@ -214,8 +226,18 @@ export class RequestBrowser {
     const missing = firstMissingRequired(form, submitter, this.files);
     if (missing) {
       throw new Error(
-        `${verb}: a browser would not submit this form: '${describeControl(missing)}' is required but empty.`,
+        `${verb}: form not sent: '${describeControl(missing)}' is required (a browser does not send a form with an empty required field).`,
       );
+    }
+    // method="dialog" (or the submitter's formmethod="dialog") closes the
+    // form's dialog and sends nothing: plain HTML, no JavaScript involved.
+    const methodAttr =
+      (submitter?.hasAttribute("formmethod")
+        ? submitter.getAttribute("formmethod")
+        : null) ?? form.getAttribute("method");
+    if (methodAttr?.trim().toLowerCase() === "dialog") {
+      form.closest("dialog")?.removeAttribute("open");
+      return;
     }
     const { method, url, body, headers } = buildSubmission(
       verb,

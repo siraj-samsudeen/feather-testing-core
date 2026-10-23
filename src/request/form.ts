@@ -24,6 +24,20 @@ type Entry = [name: string, value: string | File];
 /** Files a test attached to file inputs; the parser cannot hold them. */
 export type AttachedFiles = WeakMap<Element, File>;
 
+/**
+ * The type a file was attached with. Bun's File constructor rewrites
+ * "text/plain" to "text/plain;charset=utf-8", which a browser does not send,
+ * so the declared type is kept beside the File and used for the part header.
+ */
+const declaredTypes = new WeakMap<File, string>();
+
+/** A File for an attached file, remembering the type it was given. */
+export function attachedFile(bytes: BlobPart[], name: string, type: string): File {
+  const file = new File(bytes, name, { type });
+  declaredTypes.set(file, type);
+  return file;
+}
+
 const LISTED = "button, input, object, select, textarea";
 
 /** The form's listed elements in tree order, including any outside it that
@@ -277,7 +291,7 @@ function multipart(entries: Entry[], boundary: string): Blob {
       parts.push(`\r\n\r\n${value}\r\n`);
     } else {
       parts.push(
-        `; filename="${escape(value.name)}"\r\nContent-Type: ${value.type || "application/octet-stream"}\r\n\r\n`,
+        `; filename="${escape(value.name)}"\r\nContent-Type: ${declaredTypes.get(value) || value.type || "application/octet-stream"}\r\n\r\n`,
         value,
         "\r\n",
       );

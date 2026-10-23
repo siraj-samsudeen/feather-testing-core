@@ -1040,14 +1040,14 @@ describe("RTLDriver", () => {
     it("assertHas() throws", async () => {
       const driver = new RTLDriver();
       await expect(driver.assertHas("div")).rejects.toThrow(
-        "assertHas() with CSS selectors is not recommended in RTL",
+        "assertHas() is not available in the RTL adapter",
       );
     });
 
     it("refuteHas() throws", async () => {
       const driver = new RTLDriver();
       await expect(driver.refuteHas("div")).rejects.toThrow(
-        "refuteHas() with CSS selectors is not recommended in RTL",
+        "refuteHas() is not available in the RTL adapter",
       );
     });
   });
@@ -1289,11 +1289,11 @@ describe("RTLDriver — secrets in failure reports", () => {
     );
   });
 
-  it("keeps showing ordinary values", async () => {
+  it("redacts ordinary values too", async () => {
     const error = await signInFailure();
 
     expect(error.message).toContain(
-      "[ok] fillIn('Email', 'someone@example.com')",
+      "[ok] fillIn('Email', '••••••')",
     );
   });
 
@@ -1331,4 +1331,524 @@ describe("RTLDriver — secrets in failure reports", () => {
     expect(output).toContain("Login code");
     expect(output).not.toContain(FAKE_SECRET);
   });
+});
+
+describe("createSession({ onStep })", () => {
+  afterEach(cleanup);
+
+  it("reports each step as it starts and passes, like the other adapters", async () => {
+    render(<h1>Hello</h1>);
+    const events: string[] = [];
+    await createSession({
+      onStep: (event) => events.push(`${event.status} ${event.name}`),
+    }).assertText("Hello");
+    expect(events).toEqual([
+      "started assertText('Hello')",
+      "passed assertText('Hello')",
+    ]);
+  });
+});
+
+describe("onStep and password fields (no secret-looking label)", () => {
+  afterEach(cleanup);
+  const FAKE = "fake-secret-value-123";
+  const HIDE = "••••••";
+
+  function record() {
+    const events: string[] = [];
+    return {
+      events,
+      onStep: (event: { status: string; name: string }) =>
+        events.push(`${event.status} ${event.name}`),
+    };
+  }
+
+  it("hides the value in started and passed", async () => {
+    render(
+      <form>
+        <label htmlFor="code">Login code</label>
+        <input id="code" type="password" />
+      </form>,
+    );
+    const { events, onStep } = record();
+    await createSession({ onStep }).fillIn("Login code", FAKE);
+    expect(events).toEqual([
+      `started fillIn('Login code', '••••••')`,
+      `passed fillIn('Login code', '••••••')`,
+    ]);
+  });
+
+  it("hides the value in started and failed", async () => {
+    render(
+      <form>
+        <label htmlFor="code">Login code</label>
+        <input id="code" type="password" disabled />
+      </form>,
+    );
+    const { events, onStep } = record();
+    const error = await createSession({ onStep })
+      .fillIn("Login code", FAKE)
+      .run()
+      .then(
+        () => null,
+        (e: unknown) => e as StepError,
+      );
+    expect(error).toBeInstanceOf(StepError);
+    expect(error!.message).not.toContain(FAKE);
+    expect(events).toEqual([
+      `started fillIn('Login code', '••••••')`,
+      `failed fillIn('Login code', '••••••')`,
+    ]);
+  });
+
+  it("hides the value when the field never appears", async () => {
+    render(<p>No form here</p>);
+    const { events, onStep } = record();
+    const error = await createSession({ onStep })
+      .fillIn("Login code", FAKE)
+      .run()
+      .then(
+        () => null,
+        (e: unknown) => e as StepError,
+      );
+    expect(error).toBeInstanceOf(StepError);
+    expect(error!.message).not.toContain(FAKE);
+    expect(events.join("\n")).not.toContain(FAKE);
+  });
+});
+
+describe("a fillIn queued but never run", () => {
+  afterEach(cleanup);
+
+  it("keeps the value out of the within() and assertDownload() errors", async () => {
+    const SECRET = "fake-secret-value-123";
+    render(
+      <form>
+        <label htmlFor="code">Login code</label>
+        <input id="code" type="password" />
+      </form>,
+    );
+    const failed: unknown[] = [];
+    const error = await createSession({
+      onStep: (e) => {
+        if (e.status === "failed") failed.push(e.error);
+      },
+    })
+      .within("form", async (s) => {
+        s.fillIn("Login code", SECRET);
+      })
+      .run()
+      .then(
+        () => null,
+        (e: unknown) => e as StepError,
+      );
+    expect(error).toBeInstanceOf(StepError);
+    expect(error!.message).not.toContain(SECRET);
+    expect(String((failed[0] as Error).message)).not.toContain(SECRET);
+  });
+});
+
+describe("a password fill skipped after an earlier failure", () => {
+  afterEach(cleanup);
+
+  it("keeps the value out of the chain and the failed onStep events", async () => {
+    const SECRET = "fake-secret-value-123";
+    render(
+      <form>
+        <label htmlFor="code">Login code</label>
+        <input id="code" type="password" />
+      </form>,
+    );
+    const failed: string[] = [];
+    const error = await createSession({
+      onStep: (e) => {
+        if (e.status === "failed") failed.push(String((e.error as Error).message));
+      },
+    })
+      .within("form", (s) => s.assertText("Nope").fillIn("Login code", SECRET))
+      .run()
+      .then(
+        () => null,
+        (e: unknown) => e as StepError,
+      );
+    expect(error).toBeInstanceOf(StepError);
+    expect(error!.message).not.toContain(SECRET);
+    expect(failed.join("\n")).not.toContain(SECRET);
+  });
+});
+
+describe("assertValue on a password field", () => {
+  afterEach(cleanup);
+  const SECRET = "fake-secret-value-123";
+
+  it("keeps the value out of names, events, the chain and the cause", async () => {
+    render(
+      <form>
+        <label htmlFor="code">Login code</label>
+        <input id="code" type="password" />
+      </form>,
+    );
+    const events: string[] = [];
+    const onStep = (e: { status: string; name: string; error?: unknown }) =>
+      events.push(`${e.status} ${e.name} ${e.error ? String((e.error as Error).message) : ""}`);
+    await createSession({ onStep }).fillIn("Login code", SECRET).assertValue("Login code", SECRET);
+    const error = await createSession({ onStep })
+      .assertValue("Login code", "wrong")
+      .run()
+      .then(
+        () => null,
+        (e: unknown) => e as StepError,
+      );
+    expect(error).toBeInstanceOf(StepError);
+    expect(error!.message).not.toContain(SECRET);
+    expect(String((error!.cause as Error)?.message ?? "")).not.toContain(SECRET);
+    expect(events.join("\n")).not.toContain(SECRET);
+  });
+});
+
+describe("fillIn types { and [ literally", () => {
+  afterEach(cleanup);
+
+  it("types braces and brackets as text", async () => {
+    render(
+      <form>
+        <label htmlFor="name">Name</label>
+        <input id="name" />
+      </form>,
+    );
+    await createSession().fillIn("Name", "a{b}[c] {{x").assertValue("Name", "a{b}[c] {{x");
+  });
+
+  it("never shows part of a password with a stray { or [", async () => {
+    render(
+      <form>
+        <label htmlFor="code">Login code</label>
+        <input id="code" type="password" />
+      </form>,
+    );
+    const fragment = "{private-fragment";
+    const failed: string[] = [];
+    const error = await createSession({
+      onStep: (e) => {
+        if (e.status === "failed") failed.push(String((e.error as Error).message));
+      },
+    })
+      .fillIn("Login code", `x${fragment}`)
+      .assertValue("Login code", "wrong")
+      .run()
+      .then(
+        () => null,
+        (e: unknown) => e as StepError,
+      );
+    expect(error).toBeInstanceOf(StepError);
+    expect(error!.message).toContain("[ok] fillIn('Login code', '••••••')");
+    expect(error!.message).not.toContain("private-fragment");
+    expect(String((error!.cause as Error)?.message ?? "")).not.toContain("private-fragment");
+    expect(failed.join("\n")).not.toContain("private-fragment");
+  });
+});
+
+describe("assertSubmitBlocked", () => {
+  afterEach(cleanup);
+
+  it("is not modelled by the RTL adapter: a browser-only verb error naming what to use", async () => {
+    render(
+      <form>
+        <label htmlFor="t">Title</label>
+        <input id="t" required />
+      </form>,
+    );
+    const error = await createSession()
+      .assertSubmitBlocked("Title")
+      .run()
+      .then(
+        () => null,
+        (e: unknown) => e as StepError,
+      );
+    expect(error).toBeInstanceOf(StepError);
+    expect(error!.cause).toBeInstanceOf(BrowserOnlyVerbError);
+    expect(error!.message).toContain("use the request or Playwright adapter");
+  });
+});
+
+describe("createSession({ timeout })", () => {
+  afterEach(cleanup);
+
+  function Late() {
+    const [shown, setShown] = useState(false);
+    useEffect(() => {
+      const timer = setTimeout(() => setShown(true), 1500);
+      return () => clearTimeout(timer);
+    }, []);
+    return <p>{shown ? "Arrived" : "Waiting"}</p>;
+  }
+
+  it("passes the session timeout to the driver (Testing Library's default is 1 s)", async () => {
+    render(<Late />);
+    await createSession({ timeout: 4000 }).assertText("Arrived");
+  });
+});
+
+describe("unsupported verbs name the adapter, the verb and what to use instead", () => {
+  afterEach(cleanup);
+
+  it.each([
+    ["visit('/')", (s: ReturnType<typeof createSession>) => s.visit("/")],
+    ["reload()", (s: ReturnType<typeof createSession>) => s.reload()],
+    ["assertHas('li')", (s: ReturnType<typeof createSession>) => s.assertHas("li")],
+    ["refuteHas('li')", (s: ReturnType<typeof createSession>) => s.refuteHas("li")],
+    ["assertPath('/')", (s: ReturnType<typeof createSession>) => s.assertPath("/")],
+    ["refutePath('/')", (s: ReturnType<typeof createSession>) => s.refutePath("/")],
+  ] as const)("%s", async (_name, chain) => {
+    render(<p>x</p>);
+    const error = await chain(createSession())
+      .run()
+      .then(
+        () => null,
+        (e: unknown) => e as StepError,
+      );
+    const cause = String((error!.cause as Error).message);
+    expect(cause).toContain("RTL adapter");
+    expect(cause).toMatch(/\b(visit|reload|assertHas|refuteHas|assertPath|refutePath|hover)\(\)/);
+    expect(cause).toMatch(/\b(Use|use|Render|Assert|Run)\b/);
+  });
+});
+
+describe("assertValue with an empty expected value on a password field", () => {
+  afterEach(cleanup);
+
+  it("never shows the value found", async () => {
+    render(<SignInApp />);
+    const SECRET = "fake-secret-value-123";
+    const failed: string[] = [];
+    const error = await createSession({
+      onStep: (e) => {
+        if (e.status === "failed") failed.push(String((e.error as Error).message));
+      },
+    })
+      .fillIn("Login code", SECRET)
+      .assertValue("Login code", "")
+      .run()
+      .then(
+        () => null,
+        (e: unknown) => e as StepError,
+      );
+    expect(error).toBeInstanceOf(StepError);
+    const text = [error!.message, String(error!.stack), String((error!.cause as Error)?.message), ...failed].join("\n");
+    expect(text).not.toContain(SECRET);
+  });
+});
+
+describe("missing and ambiguous fields never forward a DOM dump", () => {
+  afterEach(cleanup);
+
+  function TwoPasswords() {
+    const [code, setCode] = useState("");
+    return (
+      <form>
+        <label htmlFor="code">Login code</label>
+        <input id="code" type="password" value={code} onChange={(e) => setCode(e.target.value)} />
+        <input type="password" placeholder="Password" />
+        <input type="password" placeholder="Password" />
+      </form>
+    );
+  }
+
+  it.each([
+    ["missing", "No such field", "no field labelled 'No such field'"],
+    ["ambiguous", "Password", "fields match 'Password'"],
+  ])("%s: fillIn and assertValue report only our own facts", async (_what, label, expected) => {
+    const SECRET = "fake-secret-value-123";
+    for (const verb of ["fillIn", "assertValue"] as const) {
+      render(<TwoPasswords />);
+      const failed: string[] = [];
+      const session = createSession({
+        timeout: 300,
+        onStep: (e) => {
+          if (e.status === "failed") failed.push(String((e.error as Error).message));
+        },
+      }).fillIn("Login code", SECRET);
+      const error = await (verb === "fillIn" ? session.fillIn(label, "x") : session.assertValue(label, "x"))
+        .run()
+        .then(
+          () => null,
+          (e: unknown) => e as StepError,
+        );
+      expect(error).toBeInstanceOf(StepError);
+      expect(error!.message).toContain(expected);
+      const text = [error!.message, String(error!.stack), String((error!.cause as Error)?.message), String((error!.cause as Error)?.stack), ...failed].join("\n");
+      expect(text).not.toContain(SECRET);
+      cleanup();
+    }
+  });
+});
+
+describe("RTLDriver — why fillIn/assertValue failed on a field that is not secret", () => {
+  function FieldStates() {
+    return (
+      <form>
+        <label htmlFor="name">Name</label>
+        <input id="name" defaultValue="Ada" />
+        <label htmlFor="off">Off</label>
+        <input id="off" defaultValue="x" disabled />
+        <label htmlFor="ro">Kept</label>
+        <input id="ro" defaultValue="kept" readOnly />
+        <label htmlFor="agree">Agree</label>
+        <input id="agree" type="checkbox" />
+        <label htmlFor="code">Login code</label>
+        <input id="code" type="password" defaultValue="fake-secret-value-123" />
+      </form>
+    );
+  }
+
+  async function failure(chain: PromiseLike<void>): Promise<StepError> {
+    const error = await chain.then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(error).toBeInstanceOf(StepError);
+    return error as StepError;
+  }
+
+  it("assertValue says what it found", async () => {
+    render(<FieldStates />);
+    const error = await failure(createSession({ timeout: 200 }).assertValue("Name", "Bob"));
+    expect(error.message).toContain(
+      "assertValue('Name', '••••••') failed on the field labelled 'Name': found 'Ada'.",
+    );
+  });
+
+  for (const [label, fact] of [
+    ["Off", "it is disabled."],
+    ["Kept", "it is read-only."],
+    ["Agree", `it is an <input type="checkbox">, which cannot be typed into.`],
+  ] as const) {
+    it(`fillIn says the field's state (${label})`, async () => {
+      render(<FieldStates />);
+      const error = await failure(createSession({ timeout: 200 }).fillIn(label, "y"));
+      expect(error.message).toContain(`fillIn('${label}', '••••••') failed on the field labelled '${label}': ${fact}`);
+    });
+  }
+
+  it("a secret field still gets no value in its error", async () => {
+    render(<FieldStates />);
+    const error = await failure(createSession({ timeout: 200 }).assertValue("Login code", "wrong"));
+    expect(error.message).toContain("(a secret field)");
+    expect(error.message).not.toContain("fake-secret-value-123");
+  });
+});
+
+describe("RTLDriver — a field that turns secret, and an overridden findField", () => {
+  const SECRET = "fake-secret-value-123";
+
+  async function failure(session: { run(): Promise<void> }, events: string[]) {
+    const error = await session.run().then(
+      () => null,
+      (e: unknown) => e as StepError,
+    );
+    expect(error).toBeInstanceOf(StepError);
+    return [error!.message, String((error!.cause as Error)?.message), ...events].join("\n");
+  }
+  const recorder = (events: string[]) => ({
+    timeout: 400,
+    onStep: (e: { status: string; name: string; error?: unknown }) =>
+      void events.push(`${e.status} ${e.name} ${e.error ? (e.error as Error).message : ""}`),
+  });
+
+  it("the type changes to password during the wait", async () => {
+    render(
+      <form>
+        <label htmlFor="c">Code</label>
+        <input id="c" defaultValue={SECRET} />
+      </form>,
+    );
+    setTimeout(() => ((document.getElementById("c") as HTMLInputElement).type = "password"), 50);
+    const events: string[] = [];
+    const text = await failure(createSession(recorder(events)).assertValue("Code", "wrong"), events);
+    expect(text).toContain("[FAILED] assertValue('Code', '••••••')");
+    expect(text).not.toContain(SECRET);
+  });
+
+  it("the text field is removed, leaving a password field with that placeholder", async () => {
+    render(
+      <form>
+        <label htmlFor="t">Code</label>
+        <input id="t" defaultValue="plain" />
+        <input type="password" placeholder="Code" defaultValue={SECRET} />
+      </form>,
+    );
+    setTimeout(() => document.getElementById("t")!.remove(), 50);
+    const events: string[] = [];
+    const text = await failure(createSession(recorder(events)).assertValue("Code", "wrong"), events);
+    expect(text).not.toContain(SECRET);
+  });
+
+  it("a subclass's findField picks the field the message describes", async () => {
+    class ByTestId extends RTLDriver {
+      protected override async findField(label: string): Promise<HTMLElement> {
+        return screen.getByTestId(label);
+      }
+    }
+    render(
+      <form>
+        <input data-testid="Code" defaultValue="plain" />
+        <label htmlFor="p">Code</label>
+        <input id="p" type="password" defaultValue={SECRET} />
+      </form>,
+    );
+    const events: string[] = [];
+    const { Session } = await import("../../src/session.js");
+    const session = new Session(new ByTestId(undefined, undefined, 400), recorder(events));
+    const text = await failure(session.assertValue("Code", "wrong"), events);
+    expect(text).toContain("found 'plain'.");
+    expect(text).not.toContain(SECRET);
+  });
+});
+
+describe("RTLDriver — a field that turns password after the pre-check", () => {
+  const CREDENTIAL = "credential-123";
+
+  for (const [verb, outcome] of [
+    ["fillIn", "passes"],
+    ["assertValue", "passes"],
+    ["assertValue", "fails"],
+  ] as const) {
+    it(`${verb} that ${outcome} never shows the credential`, async () => {
+      render(
+        <form>
+          <label htmlFor="c">Code</label>
+          <input id="c" defaultValue={CREDENTIAL} />
+        </form>,
+      );
+      const events: string[] = [];
+      let flippedBeforeAction = false;
+      const session = createSession({
+        timeout: 300,
+        onStep: (e) => {
+          events.push(`${e.status} ${e.name} ${e.error ? (e.error as Error).message : ""}`);
+          if (e.status === "started" && e.name.startsWith(verb)) {
+            // After the pre-check, before the action: a microtask flips it.
+            queueMicrotask(() => {
+              (document.getElementById("c") as HTMLInputElement).type = "password";
+              flippedBeforeAction = true;
+            });
+          }
+        },
+      });
+      const error = await session
+        [verb]("Code", outcome === "passes" ? CREDENTIAL : `${CREDENTIAL}-other`)
+        .step("then stop, to print the chain", async () => {
+          throw new Error("stop");
+        })
+        .then(
+          () => null,
+          (e: unknown) => e as StepError,
+        );
+      // (user-event's typing resets the type afterwards, so check the flip ran.)
+      expect(flippedBeforeAction).toBe(true);
+      expect(error).toBeInstanceOf(StepError);
+      const text = [error!.message, String((error!.cause as Error)?.message), ...events].join("\n");
+      expect(text).not.toContain(CREDENTIAL);
+    });
+  }
 });

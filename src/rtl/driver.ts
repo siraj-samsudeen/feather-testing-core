@@ -10,6 +10,7 @@ import type {
   AssertHasOptions,
   AssertionOptions,
   DownloadOptions,
+  FieldState,
   TestDriver,
   UntilOptions,
   UntilPredicate,
@@ -52,6 +53,20 @@ export class RTLDriver implements TestDriver<RTLStepContext, RTLQueries> {
   protected lastFormElement: HTMLFormElement | null = null;
   /** The field the most recent fillIn() found; null if it found none. */
   protected lastFilledField: HTMLElement | null = null;
+  /**
+   * The field the last fillIn() or assertValue() resolved, through
+   * findField() (which a subclass may override): fieldState() reads this
+   * element, so the step and its failure message describe the same one.
+   */
+  private stepField: { label: string; element: HTMLElement } | null = null;
+
+  /** findField() for a fillIn/assertValue step, remembered for fieldState(). */
+  private async stepFieldFor(label: string): Promise<HTMLElement> {
+    this.stepField = null;
+    const element = await this.findField(label);
+    this.stepField = { label, element };
+    return element;
+  }
   /** Per-lookup timeout in ms; undefined leaves RTL's own default in place. */
   protected timeout: number | undefined;
 
@@ -98,7 +113,8 @@ export class RTLDriver implements TestDriver<RTLStepContext, RTLQueries> {
 
   async visit(): Promise<void> {
     throw new Error(
-      "visit() is not available in the RTL adapter. Render the desired component directly.",
+      "feather-testing-core: visit() is not available in the RTL adapter: there are no pages, " +
+        "only rendered components. Render the component directly, or use the request or Playwright adapter.",
     );
   }
 
@@ -138,11 +154,49 @@ export class RTLDriver implements TestDriver<RTLStepContext, RTLQueries> {
 
   async fillIn(label: string, value: string): Promise<void> {
     this.lastFilledField = null;
-    const input = await this.findField(label);
+    const input = await this.stepFieldFor(label);
     this.lastFilledField = input;
     await this.user.clear(input);
-    if (value) await this.user.type(input, value);
+    // user.type() reads { and [ as key syntax ({Enter}, [ShiftLeft]); a
+    // value is text, so they are doubled to type them literally.
+    if (value) await this.user.type(input, value.replace(/[{[]/g, "$&$&"));
     this.lastFormElement = input.closest("form");
+  }
+
+  /**
+   * Asked before fillIn's step starts, so a password field's value never
+   * reaches a step name or onStep event. Waits for the field as fillIn()
+   * does; a field that never appears throws, and the session then hides
+   * the value and fails the step with that error.
+   */
+  async fieldIsPassword(label: string): Promise<boolean> {
+    const field = await this.findField(label);
+    return field instanceof HTMLInputElement && field.type === "password";
+  }
+
+  /**
+   * The field the failed fillIn() or assertValue() itself resolved (no
+   * second lookup, no waiting), read as it is now. Whether it is secret is
+   * decided on that element in the same read. Null when the step never
+   * found its field.
+   */
+  async fieldState(label: string): Promise<FieldState | null> {
+    if (this.stepField?.label !== label) return null;
+    const el = this.stepField.element;
+    const input = el instanceof HTMLInputElement ? el : null;
+    if (input?.type === "password") return { secret: true };
+    return {
+      secret: false,
+      value: "value" in el ? String((el as HTMLInputElement).value) : (el.textContent ?? ""),
+      disabled: el.matches(":disabled"),
+      readOnly: el.hasAttribute("readonly"),
+      visible: isShown(el),
+      editable:
+        el instanceof HTMLTextAreaElement ||
+        (input !== null && !NOT_TYPEABLE_INPUT_TYPES.has(input.type)) ||
+        el.isContentEditable,
+      kind: input ? `an <input type="${input.type}">` : `a <${el.tagName.toLowerCase()}>`,
+    };
   }
 
   async lastFilledFieldIsPassword(): Promise<boolean> {
@@ -190,6 +244,13 @@ export class RTLDriver implements TestDriver<RTLStepContext, RTLQueries> {
     );
     await this.user.click(radio);
     this.lastFormElement = radio.closest("form");
+  }
+
+  async assertSubmitBlocked(label: string): Promise<void> {
+    throw new BrowserOnlyVerbError(
+      `assertSubmitBlocked('${label}')`,
+      "Constraint validation on submit is not modelled here; use the request or Playwright adapter.",
+    );
   }
 
   async submit(): Promise<void> {
@@ -267,7 +328,8 @@ export class RTLDriver implements TestDriver<RTLStepContext, RTLQueries> {
     _opts?: AssertHasOptions,
   ): Promise<void> {
     throw new Error(
-      "assertHas() with CSS selectors is not recommended in RTL. Use assertText() instead.",
+      "feather-testing-core: assertHas() is not available in the RTL adapter: it addresses " +
+        "elements by CSS selector, which Testing Library avoids. Use assertText() instead.",
     );
   }
 
@@ -276,7 +338,8 @@ export class RTLDriver implements TestDriver<RTLStepContext, RTLQueries> {
     _opts?: AssertHasOptions,
   ): Promise<void> {
     throw new Error(
-      "refuteHas() with CSS selectors is not recommended in RTL. Use refuteText() instead.",
+      "feather-testing-core: refuteHas() is not available in the RTL adapter: it addresses " +
+        "elements by CSS selector, which Testing Library avoids. Use refuteText() instead.",
     );
   }
 
@@ -384,7 +447,7 @@ export class RTLDriver implements TestDriver<RTLStepContext, RTLQueries> {
   }
 
   async assertValue(label: string, value: string): Promise<void> {
-    const field = await this.findField(label);
+    const field = await this.stepFieldFor(label);
     await waitFor(() => {
       const actual = (field as ValueElement).value;
       if (actual !== value) {
@@ -448,13 +511,15 @@ export class RTLDriver implements TestDriver<RTLStepContext, RTLQueries> {
 
   async assertPath(): Promise<void> {
     throw new Error(
-      "assertPath() is not available in the RTL adapter (no real URL in JSDOM).",
+      "feather-testing-core: assertPath() is not available in the RTL adapter: JSDOM has no " +
+        "real URL. Assert what the component renders instead, or use the request or Playwright adapter.",
     );
   }
 
   async refutePath(): Promise<void> {
     throw new Error(
-      "refutePath() is not available in the RTL adapter (no real URL in JSDOM).",
+      "feather-testing-core: refutePath() is not available in the RTL adapter: JSDOM has no " +
+        "real URL. Assert what the component renders instead, or use the request or Playwright adapter.",
     );
   }
 
@@ -573,4 +638,27 @@ export function toKeyboardSyntax(key: string): string {
       .map((m) => `{/${m}}`)
       .join("")
   );
+}
+
+/** Input types fillIn() cannot type into (the other adapters' list too). */
+const NOT_TYPEABLE_INPUT_TYPES = new Set([
+  "checkbox",
+  "radio",
+  "file",
+  "submit",
+  "reset",
+  "button",
+  "image",
+  "hidden",
+]);
+
+/** Not hidden by an attribute or by display/visibility, on it or an ancestor. */
+function isShown(element: HTMLElement): boolean {
+  for (let el: HTMLElement | null = element; el; el = el.parentElement) {
+    if (el.hidden) return false;
+    const style = el.ownerDocument.defaultView?.getComputedStyle(el);
+    if (style?.display === "none") return false;
+    if (el === element && style?.visibility === "hidden") return false;
+  }
+  return true;
 }

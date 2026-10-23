@@ -478,7 +478,7 @@ line two</textarea>
       });
       await driver.visit("/");
       await expect(driver.clickButton("Add")).rejects.toThrow(
-        "clickButton('Add'): a browser would not submit this form: 'Title' is required but empty.",
+        "clickButton('Add'): form not sent: 'Title' is required",
       );
       expect(app.requests).toHaveLength(1);
       await driver.clickButton("Skip checks");
@@ -493,6 +493,117 @@ line two</textarea>
       await expect(driver.clickButton("Save")).rejects.toThrow(
         "clickButton('Save'): the button is disabled.",
       );
+    });
+  });
+
+  describe("a closed <dialog>", () => {
+    const page = `<p>Behind the dialog</p>
+      <dialog open><form method="dialog"><p>Are you sure?</p><button>Close</button></form></dialog>
+      <dialog><p>Never opened</p><button>Hidden button</button></dialog>`;
+
+    it("is not rendered: its text is not page text, before or after closing", async () => {
+      const { driver } = driverFor({ "/": page });
+      await driver.visit("/");
+      await driver.assertText("Are you sure?");
+      await driver.refuteText("Never opened");
+      await driver.clickButton("Close");
+      await driver.refuteText("Are you sure?");
+      await driver.assertText("Behind the dialog");
+    });
+
+    it("cannot be used: its buttons are not found", async () => {
+      const { driver } = driverFor({ "/": page });
+      await driver.visit("/");
+      await expect(driver.clickButton("Hidden button")).rejects.toThrow();
+      await driver.clickButton("Close");
+      await expect(driver.clickButton("Close")).rejects.toThrow();
+    });
+  });
+
+  describe("target on a form or link (another window)", () => {
+    const page = `
+      <a href="/about" target="_blank">New tab</a>
+      <a href="/about" target="_self">Same tab</a>
+      <a href="/report.csv" download target="_blank">Download</a>
+      <form method="post" action="/echo" target="side"><input name="q" value="a"><button>Send aside</button></form>
+      <form method="post" action="/echo"><input name="q" value="b">
+        <button formtarget="_blank">Send to new tab</button><button>Send here</button></form>`;
+
+    it.each([
+      ["clickLink", "New tab", '"_blank"', "/about"],
+      ["clickButton", "Send aside", '"side"', "/echo"],
+      ["clickButton", "Send to new tab", '"_blank"', "/echo"],
+    ] as const)("%s('%s') throws BrowserOnlyVerbError naming the target and the destination", async (verb, text, target, path) => {
+      const { app, driver } = driverFor({ "/": page });
+      await driver.visit("/");
+      const error = await (verb === "clickLink" ? driver.clickLink(text) : driver.clickButton(text)).then(
+        () => null,
+        (e: unknown) => e as Error,
+      );
+      expect(error).toBeInstanceOf(BrowserOnlyVerbError);
+      expect(error!.message).toContain(`opens another window (target=${target})`);
+      expect(error!.message).toContain("the request adapter has one page");
+      expect(error!.message).toContain(`visit('${path}')`);
+      expect(app.requests).toHaveLength(1);
+    });
+
+    it("matches the browser on spaces: ' _self ' names another window; '_SELF' is this page", async () => {
+      // Chromium (Playwright 1.64) opens a new window for target=" _self "
+      // and " _blank ", and stays for "_SELF": keywords are not trimmed.
+      const { driver } = driverFor({
+        "/": `<a href="/about" target=" _self ">Spaced</a><a href="/about" target="_SELF">Upper</a>
+          <form action="/echo" target=" _self "><button>Spaced form</button></form>
+          <form action="/echo"><button formtarget=" _top ">Spaced formtarget</button></form>`,
+      });
+      await driver.visit("/");
+      await expect(driver.clickLink("Spaced")).rejects.toThrow(BrowserOnlyVerbError);
+      await expect(driver.clickButton("Spaced form")).rejects.toThrow(BrowserOnlyVerbError);
+      await expect(driver.clickButton("Spaced formtarget")).rejects.toThrow(BrowserOnlyVerbError);
+      await driver.clickLink("Upper");
+      await driver.assertPath("/about");
+    });
+
+    it("a <base target> with spaces names another window too", async () => {
+      const { driver } = driverFor({ "/": `<base target=" _self "><a href="/about">About</a>` });
+      await driver.visit("/");
+      await expect(driver.clickLink("About")).rejects.toThrow(BrowserOnlyVerbError);
+    });
+
+    it("a <base target> applies to links without their own", async () => {
+      const { driver } = driverFor({ "/": `<base target="_blank"><a href="/about">About</a>` });
+      await driver.visit("/");
+      await expect(driver.clickLink("About")).rejects.toThrow(BrowserOnlyVerbError);
+    });
+
+    it("_self, _top, no target and download links still work", async () => {
+      const { driver } = driverFor({ "/": page });
+      await driver.visit("/");
+      await driver.clickLink("Same tab");
+      await driver.assertPath("/about");
+      await driver.visit("/");
+      await driver.assertDownload("report.csv", () => driver.clickLink("Download"));
+      await driver.clickButton("Send here");
+      await driver.assertPath("/echo");
+    });
+  });
+
+  describe("204 and 205 answers", () => {
+    // Parity row #22 (docs/ADAPTER_PARITY.md). Not a contract test: in
+    // Playwright 1.64 every locator waits forever for the 204 navigation to
+    // "finish" after such a submit, so the Playwright driver cannot check it.
+    it.each([204, 205])("a %i answer to a form keeps the page, as a browser does", async (status) => {
+      const { app, driver } = driverFor({
+        "/quiet": `<p>Stay here</p><form method="post" action="/nothing"><button>Send nothing</button></form>`,
+        "/nothing": () => new Response(null, { status }),
+      });
+      await driver.visit("/quiet");
+      await driver.clickButton("Send nothing");
+      await driver.assertPath("/quiet");
+      await driver.assertText("Stay here");
+      expect(app.requests.map((r) => `${r.method} ${new URL(r.url).pathname}`)).toEqual([
+        "GET /quiet",
+        "POST /nothing",
+      ]);
     });
   });
 
@@ -989,10 +1100,10 @@ line two</textarea>
       const { driver } = driverFor({ "/": page });
       await driver.visit("/");
       await expect(driver.within(".nope")).rejects.toThrow(
-        "within('.nope'): expected exactly one element, but found 0 on GET http://localhost/ (200).",
+        "within('.nope'): the selector matched 0 elements on GET http://localhost/ (200); it must match exactly one.",
       );
       await expect(driver.within("section")).rejects.toThrow(
-        "within('section'): expected exactly one element, but found 2",
+        "within('section'): the selector matched 2 elements",
       );
     });
 
@@ -1199,7 +1310,7 @@ line two</textarea>
           `${verb} is a browser-only verb`,
         );
         expect((error as Error).message).toContain(
-          "this adapter runs in plain HTTP requests and parsed HTML",
+          "the request adapter runs in plain HTTP requests and parsed HTML",
         );
       },
     );

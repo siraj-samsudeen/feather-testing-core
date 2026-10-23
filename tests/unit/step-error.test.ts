@@ -135,13 +135,24 @@ describe("BrowserOnlyVerbError", () => {
     const error = new BrowserOnlyVerbError("hover()", "Use Playwright.");
     expect(error.name).toBe("BrowserOnlyVerbError");
     expect(error.message).toBe(
-      "feather-testing-core: hover() is a browser-only verb — this adapter runs " +
+      "feather-testing-core: hover() is a browser-only verb — the RTL adapter runs " +
         "in JSDOM, which has no browser to do it. Use Playwright.",
     );
   });
 
   it("takes the environment an adapter runs on instead of a browser", () => {
-    const error = new BrowserOnlyVerbError("hover()", "Use Playwright.", "plain HTTP requests");
-    expect(error.message).toContain("this adapter runs in plain HTTP requests, which has no browser");
+    const error = new BrowserOnlyVerbError("hover()", "Use Playwright.", "plain HTTP requests", "request");
+    expect(error.message).toContain("the request adapter runs in plain HTTP requests, which has no browser");
+  });
+});
+
+describe("BrowserOnlyVerbError names the adapter", () => {
+  it("defaults to the RTL adapter, and takes another", () => {
+    expect(new BrowserOnlyVerbError("hover()", "Use Playwright.").message).toContain(
+      "the RTL adapter runs in JSDOM",
+    );
+    expect(
+      new BrowserOnlyVerbError("hover()", "Use Playwright.", "plain HTTP requests", "request").message,
+    ).toContain("the request adapter runs in plain HTTP requests");
   });
 });

@@ -1,0 +1,8 @@
+# `bun test` lane. The vitest (`npm test`) and Playwright Test (`npm run test:pw`)
+# lanes do not read this file.
+[test]
+# A DOM (happy-dom) for the React Testing Library tests.
+preload = ["./tests/bun-setup.ts"]
+# The per-test timeout is NOT set here: Bun 1.4.2 ignores [test] timeout in
+# bunfig.toml (checked: a 7 s test still timed out at 5000 ms). The test:bun
+# script passes --timeout 20000 instead; slow tests also set their own.

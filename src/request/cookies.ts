@@ -108,6 +108,42 @@ export class CookieJar {
     }
   }
 
+  /**
+   * Put a cookie in the jar directly, as a session that starts signed in
+   * would have it. Without a domain it is host-only for `base`'s host.
+   */
+  seed(
+    cookie: {
+      name: string;
+      value: string;
+      domain?: string;
+      path?: string;
+      expires?: number;
+      secure?: boolean;
+    },
+    base: URL,
+  ): void {
+    // As Playwright's context.cookies() reports them: a bare domain is that
+    // host only; a leading dot makes a domain cookie (subdomains too).
+    const hostOnly = cookie.domain === undefined || !cookie.domain.startsWith(".");
+    const domain = (cookie.domain ?? base.hostname).replace(/^\./, "").toLowerCase();
+    this.cookies = this.cookies.filter(
+      (c) =>
+        !(c.name === cookie.name && c.domain === domain && c.path === (cookie.path ?? "/")),
+    );
+    this.cookies.push({
+      name: cookie.name,
+      value: cookie.value,
+      domain,
+      hostOnly,
+      path: cookie.path ?? "/",
+      secure: cookie.secure === true,
+      // -1 (or none) is a session cookie, as in Playwright's context.cookies().
+      expires:
+        cookie.expires === undefined || cookie.expires < 0 ? null : cookie.expires * 1000,
+    });
+  }
+
   /** The Cookie header a browser would send with a request to `url`, or null. */
   header(url: URL): string | null {
     const host = url.hostname.toLowerCase();
@@ -127,4 +163,29 @@ export class CookieJar {
     if (matching.length === 0) return null;
     return matching.map((c) => `${c.name}=${c.value}`).join("; ");
   }
+}
+
+/**
+ * The Cookie header a browser would send to `url`, given a list of cookies
+ * shaped like the `cookies` option (or Playwright's context.cookies()):
+ * domain (none: `url`'s host only; a bare domain: that host only; a
+ * leading dot: that domain and its subdomains), path, secure (sent over https, and to localhost or
+ * 127.0.0.1) and expiry (seconds; -1 or none: a session cookie). Null when
+ * no cookie matches. The request adapter's own jar applies the same rules.
+ */
+/** What cookieHeaderFor reads from a cookie (SessionCookie and Playwright's cookies fit). */
+export interface CookieLike {
+  name: string;
+  value: string;
+  domain?: string;
+  path?: string;
+  expires?: number;
+  secure?: boolean;
+}
+
+export function cookieHeaderFor(cookies: readonly CookieLike[], url: string | URL): string | null {
+  const target = typeof url === "string" ? new URL(url) : url;
+  const jar = new CookieJar();
+  for (const cookie of cookies) jar.seed(cookie, target);
+  return jar.header(target);
 }

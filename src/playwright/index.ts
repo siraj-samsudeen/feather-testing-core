@@ -1,10 +1,24 @@
-import { test as base, type Page } from "@playwright/test";
+import type { Page } from "playwright";
+import { test as base } from "playwright/test";
 import { Session } from "../session.js";
-import { PlaywrightDriver, type PlaywrightStepContext } from "./driver.js";
+import {
+  PlaywrightDriver,
+  type PlaywrightSessionOptions,
+  type PlaywrightStepContext,
+} from "./driver.js";
 
 export { Session } from "../session.js";
 export { StepError, BrowserOnlyVerbError } from "../errors.js";
-export { PlaywrightDriver, type PlaywrightStepContext } from "./driver.js";
+export { DEFAULT_TIMEOUT } from "../types.js";
+export {
+  DEFAULT_TIMEOUT_OUTSIDE_RUNNER,
+  NAVIGATION_START_TIMEOUT_MS,
+  REPLACED_NAVIGATION_TIMEOUT_MS,
+  PlaywrightDriver,
+  type PlaywrightSessionOptions,
+  type PlaywrightStepContext,
+  type StepEvent,
+} from "./driver.js";
 export type {
   AssertHasOptions,
   AssertPathOptions,
@@ -12,15 +26,25 @@ export type {
   DownloadOptions,
   FillInOptions,
   LayoutAssertionOptions,
+  SessionCookie,
+  SessionOptions,
   TestDriver,
   UntilOptions,
   UntilPredicate,
 } from "../types.js";
 
+/**
+ * A session around a Playwright `Page` — from the @playwright/test `page`
+ * fixture, or from the `playwright` library (`chromium.launch()` and
+ * `browser.newPage()`) under any runner, such as bun test.
+ */
 export function createSession(
   page: Page,
+  options?: PlaywrightSessionOptions,
 ): Session<PlaywrightStepContext, Page> {
-  return new Session(new PlaywrightDriver(page));
+  return new Session(new PlaywrightDriver(page, page, options), {
+    onStep: options?.onStep,
+  });
 }
 
 export const test = base.extend<{
@@ -31,4 +55,4 @@ export const test = base.extend<{
   },
 });
 
-export { expect } from "@playwright/test";
+export { expect } from "playwright/test";

@@ -14,7 +14,7 @@ A standalone npm package `feather-testing-core` that provides a chainable, Phoen
 | Export | Purpose | Peer deps |
 |--------|---------|-----------|
 | `feather-testing-core` | Core: Session, TestDriver interface, StepError | None |
-| `feather-testing-core/playwright` | Playwright adapter + fixture | `@playwright/test` |
+| `feather-testing-core/playwright` | Playwright adapter + fixture | `playwright` (`@playwright/test` installs it; needed only for the `test` fixture) |
 | `feather-testing-core/rtl` | React Testing Library adapter (subset API) | `@testing-library/react`, `@testing-library/user-event` |
 
 ### What tests look like now
@@ -250,7 +250,7 @@ The `createConvexTest` for Playwright needs the Convex API reference and URL. Ho
 feather-testing-convex
   ├── feather-testing-core (dependency)
   ├── convex-test (peer dep)
-  ├── @playwright/test (optional peer dep)
+  ├── playwright (optional peer dep, as in feather-testing-core 0.7; @playwright/test for its fixtures)
   └── @testing-library/* (optional peer dep)
 ```
 
