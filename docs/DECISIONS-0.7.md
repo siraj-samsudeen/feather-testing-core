@@ -100,6 +100,19 @@ Core provides its own fixtures through `defineCoreTest(runner)`: `browser` (file
 
 **Decision:** Export `cookieHeaderFor` and the `CookieLike` and `SessionCookie` types from a new `/cookies` subpath, which imports no package at all, and from the root entry. The `/request` re-export stays. A test walks the import graph of both entries to keep it that way.
 
+### From the PR #17 review (Fable)
+
+- **Nothing of ours in the app's page.** The Playwright adapter keeps its page state under one Symbol-keyed store. It patches no prototypes and installs five listeners on `window` that only record. A refused submit is recognised from the `invalid` events of a submit attempt seen through `click` and `keydown`; a page script's own `requestSubmit()` is not watched.
+- **Public navigation defaults first.** Without `navigationTimeout`, `visit()` and `reload()` pass no timeout, so Playwright's default applies. Only the post-submit wait reads the page default from a private field. A test pins that field's shape, so a rename fails CI instead of silently becoming 30 s.
+- **One teardown hook where it is needed.** Only tests that use a file-scoped fixture register a hook, and only once per suite when the runner names the suite (`currentSuite`, e.g. Vitest's `getCurrentSuite`).
+- **A failing secret `fillIn` says why.** It keeps the driver's first line, with the value hidden. The message stays withheld for `assertValue`, whose messages can quote the value found (Codex round 4), and for errors a driver marks unsafe (RTL key syntax).
+- **One field wait.** `fillIn` and `assertValue` wait for their field the same way, within an assertion budget.
+- **Fixture details.**
+  - `.with()` refuses unknown names and treats functions like a definition does.
+  - `[value, options]` is recognised only by its option keys.
+  - The explicit-list hint is copy-pasteable.
+  - `session` needs no `baseUrl` fixture when the context has a `baseURL`.
+
 ## Deferred
 
 ### B2 (rest). A per-driver Session type that rejects unsupported verbs at compile time
