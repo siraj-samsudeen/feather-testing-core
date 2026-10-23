@@ -6,6 +6,7 @@ export default defineConfig({
       "tests/unit/**/*.test.ts",
       "tests/rtl/**/*.test.tsx",
       "tests/request/**/*.test.ts",
+      "tests/contract/**/*.test.ts",
     ],
     environment: "jsdom",
   },
