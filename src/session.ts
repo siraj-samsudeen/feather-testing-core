@@ -13,7 +13,12 @@ import type {
   UntilPredicate,
 } from "./types.js";
 import { StepError } from "./errors.js";
-import { HIDDEN_VALUE, hideValueInError, labelLooksSecret } from "./secrets.js";
+import {
+  HIDDEN_VALUE,
+  SecretRegistry,
+  hideValueInError,
+  labelLooksSecret,
+} from "./secrets.js";
 
 /**
  * Verbs that take a human description exist so a failure names intent rather
@@ -63,6 +68,11 @@ export class Session<TContext = unknown, TNative = unknown>
   implements PromiseLike<void>
 {
   private steps: QueuedStep[] = [];
+  /**
+   * Every secret value this session hid, shared with the sessions within()
+   * and assertDownload() make from it; scrubbed from all it reports.
+   */
+  private secrets = new SecretRegistry();
   private executedSteps: QueuedStep[] = [];
   private stepIndex = 0;
 
@@ -81,10 +91,11 @@ export class Session<TContext = unknown, TNative = unknown>
     status: StepEvent["status"],
     error?: unknown,
   ): void {
+    const name = this.secrets.scrub(step.name);
     this.options.onStep?.(
       status === "failed"
-        ? { name: step.name, status, error }
-        : { name: step.name, status },
+        ? { name, status, error: this.secrets.scrubError(error) }
+        : { name, status },
     );
   }
 
@@ -128,7 +139,7 @@ export class Session<TContext = unknown, TNative = unknown>
         await step.prepare?.();
         this.report(step, "started");
         try {
-          await wrap(step.name, step.action, step);
+          await wrap(this.secrets.scrub(step.name), step.action, step);
         } catch (error) {
           this.report(step, "failed", error);
           throw error;
@@ -138,17 +149,26 @@ export class Session<TContext = unknown, TNative = unknown>
       } catch (error) {
         // Include steps executed in earlier chains so the full walk is
         // visible even when the user broke the chain across multiple awaits.
-        throw new StepError(
-          step,
-          [
-            ...this.executedSteps,
-            step,
-            // Skipped steps never ran prepare(), so whether a typed value
-            // was a password was never checked: report them with every
-            // typed value hidden.
-            ...steps.slice(i + 1).map((skipped) => unrunView(skipped)),
-          ],
-          error,
+        // Every name and the cause are scrubbed of the secrets this session
+        // hid, wherever they appear (another step's error can quote one).
+        const view = (s: QueuedStep): QueuedStep => ({
+          ...s,
+          name: this.secrets.scrub(s.name),
+        });
+        const failedView = view(step);
+        throw this.secrets.scrubError(
+          new StepError(
+            failedView,
+            [
+              ...this.executedSteps.map(view),
+              failedView,
+              // Skipped steps never ran prepare(), so whether a typed value
+              // was a password was never checked: report them with every
+              // typed value hidden.
+              ...steps.slice(i + 1).map((skipped) => view(unrunView(skipped))),
+            ],
+            this.secrets.scrubError(error),
+          ),
         );
       }
     }
@@ -163,7 +183,9 @@ export class Session<TContext = unknown, TNative = unknown>
     if (this.steps.length === 0) return;
     // These steps never ran, so whether a typed value was a password was
     // never checked: hide every typed value.
-    const names = this.steps.map((step) => unrunView(step).name).join(", ");
+    const names = this.steps
+      .map((step) => this.secrets.scrub(unrunView(step).name))
+      .join(", ");
     const count = this.steps.length;
     this.steps = [];
     throw new Error(
@@ -258,23 +280,34 @@ export class Session<TContext = unknown, TNative = unknown>
 
     let fieldNotFound: unknown;
 
+    /** Hide the value from here on, and from everything the session reports. */
+    const hide = () => {
+      step.name = nameHidingValue;
+      this.secrets.addValue(value);
+      this.secrets.addLabel(label);
+    };
+
     const step: QueuedStep = {
-      name: knownSecret ? nameHidingValue : nameShowingValue,
+      name: nameShowingValue,
       nameHidingValue,
       index: this.stepIndex++,
       prepare: async () => {
-        if (knownSecret || !this.driver.fieldIsPassword) {
+        if (knownSecret) {
+          hide();
+          return;
+        }
+        if (!this.driver.fieldIsPassword) {
           return;
         }
         try {
           if (await this.driver.fieldIsPassword(label)) {
-            step.name = nameHidingValue;
+            hide();
           }
         } catch (error) {
           // The field never appeared, so whether it is secret is unknown:
           // hide the value, and fail with this error instead of waiting for
           // the same field a second time.
-          step.name = nameHidingValue;
+          hide();
           fieldNotFound = error;
         }
       },
@@ -287,7 +320,7 @@ export class Session<TContext = unknown, TNative = unknown>
           await run();
         } catch (error) {
           if (askAfterRun && (await this.lastFilledFieldIsPassword())) {
-            step.name = nameHidingValue;
+            hide();
           }
           if (step.name === nameHidingValue) {
             throw withheldError(nameHidingValue);
@@ -295,10 +328,14 @@ export class Session<TContext = unknown, TNative = unknown>
           throw error;
         }
         if (askAfterRun && (await this.lastFilledFieldIsPassword())) {
-          step.name = nameHidingValue;
+          hide();
         }
       },
     };
+    if (knownSecret) {
+      // Known before the step runs: hidden from the moment it is queued.
+      hide();
+    }
     this.steps.push(step);
     return this;
   }
@@ -540,6 +577,7 @@ export class Session<TContext = unknown, TNative = unknown>
         expected,
         async () => {
           const scoped = new Session(this.driver, this.options);
+          scoped.secrets = this.secrets;
           await trigger(scoped);
           scoped.requireNothingLeft(`assertDownload('${describe(expected)}')`);
         },
@@ -612,6 +650,7 @@ export class Session<TContext = unknown, TNative = unknown>
     return this.enqueue(`within('${selector}')`, async () => {
       const scopedDriver = await this.driver.within(selector);
       const scopedSession = new Session(scopedDriver, this.options);
+      scopedSession.secrets = this.secrets;
       await fn(scopedSession);
       scopedSession.requireNothingLeft(`within('${selector}')`);
     });
@@ -619,7 +658,10 @@ export class Session<TContext = unknown, TNative = unknown>
 
   // --- Debug ---
 
+  /** The driver prints through the console; that output is scrubbed too. */
   debug(): this {
-    return this.enqueue("debug()", () => this.driver.debug());
+    return this.enqueue("debug()", () =>
+      this.secrets.scrubConsoleDuring(() => this.driver.debug()),
+    );
   }
 }

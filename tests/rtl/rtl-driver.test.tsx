@@ -1547,3 +1547,80 @@ describe("fillIn types { and [ literally", () => {
     expect(failed.join("\n")).not.toContain("private-fragment");
   });
 });
+
+describe("secrets in other steps' errors", () => {
+  afterEach(cleanup);
+  const SECRET = "fake-secret-value-123";
+
+  /** Every string that leaves the session: the error, its cause, failed events. */
+  async function outgoing(chain: { run(): Promise<void> }, failed: string[]) {
+    const error = (await chain.run().then(
+      () => null,
+      (e: unknown) => e,
+    )) as StepError;
+    expect(error).toBeInstanceOf(StepError);
+    return [
+      error.message,
+      String(error.stack),
+      String((error.cause as Error)?.message),
+      String((error.cause as Error)?.stack),
+      ...failed,
+    ].join("\n");
+  }
+
+  function recorder() {
+    const failed: string[] = [];
+    return {
+      failed,
+      onStep: (e: { status: string; error?: unknown }) => {
+        if (e.status === "failed") failed.push(String((e.error as Error)?.message));
+      },
+    };
+  }
+
+  it("a later fillIn on a missing field: Testing Library's DOM dump is scrubbed", async () => {
+    render(<SignInApp />);
+    const { failed, onStep } = recorder();
+    const text = await outgoing(
+      createSession({ onStep }).fillIn("Login code", SECRET).fillIn("No such field", "x"),
+      failed,
+    );
+    expect(text).not.toContain(SECRET);
+  });
+
+  it("a later check() failure: the dump is scrubbed, inside within() too", async () => {
+    render(<SignInApp />);
+    const { failed, onStep } = recorder();
+    const text = await outgoing(
+      createSession({ onStep })
+        .fillIn("Login code", SECRET)
+        .within("form", (s) => s.check("No such box")),
+      failed,
+    );
+    expect(text).not.toContain(SECRET);
+  });
+
+  it("debug() output is scrubbed of values the session hid", async () => {
+    function Notes() {
+      const [notes, setNotes] = useState("");
+      return (
+        <form>
+          <label htmlFor="notes">Notes</label>
+          <textarea id="notes" value={notes} onChange={(e) => setNotes(e.target.value)} />
+        </form>
+      );
+    }
+    render(<Notes />);
+    const printed: string[] = [];
+    const spy = vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      printed.push(args.map(String).join(" "));
+    });
+    try {
+      await createSession().fillIn("Notes", SECRET, { sensitive: true }).debug();
+    } finally {
+      spy.mockRestore();
+    }
+    expect(printed.join("\n")).toContain("Notes");
+    expect(printed.join("\n")).not.toContain(SECRET);
+  });
+});

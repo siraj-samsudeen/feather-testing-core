@@ -703,22 +703,33 @@ With the Playwright adapter, each queued step is also wrapped in `test.step()`, 
 
 ### Secrets in failure reports
 
-The chain prints the value each `fillIn` typed, because an ordinary value helps you debug. A secret value is shown as `'••••••'` instead — always six dots, so its length is hidden too. A value counts as secret when:
+The chain prints the value each `fillIn` typed and each `assertValue` expected, because an ordinary value helps you debug. A secret value is shown as `'••••••'` instead — always six dots, so its length is hidden too. A value counts as secret when:
 
-| Rule | Example | Known |
-|------|---------|-------|
-| The label looks secret: it contains `password`, `passcode`, `secret`, `token` or `api key` (also `api_key`, `apikey`), or the whole word `pin` or `otp`, in any case | `fillIn('Password:', pw)` | before the step runs |
-| You mark it sensitive | `fillIn('Recovery phrase', phrase, { sensitive: true })` | before the step runs |
-| The field turns out to be a password field (`type="password"`), whatever its label | `fillIn('Login code', code)` | once the step has run |
+| Rule | Example |
+|------|---------|
+| The label looks secret: it contains `password`, `passcode`, `secret`, `token` or `api key` (also `api_key`, `apikey`), or the whole word `pin` or `otp`, in any case | `fillIn('Password:', pw)` |
+| You mark it sensitive | `fillIn('Recovery phrase', phrase, { sensitive: true })` |
+| The field is a password field (`type="password"`), whatever its label | `fillIn('Login code', code)` |
 
-The real value is still typed; only what is printed changes. The hidden form is used in the chain, in `Failed at:`, and in the cause when the fill itself failed (Playwright's call log repeats the value as `fill("…")`, so the session replaces it there too). The RTL adapter's `debug()` also prints password inputs' values as `'••••••'`.
+The driver is asked about the field before the step starts, so the hidden form is used everywhere: the chain, `Failed at:`, `onStep` events, and Playwright `test.step()` titles. The real value is still typed; only what is printed changes. When a step on a secret field fails, the driver's own message is replaced by one naming the step, because it can quote the value or part of it.
 
-Two limits to know about:
+**Every value the session hid is also scrubbed from everything else it reports.** The session (with the sessions `within()` and `assertDownload()` make from it) remembers each value it hid. Before anything leaves it, it replaces every copy of those values with `'••••••'`:
+- step names and `onStep` events, including the errors they carry;
+- `test.step()` titles;
+- errors (message, stack, string fields and the whole cause chain);
+- the `StepError` chain;
+- `debug()` output.
 
-- The first two rules also keep the value out of the Playwright `test.step()` title. The third can't: the title is written before the step runs, so a password field with an ordinary-looking label gets its value in the title. Name the field's label, or pass `{ sensitive: true }`, when that matters.
-- Playwright's own trace and HTML report record every action with its arguments, including its own `Fill "…"` step, whatever this library does. Treat traces and HTML reports from runs that type real credentials as secret, or sign in with throwaway test accounts.
+This covers another step's error that quotes the secret: a Testing Library DOM dump, or an app error that echoes what was posted. In addition, the value of every `<input type="password">` in an HTML dump is masked, whether or not the session typed it.
 
-A custom `TestDriver` can take part in the third rule by implementing the optional `lastFilledFieldIsPassword()`: answer at once, without waiting, whether the field the most recent `fillIn()` targeted is a password field. Without it, the label rule and `{ sensitive: true }` still apply.
+What it cannot cover:
+
+- A secret the session never hid: typed outside the DSL (`raw()`, `step()`, the page directly), or typed under an ordinary label into an ordinary field without `{ sensitive: true }`.
+- A transformed copy (URL-encoded, hashed, cut in half), or a secret shorter than 3 characters.
+- Anything printed before the secret was known: a step that ran before the field was marked secret.
+- Output that does not go through the session. Playwright's own trace and HTML report record every action with its arguments, including its own `Fill "…"` step. A screenshot from `debug()` on Playwright shows the page as rendered: password fields masked by the browser, other fields as typed. Treat traces, reports and screenshots from runs that type real credentials as secret, or sign in with throwaway test accounts.
+
+A custom `TestDriver` takes part in the password rule by implementing the optional `fieldIsPassword(label)` (asked before the step; it may wait for the field, and throws if it never appears) and `lastFilledFieldIsPassword()` (asked after a `fillIn`, at once). Without them, the label rule, `{ sensitive: true }` and the scrubbing still apply.
 
 ## RTL Adapter Limitations
 

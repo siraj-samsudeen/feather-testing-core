@@ -44,6 +44,16 @@ const pages: Pages = {
     <form method="post" action="/redirect/303"><input name="q" value="a"><button>See other</button></form>
     <form method="post" action="/redirect/307"><input name="q" value="b"><button>Temporary</button></form>`,
   "/search": `<form action="/echo"><label for="q">Query</label><input id="q" name="q"><button>Search</button></form>`,
+  "/credential-check": async (request: Request) => {
+    // An app that echoes what it was sent in its own error, as some do.
+    const form = new URLSearchParams(await request.text());
+    throw new Error(`rejected credential ${form.get("code")}`);
+  },
+  "/protected": `
+    <form method="post" action="/credential-check">
+      <label for="code">Login code</label><input id="code" name="code" type="password">
+      <button>Check</button>
+    </form>`,
   "/codes": `
     <form method="post" action="/echo">
       <label for="code">Login code</label><input id="code" name="code" type="password">
@@ -518,6 +528,29 @@ for (const driver of drivers) {
         });
       }, TEST_TIMEOUT);
     }
+
+    it("#11 a secret the session hid is scrubbed from other steps' errors and events", async () => {
+      await withApp(async (h) => {
+        const failed: string[] = [];
+        // The request driver fails at the click (the app's error carries
+        // the secret); Playwright shows the app's 500 page, which carries
+        // it too, and fails at the last step. Every event is collected.
+        const error = await failure(
+          h
+            .session({
+              ...FAST,
+              onStep: (e) =>
+                failed.push(`${e.status} ${e.name} ${e.error ? String((e.error as Error).message) : ""}`),
+            })
+            .visit("/protected")
+            .within("form", (s) => s.fillIn("Login code", FAKE_SECRET).clickButton("Check"))
+            .assertText(FAKE_SECRET)
+            .assertText("Welcome"),
+        );
+        const text = [error.message, String(error.stack), String((error.cause as Error)?.message), ...failed].join("\n");
+        expect(text).not.toContain(FAKE_SECRET);
+      });
+    }, TEST_TIMEOUT);
 
     it("#56 step() and raw() run inside the chain", async () => {
       await withApp(async (h) => {

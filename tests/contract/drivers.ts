@@ -70,12 +70,20 @@ async function serve(
       else if (value !== undefined) headers.set(name, value);
     }
     const hasBody = req.method !== "GET" && req.method !== "HEAD";
+    // An app that throws gets a 500 page with the error, as a dev server
+    // shows it (the request driver sees the thrown error itself).
     const response = await handle(
       new Request(`http://${req.headers.host}${req.url}`, {
         method: req.method,
         headers,
         body: hasBody ? Buffer.concat(chunks) : undefined,
       }),
+    ).catch(
+      (error: unknown) =>
+        new Response(`<!doctype html><pre>${String(error)}</pre>`, {
+          status: 500,
+          headers: { "content-type": "text/html" },
+        }),
     );
     const out: Record<string, string | string[]> = {};
     response.headers.forEach((value, name) => {
