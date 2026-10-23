@@ -1862,6 +1862,30 @@ test.describe("when the wait for a new page ends", () => {
     });
   });
 
+  for (const how of ["clickButton", "submit", "clickLink"] as const) {
+    test(`${how}() gives a slow page the navigation timeout, not the action timeout`, async ({
+      page,
+    }) => {
+      await withApp(page, { getDelay: 800 }, async (url) => {
+        await page.goto(`${url}/links`);
+        if (how !== "clickLink") {
+          await page.goto(`${url}/todos`);
+        }
+        const session = createSession(page, { timeout: 200, navigationTimeout: 5000 });
+        const chain =
+          how === "clickLink"
+            ? session.clickLink("See the list")
+            : how === "submit"
+              ? session.fillIn("What needs to be done?", "Buy milk").submit()
+              : session.fillIn("What needs to be done?", "Buy milk").clickButton("Add");
+        // The page after the click takes 800 ms: past the 200 ms action
+        // timeout, well within the 5 s navigation timeout.
+        await chain;
+        expect(await page.locator("form").count()).toBe(1);
+      });
+    });
+  }
+
   test("method=\"dialog\" does not wait for a navigation", async ({ page }) => {
     await withApp(page, {}, async (url) => {
       const driver = new PlaywrightDriver(page, page, { timeout: 5000 });

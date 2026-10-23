@@ -189,6 +189,17 @@ export class PlaywrightDriver
   }
 
   /**
+   * Options for an action wrapped in waitingForNewDocument(). The session
+   * `timeout` bounds the action itself; noWaitAfter leaves the page it
+   * starts to load to waitingForNewDocument(), which gives it the
+   * navigation budget. Otherwise Playwright waits for the navigation inside
+   * click()/press() and holds it to the (shorter) action timeout.
+   */
+  private navigatingActionOptions(): { timeout?: number; noWaitAfter: true } {
+    return { timeout: this.timeout, noWaitAfter: true };
+  }
+
+  /**
    * Mark the current document and install the page-side listeners that
    * waitingForNewDocument() reads. A page that is itself still navigating can
    * destroy the evaluation context mid-call; then wait for the new document
@@ -489,7 +500,7 @@ export class PlaywrightDriver
 
   async click(text: string): Promise<void> {
     await this.waitingForNewDocument(() =>
-      this.scope.getByText(text, EXACT).click({ timeout: this.timeout }),
+      this.scope.getByText(text, EXACT).click(this.navigatingActionOptions()),
     );
   }
 
@@ -497,7 +508,7 @@ export class PlaywrightDriver
     await this.waitingForNewDocument(() =>
       this.scope
         .getByRole("link", { name: text, ...EXACT })
-        .click({ timeout: this.timeout }),
+        .click(this.navigatingActionOptions()),
     );
   }
 
@@ -505,7 +516,7 @@ export class PlaywrightDriver
     await this.waitingForNewDocument(() =>
       this.scope
         .getByRole("button", { name: text, ...EXACT })
-        .click({ timeout: this.timeout }),
+        .click(this.navigatingActionOptions()),
     );
   }
 
@@ -623,7 +634,7 @@ export class PlaywrightDriver
     );
     if ((await submitBtn.count()) > 0) {
       await this.waitingForNewDocument(() =>
-        submitBtn.first().click({ timeout: this.timeout }),
+        submitBtn.first().click(this.navigatingActionOptions()),
       );
       return;
     }
@@ -633,7 +644,7 @@ export class PlaywrightDriver
     });
     if ((await byRole.count()) > 0) {
       await this.waitingForNewDocument(() =>
-        byRole.first().click({ timeout: this.timeout }),
+        byRole.first().click(this.navigatingActionOptions()),
       );
     } else {
       // Last resort: press Enter on the last form field
@@ -641,7 +652,7 @@ export class PlaywrightDriver
         .locator("input, textarea, select")
         .last();
       await this.waitingForNewDocument(() =>
-        lastField.press("Enter", { timeout: this.timeout }),
+        lastField.press("Enter", this.navigatingActionOptions()),
       );
     }
   }
