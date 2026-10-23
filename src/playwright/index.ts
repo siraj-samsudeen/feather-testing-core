@@ -26,6 +26,7 @@ export type {
   DownloadOptions,
   FillInOptions,
   LayoutAssertionOptions,
+  SessionCookie,
   SessionOptions,
   TestDriver,
   UntilOptions,

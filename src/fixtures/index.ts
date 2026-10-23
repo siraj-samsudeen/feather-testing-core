@@ -50,6 +50,8 @@ export {
   type Use,
 } from "./engine.js";
 
+export type { SessionCookie } from "../types.js";
+
 /** Per-test timeout when the browser is headed (slowMo makes tests slow). */
 export const HEADED_TEST_TIMEOUT = 120_000;
 
