@@ -63,6 +63,13 @@ export interface Runner {
    * bun:test and Vitest both take it as the second argument.
    */
   afterAll(fn: () => Promise<void>, timeout?: number): unknown;
+  /**
+   * Optional: the suite being collected right now (Vitest:
+   * `getCurrentSuite` from "vitest/suite"). With it, the file-teardown hook
+   * is registered once per suite; without it (bun:test has no such API),
+   * once per test that uses a file-scoped fixture.
+   */
+  currentSuite?(): object;
 }
 
 export type TestBody<F> = (fixtures: F) => unknown | Promise<unknown>;
@@ -526,6 +533,8 @@ async function tearDownEntries(
 
 class FileScope {
   current = new Generation();
+  /** Suites the teardown hook is registered in (when the runner names them). */
+  readonly hookedSuites = new WeakSet<object>();
   /** What file-scoped fixture functions learn about "the test": the file. */
   readonly info: TestInfo = { title: "(file-scoped fixtures)", status: "running" };
 
@@ -653,6 +662,20 @@ function build<F>(
     return track(generation.values, key, fixture, pending, () => generation.closed).pending;
   };
 
+  /** Whether any of these fixtures is, or depends on, a file-scoped fixture function. */
+  const usesFileScope = (names: string[]): boolean => {
+    const seen = new Set<string>();
+    const visit = (name: string): boolean => {
+      if (seen.has(name)) return false;
+      seen.add(name);
+      const def = definitions.get(name);
+      if (!def) return false;
+      if (def.fn && def.scope === "file") return true;
+      return def.deps.some(visit);
+    };
+    return names.some(visit);
+  };
+
   const register = (name: string, uses: string[] | null, body: TestBody<F>) => {
     let wanted = uses;
     if (!wanted) {
@@ -668,14 +691,21 @@ function build<F>(
         );
       }
     }
-    // Every test registers the teardown in the suite it is collected in
-    // (the file, or its describe): at the end of each block whatever
-    // file-scoped fixtures exist are torn down, once — later hooks find
-    // nothing left. A flag here would register only in the first block.
-    runner.afterAll(
-      () => fileScope.teardown(),
-      (settings.teardownTimeout ?? DEFAULT_TEARDOWN_TIMEOUT) + RUNNER_MARGIN,
-    );
+    // A test that uses a file-scoped fixture registers the teardown in the
+    // suite it is collected in (the file, or its describe): at the end of
+    // each block whatever file-scoped fixtures exist are torn down, once —
+    // later hooks find nothing left. With the runner's current suite, once
+    // per suite.
+    if (usesFileScope(wanted)) {
+      const suite = runner.currentSuite?.();
+      if (!suite || !fileScope.hookedSuites.has(suite)) {
+        if (suite) fileScope.hookedSuites.add(suite);
+        runner.afterAll(
+          () => fileScope.teardown(),
+          (settings.teardownTimeout ?? DEFAULT_TEARDOWN_TIMEOUT) + RUNNER_MARGIN,
+        );
+      }
+    }
     const timeout = settings.timeout?.(optionValues()) ?? settings.testTimeout ?? DEFAULT_TEST_TIMEOUT;
     const teardownAllowance = settings.teardownTimeout ?? DEFAULT_TEARDOWN_TIMEOUT;
     // One budget: the body gets `timeout`, teardown gets its allowance, and

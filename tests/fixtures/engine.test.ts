@@ -19,7 +19,7 @@ function recordingRunner() {
   const endFile = async () => {
     for (const fn of afterAlls.splice(0)) await fn();
   };
-  return { runner, tests, run, endFile };
+  return { runner, tests, run, endFile, hooks: () => afterAlls.length };
 }
 
 /** Fixtures that log their setup and teardown. */
@@ -702,5 +702,37 @@ describe("defineTest", () => {
       process.off("unhandledRejection", onUnhandled);
       console.error = original;
     }
+  });
+
+  describe("file-teardown hooks", () => {
+    const fixtures = {
+      plain: 1,
+      perTest: async ({}, use: (v: number) => Promise<void>) => use(1),
+      shared: [async ({}, use: (v: number) => Promise<void>) => use(2), { scope: "file" }],
+      onShared: [async ({ shared }: { shared: number }, use: (v: number) => Promise<void>) => use(shared), { scope: "file" }],
+      usesShared: async ({ onShared }: { onShared: number }, use: (v: number) => Promise<void>) => use(onShared),
+    };
+
+    it("are registered only by tests that (transitively) use a file-scoped fixture", () => {
+      const { runner, hooks } = recordingRunner();
+      const test = defineTest(runner, fixtures as never);
+      test("none", async ({ plain, perTest }: { plain: number; perTest: number }) => void (plain + perTest));
+      test("direct", async ({ shared }: { shared: number }) => void shared);
+      test("through a dependency", async ({ usesShared }: { usesShared: number }) => void usesShared);
+      expect(hooks()).toBe(2);
+    });
+
+    it("are registered once per suite when the runner says which suite is collecting", () => {
+      const { runner, hooks } = recordingRunner();
+      const suites = [{ name: "file" }, { name: "describe" }];
+      let current = suites[0]!;
+      const test = defineTest({ ...runner, currentSuite: () => current }, fixtures as never);
+      test("one", async ({ shared }: { shared: number }) => void shared);
+      test("two", async ({ shared }: { shared: number }) => void shared);
+      current = suites[1]!;
+      test("three", async ({ shared }: { shared: number }) => void shared);
+      test("four", async ({ usesShared }: { usesShared: number }) => void usesShared);
+      expect(hooks()).toBe(2);
+    });
   });
 });
