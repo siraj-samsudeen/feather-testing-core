@@ -86,6 +86,32 @@ const POLL_STOP_GRACE_MS = 1000;
 /** Makes each new-page wait's stop token unique. */
 let waitCounter = 0;
 
+/**
+ * The page's default navigation timeout (setDefaultNavigationTimeout, the
+ * context's, or the runner's navigationTimeout). Playwright has no public
+ * getter, so this reads its private timeout settings: only for the wait for
+ * the new page after a submit, which has no Playwright call to inherit the
+ * default from. Undefined if the private shape is not there; a test pins
+ * the shape, so a Playwright rename fails CI instead of passing silently.
+ * Set the navigationTimeout option to avoid relying on it.
+ */
+export function pageDefaultNavigationTimeout(page: Page): number | undefined {
+  const settings = (
+    page as unknown as {
+      _timeoutSettings?: {
+        navigationTimeout?: (options: object) => number | { timeout?: number };
+      };
+    }
+  )._timeoutSettings;
+  try {
+    const value = settings?.navigationTimeout?.({});
+    const ms = typeof value === "number" ? value : value?.timeout;
+    return typeof ms === "number" ? ms : undefined;
+  } catch {
+    return undefined; // the shape changed: the pinning test says so
+  }
+}
+
 /** Playwright's documented default navigation timeout. */
 const PLAYWRIGHT_DEFAULT_NAVIGATION_TIMEOUT = 30_000;
 
@@ -250,24 +276,11 @@ export class PlaywrightDriver
    * Playwright's documented default if those are not there.
    */
   private navigationTimeout(): number {
-    if (this.options.navigationTimeout !== undefined) {
-      return this.options.navigationTimeout;
-    }
-    const settings = (
-      this.page as unknown as {
-        _timeoutSettings?: {
-          navigationTimeout?: (options: object) => number | { timeout?: number };
-        };
-      }
-    )._timeoutSettings;
-    try {
-      const value = settings?.navigationTimeout?.({});
-      const ms = typeof value === "number" ? value : value?.timeout;
-      if (typeof ms === "number") return ms;
-    } catch {
-      // Fall through to Playwright's default.
-    }
-    return PLAYWRIGHT_DEFAULT_NAVIGATION_TIMEOUT;
+    return (
+      this.options.navigationTimeout ??
+      pageDefaultNavigationTimeout(this.page) ??
+      PLAYWRIGHT_DEFAULT_NAVIGATION_TIMEOUT
+    );
   }
 
   private insideRunner(): boolean {
@@ -673,11 +686,12 @@ export class PlaywrightDriver
       this.options.baseUrl === undefined
         ? path
         : new URL(path, this.options.baseUrl).href;
-    await this.page.goto(url, { timeout: this.navigationTimeout() });
+    // No option: Playwright's own default applies (public path).
+    await this.page.goto(url, { timeout: this.options.navigationTimeout });
   }
 
   async reload(): Promise<void> {
-    await this.page.reload({ timeout: this.navigationTimeout() });
+    await this.page.reload({ timeout: this.options.navigationTimeout });
   }
 
   async click(text: string, opts?: StepOptions): Promise<void> {

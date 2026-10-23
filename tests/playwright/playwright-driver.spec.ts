@@ -1,6 +1,6 @@
 import { stripVTControlCharacters } from "node:util";
 import { test, expect } from "./fixtures.js";
-import { PlaywrightDriver } from "../../src/playwright/driver.js";
+import { PlaywrightDriver, pageDefaultNavigationTimeout } from "../../src/playwright/driver.js";
 import { Session } from "../../src/session.js";
 import { StepError } from "../../src/errors.js";
 import type { TestDriver } from "../../src/types.js";
@@ -2206,5 +2206,17 @@ test.describe("what the session leaves in the app's page", () => {
       };
     });
     expect(seen).toEqual({ samePrototypeMethod: true, newKeys: [] });
+  });
+});
+
+test.describe("reading the page's default navigation timeout (private Playwright API)", () => {
+  // Pinned: if Playwright renames page._timeoutSettings, this fails CI
+  // instead of the post-submit wait silently falling back to 30 s.
+  test("the page's own setting, and one inherited from its context", async ({ page, context }) => {
+    page.setDefaultNavigationTimeout(1234);
+    expect(pageDefaultNavigationTimeout(page)).toBe(1234);
+    context.setDefaultNavigationTimeout(4321);
+    const other = await context.newPage();
+    expect(pageDefaultNavigationTimeout(other)).toBe(4321);
   });
 });
