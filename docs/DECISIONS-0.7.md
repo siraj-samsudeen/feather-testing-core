@@ -71,7 +71,7 @@ Core provides its own fixtures through `defineCoreTest(runner)`: `browser` (file
 
 **Limits (documented):**
 - File scope relies on `afterAll` registered during collection, so the first test that uses a file-scoped fixture inside a `describe` ties its teardown to that `describe`.
-- A function supplied as a fixture value needs `{ value: true }`, or `.with()`.
+- A function supplied as a fixture value needs `[fn, { value: true }]`, in a definition and in `.with()` alike.
 
 ### `addCookies(cookies)`, `SessionCookie` everywhere, and test bodies with no parameter
 

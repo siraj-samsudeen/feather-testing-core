@@ -735,4 +735,53 @@ describe("defineTest", () => {
       expect(hooks()).toBe(2);
     });
   });
+
+  describe("overrides and messages", () => {
+    it(".with() refuses a fixture that is not defined", () => {
+      const { runner } = recordingRunner();
+      const test = defineTest(runner, { headed: false } as never);
+      expect(() => test.with({ hedaed: true } as never)).toThrow(
+        "test.with(): 'hedaed' is not a defined fixture (defined: headed)",
+      );
+    });
+
+    it(".with() keeps a function a fixture function; [fn, { value: true }] makes it a value", async () => {
+      const { runner, run } = recordingRunner();
+      const handler = (request: string) => `handled ${request}`;
+      const test = defineTest(runner, {
+        handler: [() => "default", { value: true }],
+        greeting: "hi",
+      } as never);
+      const got: unknown[] = [];
+      test
+        .with({ greeting: async ({}, use: (v: string) => Promise<void>) => use("from a fixture function") } as never)
+        ("fixture fn", async ({ greeting }: { greeting: string }) => void got.push(greeting));
+      test
+        .with({ handler: [handler, { value: true }] } as never)
+        ("value", async ({ handler: h }: { handler: (r: string) => string }) => void got.push(h("x")));
+      await run("fixture fn");
+      await run("value");
+      expect(got).toEqual(["from a fixture function", "handled x"]);
+    });
+
+    it("an array value whose second item is an object is a value, not [fn, options]", async () => {
+      const { runner, run } = recordingRunner();
+      const cookies = [{ name: "a", value: "1" }, { name: "b", value: "2" }];
+      const test = defineTest(runner, { cookies } as never);
+      let got: unknown;
+      test("cookies", async ({ cookies: c }: { cookies: unknown }) => {
+        got = c;
+      });
+      await run("cookies");
+      expect(got).toEqual(cookies);
+    });
+
+    it("a test whose fixtures cannot be read gets a copy-pasteable explicit list of the names it uses", () => {
+      const { runner } = recordingRunner();
+      const test = defineTest(runner, { a: 1, b: 2 } as never);
+      expect(() =>
+        test("rest", async ({ a, b, ...others }: Record<string, unknown>) => void [a, b, others]),
+      ).toThrow(`test("rest", ["a", "b"], async ({ a, b }) => …)`);
+    });
+  });
 });

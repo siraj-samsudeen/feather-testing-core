@@ -184,7 +184,7 @@ type FirstParam =
   | { kind: "none" }
   | { kind: "destructured"; names: string[] }
   | { kind: "identifier"; name: string }
-  | { kind: "unsupported"; why: string };
+  | { kind: "unsupported"; why: string; names?: string[] };
 
 /**
  * Split `text` at top-level commas, skipping strings, template literals,
@@ -306,7 +306,7 @@ function firstParam(fn: (...args: never[]) => unknown): FirstParam {
   const close = matchingBrace(first);
   const names: string[] = [];
   for (const entry of splitTopLevel(first.slice(1, close))) {
-    if (entry.startsWith("...")) return { kind: "unsupported", why: `a rest pattern (${entry})` };
+    if (entry.startsWith("...")) return { kind: "unsupported", why: `a rest pattern (${entry})`, names };
     if (entry.startsWith("[")) return { kind: "unsupported", why: `a computed key (${entry})` };
     const key = /^(?:"([^"]*)"|'([^']*)'|([A-Za-z_$][\w$]*))/.exec(entry);
     if (!key) return { kind: "unsupported", why: `the entry ${entry}` };
@@ -326,16 +326,24 @@ export function destructuredNames(fn: (...args: never[]) => unknown): string[] |
   return param.kind === "destructured" ? param.names : null;
 }
 
+const OPTION_KEYS = new Set(["scope", "deps", "value"]);
+
+/**
+ * `[definition, options]`: a two-item array whose second item has only
+ * fixture-option keys. Anything else — say two cookies — is a plain value.
+ */
+function isWithOptions(def: unknown): def is [unknown, FixtureOptions] {
+  if (!Array.isArray(def) || def.length !== 2) return false;
+  const options = def[1] as unknown;
+  if (options === null || typeof options !== "object" || Array.isArray(options)) return false;
+  const keys = Object.keys(options);
+  return keys.length > 0 && keys.every((key) => OPTION_KEYS.has(key));
+}
+
 function normalize(name: string, def: unknown): Definition {
   let body = def;
   let options: FixtureOptions = {};
-  if (
-    Array.isArray(def) &&
-    def.length === 2 &&
-    def[1] !== null &&
-    typeof def[1] === "object" &&
-    !Array.isArray(def[1])
-  ) {
+  if (isWithOptions(def)) {
     body = def[0];
     options = def[1] as FixtureOptions;
   }
@@ -683,11 +691,16 @@ function build<F>(
       if (param.kind === "destructured") wanted = param.names;
       else if (param.kind === "none") wanted = [];
       else {
+        const found = param.kind === "unsupported" ? (param.names ?? []) : [];
+        const example =
+          found.length > 0
+            ? ` For this test: test(${JSON.stringify(name)}, [${found.map((n) => JSON.stringify(n)).join(", ")}], async ({ ${found.join(", ")} }) => …).`
+            : "";
         throw new Error(
           `test '${name}': cannot see which fixtures the test uses ` +
             `(${param.kind === "unsupported" ? param.why : `the parameter '${param.name}'`}) — ` +
             "destructure them (async ({ session, request }) => …) or name them: " +
-            "test(name, ['session', 'request'], fn).",
+            `test(name, ['session', 'request'], fn).${example}`,
         );
       }
     }
@@ -809,7 +822,17 @@ function build<F>(
     const next = new Map(definitions);
     for (const [name, value] of Object.entries(overrides)) {
       const current = next.get(name);
-      next.set(name, { fn: null, value, scope: current?.scope ?? "test", deps: [] });
+      if (!current) {
+        throw new Error(
+          `test.with(): '${name}' is not a defined fixture (defined: ${[...definitions.keys()].sort().join(", ")}). ` +
+            `Add it with test.extend({ ${name}: … }).`,
+        );
+      }
+      // Like a definition: a function is a fixture function, unless given
+      // as [fn, { value: true }]; the scope stays unless the options say.
+      const replaced = normalize(name, value);
+      const scopeGiven = isWithOptions(value) && value[1].scope !== undefined;
+      next.set(name, scopeGiven ? replaced : { ...replaced, scope: current.scope });
     }
     return build<F>(runner, next, settings, fileScope);
   };

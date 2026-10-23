@@ -387,7 +387,7 @@ Core's fixtures:
 | `browser` | file | Chromium (option `browserName`), launched the first time a test in the file needs it. `HEADED=1` (option `headed`): a visible browser with `slowMo` 700 and a per-test timeout of 120 s |
 | `context` | test | A fresh browser context (cookies, storage). `RECORD=1` (option `record: "on"`): a video of every page in `test-results/videos` and a screenshot of the last page in `test-results/screenshots`; `record: "on-failure"` keeps them only for failed tests; option `outputDir` |
 | `page` | test | A page in `context` |
-| `session` | test | A Playwright-adapter session on `page`; needs a `baseUrl` fixture |
+| `session` | test | A Playwright-adapter session on `page`, with the `baseUrl` fixture; without one, paths resolve against the context's own `baseURL` |
 | `request` | test | A request-adapter session; needs a `handler` fixture. A test that asks only for `request` never loads or launches a browser |
 | `rtl` | test | An RTL-adapter session on what is rendered (needs a DOM) |
 
@@ -395,7 +395,8 @@ Core's fixtures:
 - A fixture is a plain value, a function `async (fixtures, use, info) => { …; await use(value); …teardown }`, or either with options: `[fn, { scope: "file" }]`, `[aFunction, { value: true }]`.
 - Its dependencies are the names its first parameter destructures (or `{ deps: [...] }`).
 - `.extend({...})` layers more fixtures on a test function, so other packages can build on core's.
-- `.with({ browserName: "firefox" })` gives a file its own option values. `defineTest(runner, fixtures, { overrides })` does the same for every test.
+- `.with({ browserName: "firefox" })` gives a file its own values for fixtures that are already defined; an unknown name is an error. As in a definition, a function there is a fixture function, and a function value is `[fn, { value: true }]`. `defineTest(runner, fixtures, { overrides })` does the same for every test.
+- A two-item array is `[definition, options]` only when the second item has only option keys (`scope`, `deps`, `value`); otherwise it is a plain value (two cookies, say).
 - A file-scoped fixture is shared by the tests that see the same definitions of it and of what it depends on: changing `headed` with `.with()` gets its own browser, changing `record` does not.
 - In minified code, name the fixtures explicitly: `test(name, ["session"], fn)`.
 - Under Vitest, pass `currentSuite: getCurrentSuite` (from `"vitest/suite"`) with `test` and `afterAll`. Then the hook that tears down file-scoped fixtures is registered once per `describe`; otherwise it is registered once per test that uses one. bun:test has no such API.
