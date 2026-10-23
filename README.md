@@ -217,6 +217,42 @@ bun test --timeout 20000
 
 Bun 1.4.2 ignores `timeout` under `[test]` in `bunfig.toml`; a test that sleeps 7 s still times out at 5000 ms with it, and passes with `--timeout 20000`. Put the flag in your `package.json` script (`"test": "bun test --timeout 20000"`), or pass a timeout to each test (`test(name, fn, 20_000)`). The fixtures engine passes one for you.
 
+**With fixtures (recommended).** Define the test function once; each test asks for what it needs, and the browser, context, app and session are set up and torn down for it. See [Fixtures](#fixtures-async--session---under-any-runner).
+
+```ts
+// test/fixtures.ts
+import { afterAll, test as bunTest } from "bun:test";
+import { defineCoreTest } from "feather-testing-core/fixtures";
+import { app } from "../src/app"; // e.g. an Elysia app
+
+export const test = defineCoreTest({ test: bunTest, afterAll }).extend({
+  baseUrl: async ({}, use) => {
+    app.listen(0);
+    await use(`http://localhost:${app.server!.port}`);
+    await app.stop();
+  },
+});
+
+// test/todos.test.ts
+import { expect } from "bun:test";
+import { StepError } from "feather-testing-core/playwright";
+import { test } from "./fixtures";
+
+test("adds a to-do", async ({ session }) => {
+  await session
+    .visit("/")
+    .fillIn("What needs to be done?", "Buy milk")
+    .submit() // waits for the page that the POST redirects to
+    .assertHas("li", { text: "Buy milk" });
+});
+
+test("a failing chain names the failed step", async ({ session }) => {
+  await expect(session.visit("/").assertText("Nope").run()).rejects.toThrow(StepError);
+});
+```
+
+**Without fixtures.** The same by hand, with Playwright as a library:
+
 ```ts
 // todos.test.ts
 import { afterAll, afterEach, beforeAll, beforeEach, expect, test } from "bun:test";
