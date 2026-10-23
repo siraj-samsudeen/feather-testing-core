@@ -739,11 +739,12 @@ export class RequestDriver
     destination: URL,
   ): void {
     const { document } = this.browser.current;
-    const raw = (
+    // Not trimmed: Chromium treats target=" _self " as a window named
+    // " _self " (it opens a new one); keywords match case-insensitively.
+    const raw =
       ownTarget ??
       document.querySelector("base[target]")?.getAttribute("target") ??
-      ""
-    ).trim();
+      "";
     if (["", "_self", "_top", "_parent"].includes(raw.toLowerCase())) return;
     throw new BrowserOnlyVerbError(
       verb,

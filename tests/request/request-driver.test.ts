@@ -547,6 +547,28 @@ line two</textarea>
       expect(app.requests).toHaveLength(1);
     });
 
+    it("matches the browser on spaces: ' _self ' names another window; '_SELF' is this page", async () => {
+      // Chromium (Playwright 1.64) opens a new window for target=" _self "
+      // and " _blank ", and stays for "_SELF": keywords are not trimmed.
+      const { driver } = driverFor({
+        "/": `<a href="/about" target=" _self ">Spaced</a><a href="/about" target="_SELF">Upper</a>
+          <form action="/echo" target=" _self "><button>Spaced form</button></form>
+          <form action="/echo"><button formtarget=" _top ">Spaced formtarget</button></form>`,
+      });
+      await driver.visit("/");
+      await expect(driver.clickLink("Spaced")).rejects.toThrow(BrowserOnlyVerbError);
+      await expect(driver.clickButton("Spaced form")).rejects.toThrow(BrowserOnlyVerbError);
+      await expect(driver.clickButton("Spaced formtarget")).rejects.toThrow(BrowserOnlyVerbError);
+      await driver.clickLink("Upper");
+      await driver.assertPath("/about");
+    });
+
+    it("a <base target> with spaces names another window too", async () => {
+      const { driver } = driverFor({ "/": `<base target=" _self "><a href="/about">About</a>` });
+      await driver.visit("/");
+      await expect(driver.clickLink("About")).rejects.toThrow(BrowserOnlyVerbError);
+    });
+
     it("a <base target> applies to links without their own", async () => {
       const { driver } = driverFor({ "/": `<base target="_blank"><a href="/about">About</a>` });
       await driver.visit("/");
