@@ -40,6 +40,11 @@
       "import": "./dist/request/index.js",
       "default": "./dist/request/index.js"
     },
+    "./fixtures": {
+      "types": "./dist/fixtures/index.d.ts",
+      "import": "./dist/fixtures/index.js",
+      "default": "./dist/fixtures/index.js"
+    },
     "./eslint-plugin": {
       "types": "./dist/eslint-plugin/index.d.ts",
       "import": "./dist/eslint-plugin/index.js",

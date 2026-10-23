@@ -68,7 +68,7 @@ export const requestDriver: ContractDriver = {
 };
 
 /** Serve a fetch-style handler over HTTP, passing redirects through untouched. */
-async function serve(
+export async function serve(
   handle: (request: Request) => Promise<Response>,
 ): Promise<{ url: string; close: () => Promise<void> }> {
   const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {

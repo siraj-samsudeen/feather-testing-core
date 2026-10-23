@@ -58,6 +58,21 @@ These are the design decisions taken for 0.7.0. Each has a short entry with its 
 
 **Why:** Clear and additive, so it is decided under the author's rule. A later package (`feather-testing-elysia`) can then offer `logInAs(user)` on top of it, while "how to mint a session for user X" stays the consumer's callback.
 
+### Fixtures in every runner: `feather-testing-core/fixtures`
+
+**Decision:** Add a runner-agnostic fixture engine, `defineTest(runner, fixtures)`, with `.extend()` and `.with()`.
+- Tests name the fixtures they need by destructuring them (or in an explicit list); only those are set up.
+- Dependencies are resolved, and teardown runs in reverse order even on failure.
+- Scopes are test and file (alias worker).
+
+Core provides its own fixtures through `defineCoreTest(runner)`: `browser` (file-scoped, `HEADED=1`), `context` (`RECORD=1`, `record: "on-failure"`), `page`, `session` (needs `baseUrl`), `request` (needs `handler`) and `rtl`. Core has no knowledge of databases or Elysia: layered packages add those with `.extend()`.
+
+**Why:** Clear and additive, so it is decided under the author's rule. The author wants Playwright's fixture experience in every layer. The `beforeAll`/`beforeEach` setup each consumer used to write becomes `async ({ session }) => …`.
+
+**Limits (documented):**
+- File scope relies on `afterAll` registered during collection, so the first test that uses a file-scoped fixture inside a `describe` ties its teardown to that `describe`.
+- A function supplied as a fixture value needs `{ value: true }`, or `.with()`.
+
 ## Deferred
 
 ### B2 (rest). A per-driver Session type that rejects unsupported verbs at compile time

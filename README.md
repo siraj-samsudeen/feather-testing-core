@@ -285,6 +285,80 @@ Outside the Playwright Test runner the session timeout also bounds actions (fill
 
 **Step names.** There is no `test.step()` outside the Playwright Test runner. Failures still name the failed step in the `StepError` chain; pass `onStep` to see steps as they run.
 
+### Fixtures: `async ({ session }) => …` under any runner
+
+`feather-testing-core/fixtures` brings Playwright Test's fixture style to `bun test` and Vitest. A test destructures what it needs, and only that is set up. Fixtures are torn down in reverse order after the test, even when it fails.
+
+**Before** (bun test, Playwright as a library):
+
+```ts
+let app: ReturnType<typeof makeApp>;
+let browser: Browser;
+let context: BrowserContext;
+let page: Page;
+let baseUrl: string;
+
+beforeAll(async () => { browser = await chromium.launch(); });
+afterAll(async () => { await browser.close(); });
+beforeEach(async () => {
+  app = makeApp().listen(0);
+  baseUrl = `http://localhost:${app.server!.port}`;
+  context = await browser.newContext();
+  page = await context.newPage();
+});
+afterEach(async () => { await context.close(); await app.stop(); });
+
+test("adds a to-do", async () => {
+  await createSession(page, { baseUrl }).visit("/").fillIn("What needs to be done?", "Buy milk").submit();
+});
+```
+
+**After:**
+
+```ts
+// test/fixtures.ts
+import { afterAll, test as bunTest } from "bun:test";
+import { defineCoreTest } from "feather-testing-core/fixtures";
+import { makeApp } from "../src/app";
+
+export const test = defineCoreTest({ test: bunTest, afterAll }).extend({
+  baseUrl: async ({}, use) => {
+    const app = makeApp().listen(0);
+    await use(`http://localhost:${app.server!.port}`);
+    await app.stop();
+  },
+  handler: [makeApp().handle, { value: true }], // a function used as a value
+});
+
+// test/todos.test.ts
+test("adds a to-do", async ({ session }) => {
+  await session.visit("/").fillIn("What needs to be done?", "Buy milk").submit().assertHas("li", { count: 1 });
+});
+
+test("the same, without a browser", async ({ request }) => {
+  await request.visit("/").fillIn("What needs to be done?", "Buy milk").submit().assertHas("li", { count: 1 });
+});
+```
+
+Core's fixtures:
+
+| Fixture | Scope | What it is |
+|---------|-------|------------|
+| `browser` | file | Chromium (option `browserName`), launched the first time a test in the file needs it. `HEADED=1` (option `headed`): a visible browser with `slowMo` 700 and a per-test timeout of 120 s |
+| `context` | test | A fresh browser context (cookies, storage). `RECORD=1` (option `record: "on"`): a video of every page in `test-results/videos` and a screenshot of the last page in `test-results/screenshots`; `record: "on-failure"` keeps them only for failed tests; option `outputDir` |
+| `page` | test | A page in `context` |
+| `session` | test | A Playwright-adapter session on `page`; needs a `baseUrl` fixture |
+| `request` | test | A request-adapter session; needs a `handler` fixture. A test that asks only for `request` never loads or launches a browser |
+| `rtl` | test | An RTL-adapter session on what is rendered (needs a DOM) |
+
+**Defining your own.**
+- A fixture is a plain value, a function `async (fixtures, use, info) => { …; await use(value); …teardown }`, or either with options: `[fn, { scope: "file" }]`, `[aFunction, { value: true }]`.
+- Its dependencies are the names its first parameter destructures (or `{ deps: [...] }`).
+- `.extend({...})` layers more fixtures on a test function, so other packages can build on core's.
+- `.with({ browserName: "firefox" })` gives a file its own option values. `defineTest(runner, fixtures, { overrides })` does the same for every test.
+- A file-scoped fixture is shared by the tests that see the same definitions of it and of what it depends on: changing `headed` with `.with()` gets its own browser, changing `record` does not.
+- In minified code, name the fixtures explicitly: `test(name, ["session"], fn)`.
+
 ### React Testing Library
 
 ```ts
@@ -896,6 +970,9 @@ import { createSession } from "feather-testing-core/rtl";
 
 // Request adapter (no browser)
 import { createSession, RequestDriver } from "feather-testing-core/request";
+
+// Fixtures for bun:test and Vitest (see Fixtures)
+import { defineCoreTest, defineTest } from "feather-testing-core/fixtures";
 
 // ESLint plugin (see below)
 import featherTesting from "feather-testing-core/eslint-plugin";
