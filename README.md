@@ -147,6 +147,8 @@ npm install feather-testing-core
 
 > **Note:** This package is ESM-only (`"type": "module"`). It works with modern bundlers and test runners out of the box. If your project uses CommonJS `require()`, you'll need to update your config to support ESM imports.
 
+> **TypeScript:** use `"moduleResolution": "bundler"` (the `bun init` default) or `"node16"`/`"nodenext"`, with a modern `target` (ES2022 or later). The entry points (`feather-testing-core/playwright`, `/request`, `/fixtures`, …) are declared only under `exports`, which the old `"node"` (`node10`) resolution ignores: there only the root import resolves.
+
 All test framework dependencies are optional peers — install only what you use:
 
 ```bash
