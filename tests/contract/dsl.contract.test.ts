@@ -56,6 +56,16 @@ const pages: Pages = {
       <label for="note">Note</label><input id="note" name="note">
       <button>Add</button>
     </form>`,
+  "/required-disabled": `
+    <form method="post" action="/echo">
+      <label for="title">Title</label><input id="title" name="title" required>
+      <button disabled>Add</button>
+    </form>`,
+  "/required-no-button": `
+    <form method="post" action="/echo">
+      <label for="title">Title</label><input id="title" name="title" required>
+      <label for="due">Due</label><input id="due" name="due">
+    </form>`,
   "/list": `<ul><li class="item">One</li><li class="item">Two</li></ul>`,
   "/first-hidden": `<p class="msg" hidden>Old notice</p><p class="msg">New notice</p>`,
   "/dialog": `<p>Behind the dialog</p>
@@ -664,6 +674,16 @@ for (const driver of drivers) {
           .within("#cookie", (s) => s.assertExactText("theme=dark"));
         const first = h.app.requests[0]!;
         expect(first.headers.get("cookie")).toBe("theme=dark");
+      });
+    }, TEST_TIMEOUT);
+
+    it("#27 assertSubmitBlocked fails when Enter would submit nothing at all", async () => {
+      await withApp(async (h) => {
+        for (const page of ["/required-disabled", "/required-no-button"]) {
+          const error = await failure(h.session(FAST).visit(page).assertSubmitBlocked("Title"));
+          expect(error.message).toContain("nothing would submit");
+        }
+        expect(h.app.requests.filter((r) => r.method === "POST")).toHaveLength(0);
       });
     }, TEST_TIMEOUT);
 

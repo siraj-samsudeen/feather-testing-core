@@ -644,10 +644,23 @@ export class RequestDriver
     if (!form) {
       throw new Error(`${verb}: the field labelled '${label}' is not in a form.`);
     }
-    // As Enter in the field would: the form's default (first) submit button.
-    const submitter =
-      formControls(form).find((el) => isButtonElement(el) && isSubmitButton(el)) ?? null;
-    const blocking = firstMissingRequired(form, submitter, this.browser.files);
+    // Enter in the field: implicit submission, with its own guards.
+    const controls = formControls(form);
+    const defaultButton = controls.find(isSubmitButton) ?? null;
+    const nothing = (why: string) =>
+      new Error(`${verb}: nothing would submit — Enter in '${label}' does not submit its form (${why}).`);
+    if (defaultButton && isDisabled(defaultButton)) {
+      throw nothing("its default button is disabled");
+    }
+    if (
+      !defaultButton &&
+      controls.filter(
+        (el) => el.tagName === "INPUT" && BLOCKS_IMPLICIT_SUBMISSION.has(inputType(el)),
+      ).length > 1
+    ) {
+      throw nothing("it has no submit button and more than one text field");
+    }
+    const blocking = firstMissingRequired(form, defaultButton, this.browser.files);
     if (blocking === field) {
       return; // Not sent, because of this field: nothing is requested.
     }
@@ -657,10 +670,11 @@ export class RequestDriver
       );
     }
     // Nothing blocks it: a browser would send it, so the session does too.
-    this.requireFormInThisWindow(verb, form, submitter);
-    await this.browser.submit(verb, form, submitter);
+    this.browser.focused = field;
+    await this.submitImplicitly(form, verb);
     throw new Error(`${verb}: the form was sent — '${label}' did not stop it.`);
   }
+
 
   async submit(): Promise<void> {
     const verb = "submit()";

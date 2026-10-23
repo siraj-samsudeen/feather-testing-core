@@ -110,7 +110,19 @@ type MarkedWindow = {
   /** The first control that blocked a submission during the action. */
   __featherInvalid?: BlockedSubmit | null;
   __featherInvalidEl?: Element | null;
+  /** The form a submit was attempted on during the action, if any. */
+  __featherSubmitAttempt?: HTMLFormElement | null;
+  /** Whether a submit event fired during the action. */
+  __featherSubmitted?: boolean;
 };
+
+/** What happened to a form during an action. */
+interface ActionOutcome {
+  /** The browser refused a submit attempt because of this control. */
+  blocked: BlockedSubmit | null;
+  /** A form was submitted (a submit event fired, or the page was replaced). */
+  submitted: boolean;
+}
 
 /** A submission the browser refused because a control was invalid. */
 interface BlockedSubmit {
@@ -276,8 +288,46 @@ export class PlaywrightDriver
         w.__featherLeaving = false;
         w.__featherInvalid = null;
         w.__featherInvalidEl = null;
+        w.__featherSubmitAttempt = null;
+        w.__featherSubmitted = false;
         if (w.__featherListening) return;
         w.__featherListening = true;
+        // Submit attempts: activating a submit button (Enter's implicit
+        // submission clicks the default one), Enter in a field of a form
+        // with no submit button, and requestSubmit(). Only an 'invalid'
+        // event on the attempted form counts as a refused submit; a
+        // checkValidity()/reportValidity() from a type=button does not.
+        window.addEventListener(
+          "click",
+          (event) => {
+            const el = (event.target as Element | null)?.closest?.("button, input");
+            if (!el) return;
+            const isSubmit =
+              el instanceof HTMLButtonElement
+                ? el.type === "submit"
+                : el instanceof HTMLInputElement &&
+                  (el.type === "submit" || el.type === "image");
+            if (isSubmit && (el as HTMLButtonElement).form) {
+              w.__featherSubmitAttempt = (el as HTMLButtonElement).form;
+            }
+          },
+          true,
+        );
+        window.addEventListener(
+          "keydown",
+          (event) => {
+            const el = event.target as HTMLInputElement | null;
+            if (event.key === "Enter" && el instanceof HTMLInputElement && el.form) {
+              w.__featherSubmitAttempt = el.form;
+            }
+          },
+          true,
+        );
+        const requestSubmit = HTMLFormElement.prototype.requestSubmit;
+        HTMLFormElement.prototype.requestSubmit = function (submitter) {
+          w.__featherSubmitAttempt = this;
+          return requestSubmit.call(this, submitter);
+        };
         // A submission blocked by constraint validation fires 'invalid' on
         // each invalid control (it does not bubble, so capture); the first
         // is the one the browser reports.
@@ -286,6 +336,9 @@ export class PlaywrightDriver
           (event) => {
             if (w.__featherInvalid) return;
             const el = event.target as HTMLInputElement;
+            if (!w.__featherSubmitAttempt || el.form !== w.__featherSubmitAttempt) {
+              return;
+            }
             const label =
               (el.labels?.[0]?.textContent ?? "").replace(/\s+/g, " ").trim() ||
               el.getAttribute("aria-label") ||
@@ -303,6 +356,7 @@ export class PlaywrightDriver
         );
         // Window bubble phase: runs after the form's own submit handlers.
         window.addEventListener("submit", (event) => {
+          w.__featherSubmitted = true;
           if (event.defaultPrevented) return;
           const form = event.target as HTMLFormElement;
           const submitter = (event as SubmitEvent).submitter;
@@ -385,16 +439,16 @@ export class PlaywrightDriver
    * the form because a field is invalid — an empty required field above all.
    */
   private async acting(action: () => Promise<void>): Promise<void> {
-    const blocked = await this.waitingForNewDocument(action);
+    const { blocked } = await this.waitingForNewDocument(action);
     if (blocked) {
       throw new Error(blockedSubmitMessage(blocked));
     }
   }
 
-  /** Returns the blocked submission, if the action's form was refused. */
+  /** Returns what happened to a form: refused (and why), or submitted. */
   private async waitingForNewDocument(
     action: () => Promise<void>,
-  ): Promise<BlockedSubmit | null> {
+  ): Promise<ActionOutcome> {
     await this.markDocumentBeforeAction();
 
     const navigations: Request[] = [];
@@ -443,11 +497,16 @@ export class PlaywrightDriver
 
       let state: "new-document" | "leaving" | "staying";
       let blocked: BlockedSubmit | null = null;
+      let submitted = false;
       try {
-        [state, blocked] = await this.page.evaluate(() => {
+        [state, blocked, submitted] = await this.page.evaluate(() => {
           const w = window as MarkedWindow;
-          if (!w.__featherDocumentBeforeAction) return ["new-document", null] as const;
-          return [w.__featherLeaving ? "leaving" : "staying", w.__featherInvalid ?? null] as const;
+          if (!w.__featherDocumentBeforeAction) return ["new-document", null, true] as const;
+          return [
+            w.__featherLeaving ? "leaving" : "staying",
+            w.__featherInvalid ?? null,
+            w.__featherSubmitted === true,
+          ] as const;
         });
       } catch (error) {
         // The old document's context is already gone: a navigation is under
@@ -456,9 +515,10 @@ export class PlaywrightDriver
           throw error;
         }
         state = "new-document";
+        submitted = true;
       }
       if (state === "staying" && navigations.length === 0) {
-        return blocked;
+        return { blocked, submitted };
       }
       if (state === "leaving" && navigations.length === 0) {
         // The page signalled it is leaving; make sure a navigation of this
@@ -473,7 +533,7 @@ export class PlaywrightDriver
             () => false,
           );
         if (!started) {
-          return null;
+          return { blocked: null, submitted };
         }
       }
 
@@ -543,7 +603,7 @@ export class PlaywrightDriver
             (error instanceof Error ? error.message.split("\n")[0] : String(error)),
         );
       }
-      return null;
+      return { blocked: null, submitted: true };
     } finally {
       this.page.off("request", onRequest);
       this.page.off("requestfinished", onFinished);
@@ -743,35 +803,35 @@ export class PlaywrightDriver
     const verb = `assertSubmitBlocked('${label}')`;
     const field = this.fieldByLabelOrPlaceholder(label).first();
     await field.waitFor({ state: "attached", timeout: this.timeout });
-    // As Enter in the field would: the form's default submit button, with
-    // the browser's own constraint validation.
-    const blocked = await this.waitingForNewDocument(() =>
-      field.evaluate((el) => {
-        const form = (el as HTMLInputElement).form;
-        if (!form) throw new Error("the field is not in a form");
-        const button = Array.from(form.elements).find(
-          (c) =>
-            (c instanceof HTMLButtonElement && c.type === "submit") ||
-            (c instanceof HTMLInputElement && (c.type === "submit" || c.type === "image")),
-        ) as HTMLElement | undefined;
-        form.requestSubmit(button);
-      }),
+    // Enter in the field: the browser's own implicit submission (the
+    // default button's click handlers run; a disabled default button, or
+    // several text fields and no button, submit nothing).
+    const { blocked, submitted } = await this.waitingForNewDocument(() =>
+      field.press("Enter", this.navigatingActionOptions()),
     );
-    if (!blocked) {
+    if (blocked) {
+      const byThisField = await field.evaluate(
+        (el) => (window as MarkedWindow).__featherInvalidEl === el,
+      );
+      if (!byThisField) {
+        throw new Error(`${verb}: the form was blocked by '${blocked.label}', not by '${label}'.`);
+      }
+      if (!blocked.valueMissing) {
+        throw new Error(
+          `${verb}: '${label}' blocked the form, but not because it is required: ${blocked.message}`,
+        );
+      }
+      return;
+    }
+    if (submitted) {
       throw new Error(`${verb}: the form was sent — '${label}' did not stop it.`);
     }
-    const byThisField = await field.evaluate(
-      (el) => (window as MarkedWindow).__featherInvalidEl === el,
+    throw new Error(
+      `${verb}: nothing would submit — Enter in '${label}' does not submit its form ` +
+        "(its default button is disabled, or it has no submit button and more than one text field).",
     );
-    if (!byThisField) {
-      throw new Error(`${verb}: the form was blocked by '${blocked.label}', not by '${label}'.`);
-    }
-    if (!blocked.valueMissing) {
-      throw new Error(
-        `${verb}: '${label}' blocked the form, but not because it is required: ${blocked.message}`,
-      );
-    }
   }
+
 
   async submit(opts?: StepOptions): Promise<void> {
     if (!this.lastFormLocator) {

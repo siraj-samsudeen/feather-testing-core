@@ -2121,3 +2121,37 @@ test.describe("assertValue on a missing field", () => {
     expect(Date.now() - started).toBeLessThan(10_000);
   });
 });
+
+test.describe("a refused submit is only a submit attempt's refusal", () => {
+  test("a type=button that checks validity (a wizard's Next) does not fail the step", async ({
+    page,
+  }) => {
+    await page.route("**/wizard", (route) =>
+      route.fulfill({
+        contentType: "text/html",
+        body: `<form id="w"><label for="t">Title</label><input id="t" required>
+          <button type="button" onclick="document.getElementById('w').reportValidity()">Next</button></form>
+          <form id="other"><label for="q">Query</label><input id="q"><button type="button">Preview</button></form>`,
+      }),
+    );
+    await createSession(page, { timeout: 1000 })
+      .visit("/wizard")
+      .clickButton("Next")
+      .assertPath("/wizard");
+  });
+
+  test("invalid fields of another form do not fail this form's submit", async ({ page }) => {
+    await page.route("**/two-forms", (route) =>
+      route.fulfill({
+        contentType: "text/html",
+        body: `<form id="a"><label for="t">Title</label><input id="t" required></form>
+          <form id="b" onsubmit="event.preventDefault(); document.getElementById('a').checkValidity(); document.getElementById('done').textContent = 'Searched'">
+            <label for="q">Query</label><input id="q"><button>Search</button></form><p id="done"></p>`,
+      }),
+    );
+    await createSession(page, { timeout: 1000 })
+      .visit("/two-forms")
+      .clickButton("Search")
+      .assertText("Searched");
+  });
+});
