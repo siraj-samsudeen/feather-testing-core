@@ -12,7 +12,7 @@ import type {
   UntilPredicate,
 } from "../types.js";
 import { BrowserOnlyVerbError } from "../errors.js";
-import { DEFAULT_TIMEOUT } from "../types.js";
+import { DEFAULT_TIMEOUT, withinCountMessage } from "../types.js";
 import { HIDDEN_VALUE } from "../secrets.js";
 import { RequestBrowser, type RequestHandler } from "./browser.js";
 import {
@@ -191,8 +191,7 @@ export class RequestDriver
       const matches = root.querySelectorAll<HTMLElement>(selector);
       if (matches.length !== 1) {
         throw new Error(
-          `within('${path.join("' > '")}'): expected exactly one element, ` +
-            `but found ${matches.length} on ${this.browser.describe()}.`,
+          withinCountMessage(path.join("' > '"), matches.length, this.browser.describe()),
         );
       }
       scope = matches[0];

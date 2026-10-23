@@ -80,6 +80,18 @@ export interface SessionOptions {
 /** The session timeout when none is set (and, for Playwright, outside its runner). */
 export const DEFAULT_TIMEOUT = 4000;
 
+/**
+ * The message for a within() selector that does not match exactly one
+ * element, shared by the adapters so they word it the same way.
+ */
+export function withinCountMessage(selector: string, count: number, where = ""): string {
+  return (
+    `within('${selector}'): the selector matched ${count} element${count === 1 ? "" : "s"}` +
+    `${where ? ` on ${where}` : ""}; it must match exactly one. Narrow the selector ` +
+    "(an id, a class, a data attribute), or use :first-of-type if the first one is really meant."
+  );
+}
+
 export interface QueuedStep {
   name: string;
   action: () => Promise<void>;

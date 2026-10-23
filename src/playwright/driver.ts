@@ -13,7 +13,7 @@ import type {
   UntilOptions,
   UntilPredicate,
 } from "../types.js";
-import { DEFAULT_TIMEOUT } from "../types.js";
+import { DEFAULT_TIMEOUT, withinCountMessage } from "../types.js";
 
 /** Context handed to custom step() callbacks in the Playwright adapter. */
 export interface PlaywrightStepContext {
@@ -984,7 +984,18 @@ export class PlaywrightDriver
     selector: string,
   ): Promise<TestDriver<PlaywrightStepContext, Page>> {
     const scopedLocator = this.scope.locator(selector);
-    await expect(scopedLocator).toBeAttached({ timeout: this.timeout });
+    // Exactly one element, as in the request adapter: wait for the first,
+    // then count. Several would leave every step inside ambiguous.
+    const appeared = await expect(scopedLocator.first())
+      .toBeAttached({ timeout: this.timeout })
+      .then(
+        () => true,
+        () => false,
+      );
+    const count = appeared ? await scopedLocator.count() : 0;
+    if (count !== 1) {
+      throw new Error(withinCountMessage(selector, count, this.page.url()));
+    }
     return new PlaywrightDriver(
       this.page,
       scopedLocator,

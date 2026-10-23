@@ -1033,10 +1033,10 @@ line two</textarea>
       const { driver } = driverFor({ "/": page });
       await driver.visit("/");
       await expect(driver.within(".nope")).rejects.toThrow(
-        "within('.nope'): expected exactly one element, but found 0 on GET http://localhost/ (200).",
+        "within('.nope'): the selector matched 0 elements on GET http://localhost/ (200); it must match exactly one.",
       );
       await expect(driver.within("section")).rejects.toThrow(
-        "within('section'): expected exactly one element, but found 2",
+        "within('section'): the selector matched 2 elements",
       );
     });
 

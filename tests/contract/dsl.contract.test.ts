@@ -537,6 +537,22 @@ for (const driver of drivers) {
       });
     }, TEST_TIMEOUT);
 
+    it("#51 within() needs exactly one match: several fail naming the count", async () => {
+      await withApp(async (h) => {
+        const error = await failure(h.session(FAST).visit("/list").within("li.item", (s) => s.assertText("One")));
+        expect(error.message).toContain("[FAILED] within('li.item')");
+        expect(error.message).toContain("matched 2 elements");
+        expect(error.message).toContain("Narrow the selector");
+      });
+    }, TEST_TIMEOUT);
+
+    it("#51 within() needs exactly one match: none fails naming the count", async () => {
+      await withApp(async (h) => {
+        const error = await failure(h.session(FAST).visit("/list").within("table", (s) => s.assertText("One")));
+        expect(error.message).toContain("matched 0 elements");
+      });
+    }, TEST_TIMEOUT);
+
     it("#56 step() and raw() run inside the chain", async () => {
       await withApp(async (h) => {
         const seen: string[] = [];
