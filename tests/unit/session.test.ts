@@ -1231,6 +1231,19 @@ describe("a field that is not there", () => {
   });
 });
 
+describe("fieldIsPassword()", () => {
+  it("is asked with the label and the step's own timeout, and nothing else", async () => {
+    const { driver } = createMockDriver();
+    const fieldIsPassword = vi.fn(async (..._args: unknown[]) => false);
+    driver.fieldIsPassword = fieldIsPassword;
+    await new Session(driver).fillIn("Name", "x", { timeout: 123 }).assertValue("Name", "x", { timeout: 45 });
+    expect(fieldIsPassword.mock.calls).toEqual([
+      ["Name", 123],
+      ["Name", 45],
+    ]);
+  });
+});
+
 describe("discard()", () => {
   it("drops queued steps that have not started and says how many; awaiting then runs nothing", async () => {
     const { driver, calls } = createMockDriver();

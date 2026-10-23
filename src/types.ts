@@ -190,8 +190,6 @@ export interface TestDriver<TContext = unknown, TNative = unknown> {
    */
   fieldIsPassword?(
     label: string,
-    /** Which step asks: a fill's budget is an action's, an assertion's an assertion's. */
-    purpose?: "fill" | "assert",
     /** The step's own timeout, when it set one. */
     timeout?: number,
   ): Promise<boolean>;

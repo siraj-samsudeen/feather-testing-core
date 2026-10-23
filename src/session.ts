@@ -354,8 +354,7 @@ export class Session<TContext = unknown, TNative = unknown>
         // Asked for every value step, secret or not: it also tells a missing
         // field apart from a failing fill or a value mismatch.
         try {
-          const purpose = verb === "assertValue" ? "assert" : "fill";
-          if (await this.driver.fieldIsPassword(label, purpose, timeout)) {
+          if (await this.driver.fieldIsPassword(label, timeout)) {
             hide();
           }
         } catch (error) {

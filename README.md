@@ -868,7 +868,7 @@ The RTL and request adapters' `debug()` print password inputs' values as `'â€¢â€
 
 Limits: see [Known limitations](#known-limitations). Secret values can still appear in other steps' error output, such as a Testing Library DOM dump or an error the app throws. Playwright's own trace and HTML report record every action with its arguments. Treat traces and reports from runs that type real credentials as secret.
 
-A custom `TestDriver` takes part in the password rule by implementing the optional `fieldIsPassword(label)` (asked before the step; it may wait for the field, and throws if it never appears) and `lastFilledFieldIsPassword()` (asked after a `fillIn`, at once). It gives the facts above for fields that are not secret by implementing the optional `fieldState(label)`: the field's value, whether it is disabled, read-only, visible and editable, and its kind, read at once, or `null` when not exactly one field matches.
+A custom `TestDriver` takes part in the password rule by implementing the optional `fieldIsPassword(label, timeout?)` (asked before the step with the step's own timeout, if it set one; it may wait for the field, and throws if it never appears) and `lastFilledFieldIsPassword()` (asked after a `fillIn`, at once). It gives the facts above for fields that are not secret by implementing the optional `fieldState(label)`: the field's value, whether it is disabled, read-only, visible and editable, and its kind, read at once, or `null` when not exactly one field matches.
 
 ## RTL Adapter Limitations
 
