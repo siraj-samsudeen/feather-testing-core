@@ -67,6 +67,10 @@ const pages: Pages = {
       <label for="due">Due</label><input id="due" name="due">
     </form>`,
   "/locked": `<form><label for="pw">Password</label><input id="pw" type="password" disabled></form>`,
+  "/two-passwords": `<form>
+      <label for="code">Login code</label><input id="code" type="password">
+      <input type="password" placeholder="Password"><input type="password" placeholder="Password">
+    </form>`,
   "/list": `<ul><li class="item">One</li><li class="item">Two</li></ul>`,
   "/first-hidden": `<p class="msg" hidden>Old notice</p><p class="msg">New notice</p>`,
   "/dialog": `<p>Behind the dialog</p>
@@ -282,7 +286,7 @@ for (const driver of drivers) {
         );
         // Which field the value was for is unknown, so it is hidden too.
         expect(error.message).toContain(`[FAILED] fillIn('Code', '${HIDDEN}')`);
-        expect(error.message).toContain("2 fields are labelled 'Code'");
+        expect(error.message).toContain("2 fields match 'Code'");
       });
     }, TEST_TIMEOUT);
 
@@ -736,7 +740,7 @@ for (const driver of drivers) {
       await withApp(async (h) => {
         const error = await failure(h.session(FAST).visit("/locked").fillIn("Password", FAKE_SECRET));
         expect(error.message).toContain(`[FAILED] fillIn('Password', '${HIDDEN}')`);
-        expect(error.message).toContain("failed on a secret field (the field labelled 'Password')");
+        expect(error.message).toContain("failed on the field labelled 'Password' (a secret field)");
         expect(error.message).not.toContain(FAKE_SECRET);
         expect(String((error.cause as Error).message)).not.toContain(FAKE_SECRET);
       });
@@ -760,6 +764,34 @@ for (const driver of drivers) {
         expect(text).not.toContain(FAKE_SECRET);
       });
     }, TEST_TIMEOUT);
+
+    for (const [what, step, expected] of [
+      ["missing", "No such field", "no field labelled 'No such field'"],
+      ["ambiguous", "Password", "2 fields match 'Password'"],
+    ] as const) {
+      it(`#12 a ${what} field: fillIn and assertValue report only our own facts, never a value`, async () => {
+        await withApp(async (h) => {
+          for (const verb of ["fillIn", "assertValue"] as const) {
+            const failed: string[] = [];
+            const session = h
+              .session({
+                ...FAST,
+                onStep: (e) => e.status === "failed" && failed.push(String((e.error as Error)?.message)),
+              })
+              .visit("/two-passwords")
+              .fillIn("Login code", FAKE_SECRET);
+            const error = await failure(
+              verb === "fillIn" ? session.fillIn(step, "other-secret-77") : session.assertValue(step, "other-secret-77"),
+            );
+            expect(error.message).toContain(expected);
+            expect(error.message).toContain("debug()");
+            const text = [error.message, String(error.stack), String((error.cause as Error)?.message), String((error.cause as Error)?.stack), ...failed].join("\n");
+            expect(text).not.toContain(FAKE_SECRET);
+            expect(text).not.toContain("other-secret-77");
+          }
+        });
+      }, TEST_TIMEOUT);
+    }
 
     it("#56 step() and raw() run inside the chain", async () => {
       await withApp(async (h) => {

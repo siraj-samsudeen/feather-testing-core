@@ -1638,3 +1638,47 @@ describe("assertValue with an empty expected value on a password field", () => {
     expect(text).not.toContain(SECRET);
   });
 });
+
+describe("missing and ambiguous fields never forward a DOM dump", () => {
+  afterEach(cleanup);
+
+  function TwoPasswords() {
+    const [code, setCode] = useState("");
+    return (
+      <form>
+        <label htmlFor="code">Login code</label>
+        <input id="code" type="password" value={code} onChange={(e) => setCode(e.target.value)} />
+        <input type="password" placeholder="Password" />
+        <input type="password" placeholder="Password" />
+      </form>
+    );
+  }
+
+  it.each([
+    ["missing", "No such field", "no field labelled 'No such field'"],
+    ["ambiguous", "Password", "fields match 'Password'"],
+  ])("%s: fillIn and assertValue report only our own facts", async (_what, label, expected) => {
+    const SECRET = "fake-secret-value-123";
+    for (const verb of ["fillIn", "assertValue"] as const) {
+      render(<TwoPasswords />);
+      const failed: string[] = [];
+      const session = createSession({
+        timeout: 300,
+        onStep: (e) => {
+          if (e.status === "failed") failed.push(String((e.error as Error).message));
+        },
+      }).fillIn("Login code", SECRET);
+      const error = await (verb === "fillIn" ? session.fillIn(label, "x") : session.assertValue(label, "x"))
+        .run()
+        .then(
+          () => null,
+          (e: unknown) => e as StepError,
+        );
+      expect(error).toBeInstanceOf(StepError);
+      expect(error!.message).toContain(expected);
+      const text = [error!.message, String(error!.stack), String((error!.cause as Error)?.message), String((error!.cause as Error)?.stack), ...failed].join("\n");
+      expect(text).not.toContain(SECRET);
+      cleanup();
+    }
+  });
+});

@@ -1226,7 +1226,7 @@ describe("a field that is not there", () => {
       }),
     }).driver;
     const error = await failureOf(new Session(driver).assertValue("Code", "x"));
-    expect(error.message).toContain("assertValue('Code'): 2 fields are labelled 'Code'.");
+    expect(error.message).toContain("assertValue('Code'): 2 fields match 'Code'");
     expect(error.message).not.toContain("was found");
   });
 });

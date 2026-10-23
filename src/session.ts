@@ -15,7 +15,7 @@ import type {
   UntilPredicate,
 } from "./types.js";
 import { StepError } from "./errors.js";
-import { HIDDEN_VALUE, hideValueInError, labelLooksSecret } from "./secrets.js";
+import { HIDDEN_VALUE, labelLooksSecret } from "./secrets.js";
 
 /**
  * Verbs that take a human description exist so a failure names intent rather
@@ -47,14 +47,18 @@ function describe(expected: string | RegExp): string {
  * What a failed step on a secret field reports instead of the driver's
  * error, which can contain the value or part of it.
  */
-function withheldError(stepName: string, label: string): Error {
-  // The driver's message is never shown for a secret step, not even its
-  // first line: it can carry the value in a form exact-string hiding misses
-  // (trimmed, lower-cased, cut). Richer secret diagnostics: issue #16.
+/**
+ * fillIn and assertValue never forward a driver's text — on any path,
+ * secret field or not: it can quote a field's value (in a form exact
+ * hiding misses: trimmed, lower-cased, cut) or dump the page with every
+ * value in it. Their errors are built from the session's own facts only.
+ * Richer diagnostics for secret fields: issue #16.
+ */
+function ownFactsError(stepName: string, label: string, secretField: boolean): Error {
   return new Error(
-    `${stepName} failed on a secret field (the field labelled '${label}'). The driver's ` +
-      "message is not shown, because it can contain the field's value. Re-run the step " +
-      "on a non-secret field, or with debug(), to see why.",
+    `${stepName} failed on the field labelled '${label}'${secretField ? " (a secret field)" : ""}. ` +
+      "The driver's message is not shown for fillIn and assertValue: it can quote a field's " +
+      "value or a dump of the page. Run debug() to see the page.",
   );
 }
 
@@ -312,17 +316,18 @@ export class Session<TContext = unknown, TNative = unknown>
           // hide a non-empty value, and fail saying the field was not found
           // instead of waiting for the same field a second time.
           hide();
-          const scrubbed = hideValueInError(error, value);
-          // The driver's lookup detail, without a verb prefix of its own.
-          const detail = (
-            scrubbed instanceof Error ? scrubbed.message : String(scrubbed)
-          ).replace(/^\w+\('[^']*'\): /, "");
-          const ambiguous = /fields are labelled|multiple elements/i.test(detail);
+          // Only our own facts: whether one, none or several matched, and
+          // how many when the driver says. Its text (a DOM dump, say) is
+          // never forwarded.
+          const detail = error instanceof Error ? error.message : String(error);
+          const count = /(\d+) fields? (?:are labelled|match)/i.exec(detail)?.[1];
+          const several = count !== undefined || /multiple elements/i.test(detail);
           fieldNotFound = new Error(
-            ambiguous
-              ? `${verb}('${label}'): ${detail}`
-              : `${verb}('${label}'): no field labelled '${label}' (or with ` +
-                  `that placeholder) was found. ${detail}`,
+            several
+              ? `${verb}('${label}'): ${count ?? "several"} fields match '${label}' — scope the ` +
+                  "step with within(selector, ...) to pick one. Run debug() to see the page."
+              : `${verb}('${label}'): no field labelled '${label}' (or with that placeholder) ` +
+                  "was found. Run debug() to see the page.",
           );
         }
       },
@@ -336,10 +341,7 @@ export class Session<TContext = unknown, TNative = unknown>
           if (askAfterRun && (await this.lastFilledFieldIsPassword())) {
             hide();
           }
-          if (secretField) {
-            throw withheldError(nameHidingValue, label);
-          }
-          throw error;
+          throw ownFactsError(step.name, label, secretField);
         }
         if (askAfterRun && (await this.lastFilledFieldIsPassword())) {
           hide();

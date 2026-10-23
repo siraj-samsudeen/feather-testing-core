@@ -20,7 +20,9 @@ describe("a secret fillIn that fails", () => {
     expect(error).toBeInstanceOf(StepError);
     expect(error!.message).not.toContain("hidden.person@example.com");
     expect(String((error!.cause as Error).message)).not.toContain("hidden.person");
-    expect(error!.message).toContain("fillIn('Backup email', '••••••') failed on a secret field");
+    expect(error!.message).toContain(
+      "fillIn('Backup email', '••••••') failed on the field labelled 'Backup email' (a secret field)",
+    );
     expect(error!.message).toContain("debug()");
   });
 });
