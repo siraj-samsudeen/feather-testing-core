@@ -1547,3 +1547,26 @@ describe("fillIn types { and [ literally", () => {
     expect(failed.join("\n")).not.toContain("private-fragment");
   });
 });
+
+describe("assertSubmitBlocked", () => {
+  afterEach(cleanup);
+
+  it("is not modelled by the RTL adapter: a browser-only verb error naming what to use", async () => {
+    render(
+      <form>
+        <label htmlFor="t">Title</label>
+        <input id="t" required />
+      </form>,
+    );
+    const error = await createSession()
+      .assertSubmitBlocked("Title")
+      .run()
+      .then(
+        () => null,
+        (e: unknown) => e as StepError,
+      );
+    expect(error).toBeInstanceOf(StepError);
+    expect(error!.cause).toBeInstanceOf(BrowserOnlyVerbError);
+    expect(error!.message).toContain("use the request or Playwright adapter");
+  });
+});

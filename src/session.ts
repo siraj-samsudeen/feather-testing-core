@@ -494,6 +494,24 @@ export class Session<TContext = unknown, TNative = unknown>
     });
   }
 
+  /**
+   * Submit the form the field labelled `label` belongs to (as Enter in that
+   * field would) and pass only if it is not sent because that required field
+   * is empty — the deliberate counterpart of the loud failure every other
+   * submit gives. Fails if the form is sent, or is held back by another field.
+   */
+  assertSubmitBlocked(label: string): this {
+    return this.enqueue(`assertSubmitBlocked('${label}')`, async () => {
+      if (!this.driver.assertSubmitBlocked) {
+        throw new Error(
+          `assertSubmitBlocked('${label}'): this adapter's driver does not implement it. ` +
+            "Use the request or Playwright adapter.",
+        );
+      }
+      await this.driver.assertSubmitBlocked(label);
+    });
+  }
+
   assertChecked(label: string): this {
     return this.enqueue(`assertChecked('${label}')`, () =>
       this.driver.assertChecked(label),

@@ -135,7 +135,6 @@ const session = createSession(app.handle /* or a Playwright page */, {
 | `debug()` | Saves a screenshot | Prints the HTML, password values hidden | |
 | A 204/205 answer to a form | The browser stays, but Playwright 1.64's locators then hang | Stays on the page | Upstream Playwright |
 | Name of a wrapping `<label>` with a `<select>` inside | Includes the option texts | Excludes them | Give such labels `for` |
-| An empty `required` field when submitting | The browser blocks it; the step passes | The step fails, naming the field | Undecided, see the parity doc |
 | `target` on a form or link (another window or frame) | This page stays; the other window loads | `BrowserOnlyVerbError`, naming the destination to `visit()` | One page per session |
 | Adapter-only options | `navigationTimeout`, `navigationStartWindow`, `replacedNavigationWindow`, the `@playwright/test` fixture | `close()` on the driver | |
 
@@ -428,6 +427,17 @@ await session
 ```
 
 In Playwright these are backed by `toHaveValue` / `toBeChecked` / `toHaveText`, so they auto-retry. The RTL adapter polls the DOM with `waitFor` for the same retry semantics.
+
+
+#### Required fields and `assertSubmitBlocked(label)`
+
+A submit (`clickButton`, `click`, `submit()`, `pressKey("Enter")`) that the browser refuses because a field is invalid fails loudly, naming the field: `form not sent: 'Title' is required`. Both adapters do this; on Playwright the adapter checks after the action that the form was not refused by constraint validation.
+
+When the refusal is what the spec is about, say so with `assertSubmitBlocked(label)`. It submits the form the field belongs to, as Enter in that field would. It passes only if the form is not sent because that field is required and empty. It fails if the form is sent, or held back by another field. The RTL adapter does not model constraint validation and throws `BrowserOnlyVerbError`.
+
+```ts
+await session.visit("/todos/new").assertSubmitBlocked("Title").fillIn("Title", "Write tests").clickButton("Add");
+```
 
 #### Exact whole-element text
 
@@ -941,6 +951,7 @@ Deliberate exceptions stay possible and stay visible: an `eslint-disable-next-li
 
 0.7.0 is in beta. Install it with `npm install feather-testing-core@0.7.0-beta.1`; see [Known limitations](#known-limitations) first.
 
+- **Breaking (Playwright adapter):** a submit the browser refuses because a field is invalid (an empty `required` field above all) now fails the step: `form not sent: 'Title' is required`. It used to pass silently. Where the refusal is the point of the spec, use the new `assertSubmitBlocked(label)`.
 - **More lenient (Playwright adapter):** `assertHas(selector)` passes when any matching element is visible; it used to need the first match to be visible. `count` and `refuteHas` still count every match, visible or not.
 - **Breaking (Playwright adapter):** `within(selector)` must match exactly one element, as in the request adapter. A selector matching none or several now fails the `within()` step, naming the count. Fix: narrow the selector (an id, a class, a data attribute), or use `:first-of-type` if the first one is really meant.
 - The optional peer dependency is now `playwright` (`>=1.64.0`, the version tested) instead of `@playwright/test` (`>=1.40.0`). `@playwright/test` installs `playwright`, so Playwright Test users on 1.64 or later change nothing; library users no longer need `@playwright/test`.

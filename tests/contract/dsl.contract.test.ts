@@ -49,6 +49,13 @@ const pages: Pages = {
       <label for="code">Login code</label><input id="code" name="code" type="password">
       <button>Send</button>
     </form>`,
+  "/required": `
+    <form method="post" action="/echo">
+      <label for="title">Title</label><input id="title" name="title" required>
+      <label for="due">Due</label><input id="due" name="due" required>
+      <label for="note">Note</label><input id="note" name="note">
+      <button>Add</button>
+    </form>`,
   "/list": `<ul><li class="item">One</li><li class="item">Two</li></ul>`,
   "/first-hidden": `<p class="msg" hidden>Old notice</p><p class="msg">New notice</p>`,
   "/dialog": `<p>Behind the dialog</p>
@@ -564,6 +571,48 @@ for (const driver of drivers) {
           .assertHas(".msg", { count: 2 });
         const error = await failure(h.session(FAST).visit("/first-hidden").assertHas(".msg", { text: "Old" }));
         expect(error.message).toContain("[FAILED] assertHas('.msg', text: 'Old')");
+      });
+    }, TEST_TIMEOUT);
+
+    it("#27 an empty required field stops the submit loudly, naming the field", async () => {
+      await withApp(async (h) => {
+        for (const submit of [
+          (s: ReturnType<Harness["session"]>) => s.clickButton("Add"),
+          (s: ReturnType<Harness["session"]>) => s.fillIn("Note", "x").pressKey("Enter"),
+        ]) {
+          const error = await failure(submit(h.session(FAST).visit("/required")));
+          expect(error.message).toContain("form not sent: 'Title' is required");
+        }
+        expect(h.app.requests.filter((r) => r.method === "POST")).toHaveLength(0);
+      });
+    }, TEST_TIMEOUT);
+
+    it("#27 assertSubmitBlocked passes when that required field stops the submit", async () => {
+      await withApp(async (h) => {
+        await h
+          .session()
+          .visit("/required")
+          .assertSubmitBlocked("Title")
+          .fillIn("Title", "Write tests")
+          .assertSubmitBlocked("Due")
+          .assertPath("/required");
+        expect(h.app.requests.filter((r) => r.method === "POST")).toHaveLength(0);
+      });
+    }, TEST_TIMEOUT);
+
+    it("#27 assertSubmitBlocked fails when another field stops it, or when the form is sent", async () => {
+      await withApp(async (h) => {
+        const other = await failure(h.session(FAST).visit("/required").assertSubmitBlocked("Due"));
+        expect(other.message).toContain("blocked by 'Title', not by 'Due'");
+        const sent = await failure(
+          h
+            .session(FAST)
+            .visit("/required")
+            .fillIn("Title", "a")
+            .fillIn("Due", "b")
+            .assertSubmitBlocked("Due"),
+        );
+        expect(sent.message).toContain("the form was sent");
       });
     }, TEST_TIMEOUT);
 

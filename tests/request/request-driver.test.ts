@@ -478,7 +478,7 @@ line two</textarea>
       });
       await driver.visit("/");
       await expect(driver.clickButton("Add")).rejects.toThrow(
-        "clickButton('Add'): a browser would not submit this form: 'Title' is required but empty.",
+        "clickButton('Add'): form not sent: 'Title' is required",
       );
       expect(app.requests).toHaveLength(1);
       await driver.clickButton("Skip checks");

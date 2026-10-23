@@ -220,7 +220,7 @@ export class RequestBrowser {
     const missing = firstMissingRequired(form, submitter, this.files);
     if (missing) {
       throw new Error(
-        `${verb}: a browser would not submit this form: '${describeControl(missing)}' is required but empty.`,
+        `${verb}: form not sent: '${describeControl(missing)}' is required (a browser does not send a form with an empty required field).`,
       );
     }
     // method="dialog" (or the submitter's formmethod="dialog") closes the

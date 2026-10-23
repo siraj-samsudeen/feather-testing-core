@@ -212,6 +212,12 @@ export interface TestDriver<TContext = unknown, TNative = unknown> {
     predicate: UntilPredicate<TContext>,
     opts?: UntilOptions,
   ): Promise<void>;
+  /**
+   * Optional: submit the form the field labelled `label` belongs to, and
+   * pass only if it is not sent because that field is required and empty.
+   * Fail if the form is sent, or held back by another field.
+   */
+  assertSubmitBlocked?(label: string): Promise<void>;
   step(fn: (context: TContext) => Promise<unknown>): Promise<void>;
   /** Hand the caller the adapter's own driving handle, untyped by the DSL. */
   raw(fn: (native: TNative) => unknown | Promise<unknown>): Promise<void>;

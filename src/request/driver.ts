@@ -19,6 +19,7 @@ import {
   accessibleName,
   baseUrl,
   controlLabels,
+  describeControl,
   formOwner,
   inputType,
   isDisabled,
@@ -28,6 +29,7 @@ import {
 } from "./dom.js";
 import {
   attachedFile,
+  firstMissingRequired,
   formControls,
   isButtonElement,
   isResetButton,
@@ -628,6 +630,31 @@ export class RequestDriver
 
   /** Submit the form the latest form verb touched, finding its submit
    * control the same way the Playwright adapter does. */
+  async assertSubmitBlocked(label: string): Promise<void> {
+    const verb = `assertSubmitBlocked('${label}')`;
+    const field = this.findField(label, verb);
+    const form = formOwner(field);
+    if (!form) {
+      throw new Error(`${verb}: the field labelled '${label}' is not in a form.`);
+    }
+    // As Enter in the field would: the form's default (first) submit button.
+    const submitter =
+      formControls(form).find((el) => isButtonElement(el) && isSubmitButton(el)) ?? null;
+    const blocking = firstMissingRequired(form, submitter, this.browser.files);
+    if (blocking === field) {
+      return; // Not sent, because of this field: nothing is requested.
+    }
+    if (blocking) {
+      throw new Error(
+        `${verb}: the form was blocked by '${describeControl(blocking)}', not by '${label}'.`,
+      );
+    }
+    // Nothing blocks it: a browser would send it, so the session does too.
+    this.requireFormInThisWindow(verb, form, submitter);
+    await this.browser.submit(verb, form, submitter);
+    throw new Error(`${verb}: the form was sent — '${label}' did not stop it.`);
+  }
+
   async submit(): Promise<void> {
     const verb = "submit()";
     const form = this.lastForm;

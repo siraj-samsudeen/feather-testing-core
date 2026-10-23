@@ -106,7 +106,24 @@ type MarkedWindow = {
   __featherStoppedWaits?: Set<string>;
   __featherLeaving?: boolean;
   __featherListening?: boolean;
+  /** The first control that blocked a submission during the action. */
+  __featherInvalid?: BlockedSubmit | null;
+  __featherInvalidEl?: Element | null;
 };
+
+/** A submission the browser refused because a control was invalid. */
+interface BlockedSubmit {
+  label: string;
+  valueMissing: boolean;
+  message: string;
+}
+
+/** What a submit that the browser refused fails with (same wording as the request adapter). */
+function blockedSubmitMessage(blocked: BlockedSubmit): string {
+  return blocked.valueMissing
+    ? `form not sent: '${blocked.label}' is required (a browser does not send a form with an empty required field).`
+    : `form not sent: '${blocked.label}' is invalid: ${blocked.message}`;
+}
 
 /**
  * Playwright matches a bare string name/label/text as a case-insensitive
@@ -211,8 +228,33 @@ export class PlaywrightDriver
         const w = window as MarkedWindow;
         w.__featherDocumentBeforeAction = true;
         w.__featherLeaving = false;
+        w.__featherInvalid = null;
+        w.__featherInvalidEl = null;
         if (w.__featherListening) return;
         w.__featherListening = true;
+        // A submission blocked by constraint validation fires 'invalid' on
+        // each invalid control (it does not bubble, so capture); the first
+        // is the one the browser reports.
+        window.addEventListener(
+          "invalid",
+          (event) => {
+            if (w.__featherInvalid) return;
+            const el = event.target as HTMLInputElement;
+            const label =
+              (el.labels?.[0]?.textContent ?? "").replace(/\s+/g, " ").trim() ||
+              el.getAttribute("aria-label") ||
+              el.getAttribute("placeholder") ||
+              el.getAttribute("name") ||
+              el.tagName.toLowerCase();
+            w.__featherInvalid = {
+              label,
+              valueMissing: el.validity?.valueMissing === true,
+              message: el.validationMessage ?? "",
+            };
+            w.__featherInvalidEl = el;
+          },
+          true,
+        );
         // Window bubble phase: runs after the form's own submit handlers.
         window.addEventListener("submit", (event) => {
           if (event.defaultPrevented) return;
@@ -291,7 +333,22 @@ export class PlaywrightDriver
    * that ends without a new document — a 204/205 response, a download, or a
    * failed request no newer navigation replaced — ends the wait.
    */
-  private async waitingForNewDocument(action: () => Promise<void>): Promise<void> {
+  /**
+   * Run an action that may submit a form or leave the page (see
+   * waitingForNewDocument), and fail loudly when the browser refused to send
+   * the form because a field is invalid — an empty required field above all.
+   */
+  private async acting(action: () => Promise<void>): Promise<void> {
+    const blocked = await this.waitingForNewDocument(action);
+    if (blocked) {
+      throw new Error(blockedSubmitMessage(blocked));
+    }
+  }
+
+  /** Returns the blocked submission, if the action's form was refused. */
+  private async waitingForNewDocument(
+    action: () => Promise<void>,
+  ): Promise<BlockedSubmit | null> {
     await this.markDocumentBeforeAction();
 
     const navigations: Request[] = [];
@@ -339,11 +396,12 @@ export class PlaywrightDriver
       await action();
 
       let state: "new-document" | "leaving" | "staying";
+      let blocked: BlockedSubmit | null = null;
       try {
-        state = await this.page.evaluate(() => {
+        [state, blocked] = await this.page.evaluate(() => {
           const w = window as MarkedWindow;
-          if (!w.__featherDocumentBeforeAction) return "new-document";
-          return w.__featherLeaving ? "leaving" : "staying";
+          if (!w.__featherDocumentBeforeAction) return ["new-document", null] as const;
+          return [w.__featherLeaving ? "leaving" : "staying", w.__featherInvalid ?? null] as const;
         });
       } catch (error) {
         // The old document's context is already gone: a navigation is under
@@ -354,7 +412,7 @@ export class PlaywrightDriver
         state = "new-document";
       }
       if (state === "staying" && navigations.length === 0) {
-        return;
+        return blocked;
       }
       if (state === "leaving" && navigations.length === 0) {
         // The page signalled it is leaving; make sure a navigation of this
@@ -369,7 +427,7 @@ export class PlaywrightDriver
             () => false,
           );
         if (!started) {
-          return;
+          return null;
         }
       }
 
@@ -439,6 +497,7 @@ export class PlaywrightDriver
             (error instanceof Error ? error.message.split("\n")[0] : String(error)),
         );
       }
+      return null;
     } finally {
       this.page.off("request", onRequest);
       this.page.off("requestfinished", onFinished);
@@ -499,13 +558,13 @@ export class PlaywrightDriver
   }
 
   async click(text: string): Promise<void> {
-    await this.waitingForNewDocument(() =>
+    await this.acting(() =>
       this.scope.getByText(text, EXACT).click(this.navigatingActionOptions()),
     );
   }
 
   async clickLink(text: string): Promise<void> {
-    await this.waitingForNewDocument(() =>
+    await this.acting(() =>
       this.scope
         .getByRole("link", { name: text, ...EXACT })
         .click(this.navigatingActionOptions()),
@@ -513,7 +572,7 @@ export class PlaywrightDriver
   }
 
   async clickButton(text: string): Promise<void> {
-    await this.waitingForNewDocument(() =>
+    await this.acting(() =>
       this.scope
         .getByRole("button", { name: text, ...EXACT })
         .click(this.navigatingActionOptions()),
@@ -631,6 +690,40 @@ export class PlaywrightDriver
     this.lastFormLocator = this.scope.locator("form", { has: radio });
   }
 
+  async assertSubmitBlocked(label: string): Promise<void> {
+    const verb = `assertSubmitBlocked('${label}')`;
+    const field = this.fieldByLabelOrPlaceholder(label).first();
+    await field.waitFor({ state: "attached", timeout: this.timeout });
+    // As Enter in the field would: the form's default submit button, with
+    // the browser's own constraint validation.
+    const blocked = await this.waitingForNewDocument(() =>
+      field.evaluate((el) => {
+        const form = (el as HTMLInputElement).form;
+        if (!form) throw new Error("the field is not in a form");
+        const button = Array.from(form.elements).find(
+          (c) =>
+            (c instanceof HTMLButtonElement && c.type === "submit") ||
+            (c instanceof HTMLInputElement && (c.type === "submit" || c.type === "image")),
+        ) as HTMLElement | undefined;
+        form.requestSubmit(button);
+      }),
+    );
+    if (!blocked) {
+      throw new Error(`${verb}: the form was sent — '${label}' did not stop it.`);
+    }
+    const byThisField = await field.evaluate(
+      (el) => (window as MarkedWindow).__featherInvalidEl === el,
+    );
+    if (!byThisField) {
+      throw new Error(`${verb}: the form was blocked by '${blocked.label}', not by '${label}'.`);
+    }
+    if (!blocked.valueMissing) {
+      throw new Error(
+        `${verb}: '${label}' blocked the form, but not because it is required: ${blocked.message}`,
+      );
+    }
+  }
+
   async submit(): Promise<void> {
     if (!this.lastFormLocator) {
       throw new Error(
@@ -643,7 +736,7 @@ export class PlaywrightDriver
       'button[type="submit"], input[type="submit"]',
     );
     if ((await submitBtn.count()) > 0) {
-      await this.waitingForNewDocument(() =>
+      await this.acting(() =>
         submitBtn.first().click(this.navigatingActionOptions()),
       );
       return;
@@ -653,7 +746,7 @@ export class PlaywrightDriver
       name: /submit/i,
     });
     if ((await byRole.count()) > 0) {
-      await this.waitingForNewDocument(() =>
+      await this.acting(() =>
         byRole.first().click(this.navigatingActionOptions()),
       );
     } else {
@@ -661,7 +754,7 @@ export class PlaywrightDriver
       const lastField = this.lastFormLocator
         .locator("input, textarea, select")
         .last();
-      await this.waitingForNewDocument(() =>
+      await this.acting(() =>
         lastField.press("Enter", this.navigatingActionOptions()),
       );
     }
@@ -679,7 +772,7 @@ export class PlaywrightDriver
   }
 
   async pressKey(key: string): Promise<void> {
-    await this.waitingForNewDocument(() => this.page.keyboard.press(key));
+    await this.acting(() => this.page.keyboard.press(key));
   }
 
   async hover(text: string): Promise<void> {

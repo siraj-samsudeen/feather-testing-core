@@ -205,6 +205,13 @@ export class RTLDriver implements TestDriver<RTLStepContext, RTLQueries> {
     this.lastFormElement = radio.closest("form");
   }
 
+  async assertSubmitBlocked(label: string): Promise<void> {
+    throw new BrowserOnlyVerbError(
+      `assertSubmitBlocked('${label}')`,
+      "Constraint validation on submit is not modelled here; use the request or Playwright adapter.",
+    );
+  }
+
   async submit(): Promise<void> {
     if (!this.lastFormElement) {
       throw new Error(
