@@ -123,6 +123,9 @@ export class Session<TContext = unknown, TNative = unknown>
   discard(): number {
     const dropped = this.steps.length;
     this.steps = [];
+    // The dropped steps were the last numbered; the next ones reuse their
+    // numbers, so a failure still reads "Step 1 of 1", not "Step 3 of 1".
+    this.stepIndex -= dropped;
     return dropped;
   }
 

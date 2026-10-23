@@ -1272,4 +1272,23 @@ describe("discard()", () => {
     expect(dropped).toBe(1);
     expect(calls).toEqual([]);
   });
+
+  it("numbers the steps of the next chain from where the discarded ones began", async () => {
+    const { driver } = createMockDriver({
+      assertText: vi.fn(async () => {
+        throw new Error("not there");
+      }),
+    });
+    const session = new Session(driver);
+    session.visit("/").clickButton("Go");
+    session.discard();
+    const error = await session
+      .assertText("Done")
+      .run()
+      .then(
+        () => null,
+        (e: unknown) => e as StepError,
+      );
+    expect(error!.message).toContain("Step 1 of 1 failed");
+  });
 });
