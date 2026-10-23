@@ -479,6 +479,16 @@ export class PlaywrightDriver
     this.fillProbe = { label, startedAt: Date.now() };
     const field = this.fieldByLabelOrPlaceholder(label);
     await field.first().waitFor({ state: "attached", timeout: this.timeout });
+    // Several matches: fill() would fail on strict mode, and which field the
+    // value was meant for is unknown, so say so now (the value stays hidden,
+    // as in the request adapter).
+    const count = await field.count();
+    if (count > 1) {
+      throw new Error(
+        `fillIn('${label}'): ${count} fields are labelled '${label}'. ` +
+          "Scope the step with within(selector, ...) to pick one.",
+      );
+    }
     return field.evaluateAll((elements) =>
       elements.some(
         (element) =>

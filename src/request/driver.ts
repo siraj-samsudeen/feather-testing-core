@@ -558,6 +558,16 @@ export class RequestDriver
     }
   }
 
+  /**
+   * Asked before fillIn's step starts, so the value is hidden from step
+   * names and onStep events from the first one. The page is already parsed,
+   * so the field is looked up once, as fillIn() will look it up; a field
+   * that is missing or ambiguous throws the same error fillIn() would.
+   */
+  async fillTargetIsPassword(label: string): Promise<boolean> {
+    return isInput(this.findField(label, `fillIn('${label}')`), "password");
+  }
+
   async lastFilledFieldIsPassword(): Promise<boolean> {
     return (
       this.lastFilledField !== null && isInput(this.lastFilledField, "password")

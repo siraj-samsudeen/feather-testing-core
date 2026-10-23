@@ -237,7 +237,9 @@ for (const driver of drivers) {
         const error = await failure(
           h.session(FAST).visit("/ambiguous").fillIn("Code", "x"),
         );
-        expect(error.message).toContain("[FAILED] fillIn('Code', 'x')");
+        // Which field the value was for is unknown, so it is hidden too.
+        expect(error.message).toContain(`[FAILED] fillIn('Code', '${HIDDEN}')`);
+        expect(error.message).toContain("2 fields are labelled 'Code'");
       });
     }, TEST_TIMEOUT);
 
@@ -394,6 +396,16 @@ for (const driver of drivers) {
           "started assertText('Nope')",
           "failed assertText('Nope')",
         ]);
+      });
+    }, TEST_TIMEOUT);
+
+    it("#13 onStep never sees a value typed into a password field", async () => {
+      await withApp(async (h) => {
+        const { events, onStep } = recorder();
+        await h.session({ onStep }).visit("/codes").fillIn("Login code", FAKE_SECRET);
+        expect(events).toContain(`started fillIn('Login code', '${HIDDEN}')`);
+        expect(events).toContain(`passed fillIn('Login code', '${HIDDEN}')`);
+        expect(events.join("\n")).not.toContain(FAKE_SECRET);
       });
     }, TEST_TIMEOUT);
 
