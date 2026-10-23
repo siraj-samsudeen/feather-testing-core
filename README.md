@@ -803,22 +803,25 @@ With the Playwright adapter, each queued step is also wrapped in `test.step()`, 
 
 ### Secrets in failure reports
 
-The chain prints the value each `fillIn` typed, because an ordinary value helps you debug. A secret value is shown as `'••••••'` instead — always six dots, so its length is hidden too. A value counts as secret when:
+The chain prints the value each `fillIn` typed and each `assertValue` expected, because an ordinary value helps you debug. A secret value is shown as `'••••••'` instead — always six dots, so its length is hidden too. An empty value is always shown as `''`. A value counts as secret when:
 
-| Rule | Example | Known |
-|------|---------|-------|
-| The label looks secret: it contains `password`, `passcode`, `secret`, `token` or `api key` (also `api_key`, `apikey`), or the whole word `pin` or `otp`, in any case | `fillIn('Password:', pw)` | before the step runs |
-| You mark it sensitive | `fillIn('Recovery phrase', phrase, { sensitive: true })` | before the step runs |
-| The field turns out to be a password field (`type="password"`), whatever its label | `fillIn('Login code', code)` | once the step has run |
+| Rule | Example |
+|------|---------|
+| The label looks secret: it contains `password`, `passcode`, `secret`, `token` or `api key` (also `api_key`, `apikey`), or the whole word `pin` or `otp`, in any case | `fillIn('Password:', pw)` |
+| You mark it sensitive | `fillIn('Recovery phrase', phrase, { sensitive: true })` |
+| The field is a password field (`type="password"`), whatever its label | `fillIn('Login code', code)` |
 
-The real value is still typed; only what is printed changes. The hidden form is used in the chain, in `Failed at:`, and in the cause when the fill itself failed (Playwright's call log repeats the value as `fill("…")`, so the session replaces it there too). The RTL adapter's `debug()` also prints password inputs' values as `'••••••'`.
+The driver checks the field before the step starts. So the hidden form is used everywhere the step's name appears: the chain, `Failed at:`, `onStep` events and Playwright `test.step()` titles. Skipped steps and steps a `within()` callback left unrun are always shown with their values hidden. The real value is still typed; only what is printed changes.
 
-Two limits to know about:
+When a `fillIn` on a secret field fails, the error keeps the first line of the driver's message (why: disabled, not found, timed out), with the value hidden. The whole message is withheld when it could hold the value:
+- `assertValue`, whose message can quote the value found;
+- Testing Library's key-syntax errors, which quote fragments.
 
-- The first two rules also keep the value out of the Playwright `test.step()` title. The third can't: the title is written before the step runs, so a password field with an ordinary-looking label gets its value in the title. Name the field's label, or pass `{ sensitive: true }`, when that matters.
-- Playwright's own trace and HTML report record every action with its arguments, including its own `Fill "…"` step, whatever this library does. Treat traces and HTML reports from runs that type real credentials as secret, or sign in with throwaway test accounts.
+The RTL and request adapters' `debug()` print password inputs' values as `'••••••'`.
 
-A custom `TestDriver` can take part in the third rule by implementing the optional `lastFilledFieldIsPassword()`: answer at once, without waiting, whether the field the most recent `fillIn()` targeted is a password field. Without it, the label rule and `{ sensitive: true }` still apply.
+Limits: see [Known limitations](#known-limitations). Secret values can still appear in other steps' error output, such as a Testing Library DOM dump or an error the app throws. Playwright's own trace and HTML report record every action with its arguments. Treat traces and reports from runs that type real credentials as secret.
+
+A custom `TestDriver` takes part in the password rule by implementing the optional `fieldIsPassword(label)` (asked before the step; it may wait for the field, and throws if it never appears) and `lastFilledFieldIsPassword()` (asked after a `fillIn`, at once).
 
 ## RTL Adapter Limitations
 
