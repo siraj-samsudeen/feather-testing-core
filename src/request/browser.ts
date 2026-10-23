@@ -145,6 +145,12 @@ export class RequestBrowser {
         continue;
       }
 
+      // 204 No Content / 205 Reset Content: a browser stays on the page it
+      // was on (no new document), so the session does too.
+      if (response.status === 204 || response.status === 205) {
+        return;
+      }
+
       const disposition = response.headers.get("content-disposition") ?? "";
       if (init.download !== undefined || /^\s*attachment/i.test(disposition)) {
         // A browser saves an attachment and stays on the page it was on.

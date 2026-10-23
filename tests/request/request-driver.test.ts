@@ -496,6 +496,26 @@ line two</textarea>
     });
   });
 
+  describe("204 and 205 answers", () => {
+    // Parity row #22 (docs/ADAPTER_PARITY.md). Not a contract test: in
+    // Playwright 1.64 every locator waits forever for the 204 navigation to
+    // "finish" after such a submit, so the Playwright driver cannot check it.
+    it.each([204, 205])("a %i answer to a form keeps the page, as a browser does", async (status) => {
+      const { app, driver } = driverFor({
+        "/quiet": `<p>Stay here</p><form method="post" action="/nothing"><button>Send nothing</button></form>`,
+        "/nothing": () => new Response(null, { status }),
+      });
+      await driver.visit("/quiet");
+      await driver.clickButton("Send nothing");
+      await driver.assertPath("/quiet");
+      await driver.assertText("Stay here");
+      expect(app.requests.map((r) => `${r.method} ${new URL(r.url).pathname}`)).toEqual([
+        "GET /quiet",
+        "POST /nothing",
+      ]);
+    });
+  });
+
   describe("attachFile()", () => {
     const upload = `
       <form method="post" action="/echo" enctype="multipart/form-data">
