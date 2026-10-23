@@ -223,7 +223,8 @@ describe("defineTest", () => {
     });
     test("plain", async ({}) => undefined);
     test.with({ headed: true } as never)("headed", async ({}) => undefined);
-    expect(tests.map((t) => t.timeout)).toEqual([undefined, 120_000]);
+    // Without one, the engine's own default (30 s) is handed to the runner.
+    expect(tests.map((t) => t.timeout)).toEqual([30_000, 120_000]);
   });
 
   it("a .with() that changes a file-scoped fixture's option gets its own instance; others share it", async () => {
@@ -315,5 +316,82 @@ describe("defineTest", () => {
     });
     await expect(run("first")).rejects.toThrow("first setup fails");
     await run("second");
+  });
+
+  describe("timeouts", () => {
+    /** Resolves after `ms`; for building hung fixtures, not for waiting in tests. */
+    // eslint-disable-next-line feather-testing/no-wait-for-timeout -- builds a deliberately slow fixture; no test waits on it
+    const after = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+    it("a hung test body is abandoned before the runner's timeout, and its fixtures are torn down", async () => {
+      const { runner, run } = recordingRunner();
+      const log: string[] = [];
+      const test = defineTest(
+        runner,
+        {
+          server: async ({}, use: (v: number) => Promise<void>) => {
+            await use(1);
+            log.push("server torn down");
+          },
+        } as never,
+        { testTimeout: 400 },
+      );
+      test("hangs", async ({ server }: { server: number }) => {
+        void server;
+        await new Promise(() => undefined); // never settles
+      });
+      const started = Date.now();
+      await expect(run("hangs")).rejects.toThrow("did not finish within 400ms");
+      expect(Date.now() - started).toBeLessThan(400);
+      expect(log).toEqual(["server torn down"]);
+    });
+
+    it("a hung teardown is reported and the other teardowns still run", async () => {
+      const { runner, run } = recordingRunner();
+      const log: string[] = [];
+      const test = defineTest(
+        runner,
+        {
+          first: async ({}, use: (v: number) => Promise<void>) => {
+            await use(1);
+            log.push("first torn down");
+          },
+          stuck: async ({ first }: { first: number }, use: (v: number) => Promise<void>) => {
+            await use(first);
+            await new Promise(() => undefined); // teardown never finishes
+          },
+        } as never,
+        { teardownTimeout: 100 },
+      );
+      test("uses both", async ({ stuck }: { stuck: number }) => void stuck);
+      await expect(run("uses both")).rejects.toThrow(
+        "fixture 'stuck': teardown did not finish within 100ms",
+      );
+      expect(log).toEqual(["first torn down"]);
+    });
+
+    it("a setup that finishes after the test was abandoned is torn down when it does", async () => {
+      const { runner, run } = recordingRunner();
+      const log: string[] = [];
+      let tornDown!: () => void;
+      const teardownRan = new Promise<void>((resolve) => (tornDown = resolve));
+      const test = defineTest(
+        runner,
+        {
+          slow: async ({}, use: (v: number) => Promise<void>) => {
+            await after(600);
+            log.push("slow set up");
+            await use(1);
+            log.push("slow torn down");
+            tornDown();
+          },
+        } as never,
+        { testTimeout: 300 },
+      );
+      test("waits for slow", async ({ slow }: { slow: number }) => void slow);
+      await expect(run("waits for slow")).rejects.toThrow("did not finish within 300ms");
+      await teardownRan; // the test's own timeout fails it if this never happens
+      expect(log).toEqual(["slow set up", "slow torn down"]);
+    });
   });
 });
