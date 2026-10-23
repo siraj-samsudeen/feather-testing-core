@@ -5,7 +5,7 @@
  * can be checked step by step, failing tests included.
  */
 import { describe, expect, it } from "vitest";
-import { defineTest, destructuredNames, type Runner } from "../../src/fixtures/engine.js";
+import { defineTest, destructuredNames, value, type Runner } from "../../src/fixtures/engine.js";
 
 /** A runner that only records: run its tests and afterAll hooks by hand. */
 function recordingRunner() {
@@ -226,7 +226,7 @@ describe("defineTest", () => {
     );
     const got: string[] = [];
     base("defined", async ({ label }: { label: string }) => void got.push(label));
-    base.with({ browserName: "webkit" } as never)("with", async ({ label }: { label: string }) => void got.push(label));
+    base.with({ browserName: "webkit" })("with", async ({ label }: { label: string }) => void got.push(label));
     base
       .extend({ shout: async ({ label }: { label: string }, use: (v: string) => Promise<void>) => use(label.toUpperCase()) } as never)
       ("extended", async ({ shout }: { shout: string }) => void got.push(shout));
@@ -242,7 +242,7 @@ describe("defineTest", () => {
       timeout: (o) => (o.headed ? 120_000 : undefined),
     });
     test("plain", async ({}) => undefined);
-    test.with({ headed: true } as never)("headed", async ({}) => undefined);
+    test.with({ headed: true })("headed", async ({}) => undefined);
     // The runner gets the test's budget plus the teardown allowance (10 s)
     // plus 1 s of slack; without a timeout, the engine's default is 30 s.
     expect(tests.map((t) => t.timeout)).toEqual([41_000, 131_000]);
@@ -264,8 +264,8 @@ describe("defineTest", () => {
     } as never);
     const got: string[] = [];
     test("plain", async ({ browser }: { browser: string }) => void got.push(browser));
-    test.with({ record: "on" } as never)("unrelated option", async ({ browser }: { browser: string }) => void got.push(browser));
-    test.with({ headed: true } as never)("headed", async ({ browser }: { browser: string }) => void got.push(browser));
+    test.with({ record: "on" })("unrelated option", async ({ browser }: { browser: string }) => void got.push(browser));
+    test.with({ headed: true })("headed", async ({ browser }: { browser: string }) => void got.push(browser));
     await run("plain");
     await run("unrelated option");
     await run("headed");
@@ -740,7 +740,7 @@ describe("defineTest", () => {
     it(".with() refuses a fixture that is not defined", () => {
       const { runner } = recordingRunner();
       const test = defineTest(runner, { headed: false } as never);
-      expect(() => test.with({ hedaed: true } as never)).toThrow(
+      expect(() => test.with({ hedaed: true })).toThrow(
         "test.with(): 'hedaed' is not a defined fixture (defined: headed)",
       );
     });
@@ -754,10 +754,10 @@ describe("defineTest", () => {
       } as never);
       const got: unknown[] = [];
       test
-        .with({ greeting: async ({}, use: (v: string) => Promise<void>) => use("from a fixture function") } as never)
+        .with({ greeting: async ({}, use: (v: string) => Promise<void>) => use("from a fixture function") })
         ("fixture fn", async ({ greeting }: { greeting: string }) => void got.push(greeting));
       test
-        .with({ handler: [handler, { value: true }] } as never)
+        .with({ handler: [handler, { value: true }] })
         ("value", async ({ handler: h }: { handler: (r: string) => string }) => void got.push(h("x")));
       await run("fixture fn");
       await run("value");
@@ -782,6 +782,46 @@ describe("defineTest", () => {
       expect(() =>
         test("rest", async ({ a, b, ...others }: Record<string, unknown>) => void [a, b, others]),
       ).toThrow(`test("rest", ["a", "b"], async ({ a, b }) => …)`);
+    });
+  });
+
+  describe("[definition, options] and value()", () => {
+    it("an array of two objects is a value, even when they have a 'value' key", async () => {
+      const { runner, run } = recordingRunner();
+      const rows = [{ value: "first" }, { value: "second" }];
+      const test = defineTest(runner, { rows } as never);
+      let got: unknown;
+      test("rows", async ({ rows: r }: { rows: unknown }) => {
+        got = r;
+      });
+      await run("rows");
+      expect(got).toEqual(rows);
+    });
+
+    it("[fn, {}] is a fixture function with no options", async () => {
+      const { runner, run } = recordingRunner();
+      const test = defineTest(runner, {
+        made: [async ({}, use: (v: string) => Promise<void>) => use("made"), {}],
+      } as never);
+      let got: unknown;
+      test("made", async ({ made }: { made: unknown }) => {
+        got = made;
+      });
+      await run("made");
+      expect(got).toBe("made");
+    });
+
+    it("value(x) makes anything a plain value: a function, or an ambiguous array", async () => {
+      const { runner, run } = recordingRunner();
+      const handler = (request: string) => `handled ${request}`;
+      const pair = [handler, {}];
+      const test = defineTest(runner, { handler: value(handler), pair: value(pair) } as never);
+      const got: unknown[] = [];
+      test("values", async ({ handler: h, pair: p }: { handler: typeof handler; pair: unknown }) => {
+        got.push(h("x"), p);
+      });
+      await run("values");
+      expect(got).toEqual(["handled x", pair]);
     });
   });
 });

@@ -33,6 +33,8 @@ import {
 } from "./engine.js";
 
 export {
+  FixtureValue,
+  value,
   DEFAULT_TEARDOWN_TIMEOUT,
   DEFAULT_TEST_TIMEOUT,
   defineTest,

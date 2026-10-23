@@ -358,7 +358,7 @@ test("adds a to-do", async () => {
 ```ts
 // test/fixtures.ts
 import { afterAll, test as bunTest } from "bun:test";
-import { defineCoreTest } from "feather-testing-core/fixtures";
+import { defineCoreTest, value } from "feather-testing-core/fixtures";
 import { makeApp } from "../src/app";
 
 export const test = defineCoreTest({ test: bunTest, afterAll }).extend({
@@ -367,7 +367,7 @@ export const test = defineCoreTest({ test: bunTest, afterAll }).extend({
     await use(`http://localhost:${app.server!.port}`);
     await app.stop();
   },
-  handler: [makeApp().handle, { value: true }], // a function used as a value
+  handler: value(makeApp().handle), // a function used as a value
 });
 
 // test/todos.test.ts
@@ -392,11 +392,11 @@ Core's fixtures:
 | `rtl` | test | An RTL-adapter session on what is rendered (needs a DOM) |
 
 **Defining your own.**
-- A fixture is a plain value, a function `async (fixtures, use, info) => { …; await use(value); …teardown }`, or either with options: `[fn, { scope: "file" }]`, `[aFunction, { value: true }]`.
+- A fixture is a plain value, a function `async (fixtures, use, info) => { …; await use(value); …teardown }`, or a function with options: `[fn, { scope: "file" }]`. To use a function (or anything that looks like `[fn, options]`) as a plain value, wrap it: `value(app.handle)`.
 - Its dependencies are the names its first parameter destructures (or `{ deps: [...] }`).
 - `.extend({...})` layers more fixtures on a test function, so other packages can build on core's.
-- `.with({ browserName: "firefox" })` gives a file its own values for fixtures that are already defined; an unknown name is an error. As in a definition, a function there is a fixture function, and a function value is `[fn, { value: true }]`. `defineTest(runner, fixtures, { overrides })` does the same for every test.
-- A two-item array is `[definition, options]` only when the second item has only option keys (`scope`, `deps`, `value`); otherwise it is a plain value (two cookies, say).
+- `.with({ browserName: "firefox" })` gives a file its own definitions for fixtures that are already defined; an unknown name is an error, in types and at runtime. It takes anything a definition takes: a value, a fixture function, `[fn, options]`, `value(x)`. `defineTest(runner, fixtures, { overrides })` does the same for every test.
+- A two-item array is `[fn, options]` only when its first item is a function and its second a plain object with only option keys (`scope`, `deps`, `value`; `{}` too). Anything else, such as two rows, is a plain value.
 - A file-scoped fixture is shared by the tests that see the same definitions of it and of what it depends on: changing `headed` with `.with()` gets its own browser, changing `record` does not.
 - In minified code, name the fixtures explicitly: `test(name, ["session"], fn)`.
 - Under Vitest, pass `currentSuite: getCurrentSuite` (from `"vitest/suite"`) with `test` and `afterAll`. Then the hook that tears down file-scoped fixtures is registered once per `describe`; otherwise it is registered once per test that uses one. bun:test has no such API.

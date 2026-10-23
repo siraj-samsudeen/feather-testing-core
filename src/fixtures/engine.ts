@@ -47,10 +47,25 @@ export type FixtureFn<T, F> = (
 ) => Promise<void>;
 
 /** One fixture: a plain value, a fixture function, or either with options. */
+/** A plain value, as value(x) wraps it: never taken for a fixture function or [fn, options]. */
+export class FixtureValue<T> {
+  constructor(readonly value: T) {}
+}
+
+/**
+ * Make `x` a fixture's plain value, whatever it looks like: a function
+ * (a request handler), or an array that looks like [fn, options].
+ */
+export function value<T>(x: T): FixtureValue<T> {
+  return new FixtureValue(x);
+}
+
 export type FixtureDef<T, F> =
   | T
   | FixtureFn<T, F>
-  | [T | FixtureFn<T, F>, FixtureOptions];
+  | FixtureValue<T>
+  | [FixtureFn<T, F>, FixtureOptions]
+  | [T, FixtureOptions & { value: true }];
 
 export type FixtureDefs<T, F> = { [K in keyof T]: FixtureDef<T[K], F> };
 
@@ -82,7 +97,7 @@ export interface TestFn<F> {
   /** A test function with more fixtures (or new definitions of these). */
   extend<G extends object>(fixtures: FixtureDefs<G, F & G>): TestFn<F & G>;
   /** The same fixtures with some values replaced (options, per file). */
-  with(overrides: Partial<F>): TestFn<F>;
+  with(overrides: { [K in keyof F]?: FixtureDef<F[K], F> }): TestFn<F>;
 }
 
 interface Definition {
@@ -332,15 +347,23 @@ const OPTION_KEYS = new Set(["scope", "deps", "value"]);
  * `[definition, options]`: a two-item array whose second item has only
  * fixture-option keys. Anything else — say two cookies — is a plain value.
  */
+/**
+ * `[definition, options]`: a two-item array whose first item is a function
+ * and whose second is a plain object with only option keys (`{}` too).
+ * Anything else — two rows, two cookies — is a plain value; wrap a value
+ * that would read as [fn, options] in value(x).
+ */
 function isWithOptions(def: unknown): def is [unknown, FixtureOptions] {
-  if (!Array.isArray(def) || def.length !== 2) return false;
+  if (!Array.isArray(def) || def.length !== 2 || typeof def[0] !== "function") return false;
   const options = def[1] as unknown;
-  if (options === null || typeof options !== "object" || Array.isArray(options)) return false;
-  const keys = Object.keys(options);
-  return keys.length > 0 && keys.every((key) => OPTION_KEYS.has(key));
+  if (options === null || typeof options !== "object") return false;
+  const proto = Object.getPrototypeOf(options);
+  if (proto !== Object.prototype && proto !== null) return false;
+  return Object.keys(options).every((key) => OPTION_KEYS.has(key));
 }
 
 function normalize(name: string, def: unknown): Definition {
+  if (def instanceof FixtureValue) return { fn: null, value: def.value, scope: "test", deps: [] };
   let body = def;
   let options: FixtureOptions = {};
   if (isWithOptions(def)) {
