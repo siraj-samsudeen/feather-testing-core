@@ -22,9 +22,22 @@ const NOT_RENDERED = new Set([
 
 /** Whether a browser would render this element at all, judged from markup
  * alone: `hidden`, `<template>`, `<script>`... and the same for an ancestor. */
+/**
+ * Whether `el` alone keeps itself and its contents off the page: a
+ * non-rendered tag, `hidden`, or a `<dialog>` that is not open (browsers
+ * show a dialog only while it has `open`, which method="dialog" removes).
+ */
+function hidesItself(el: Element): boolean {
+  return (
+    NOT_RENDERED.has(el.tagName) ||
+    el.hasAttribute("hidden") ||
+    (el.tagName === "DIALOG" && !el.hasAttribute("open"))
+  );
+}
+
 export function isRendered(element: Element): boolean {
   for (let el: Element | null = element; el; el = el.parentElement) {
-    if (NOT_RENDERED.has(el.tagName) || el.hasAttribute("hidden")) {
+    if (hidesItself(el)) {
       return false;
     }
     if (el.tagName === "INPUT" && (el as HTMLInputElement).type === "hidden") {
@@ -48,7 +61,7 @@ export function renderedText(node: Node, { withAlt = false } = {}): string {
         text += child.textContent ?? "";
       } else if (child.nodeType === 1) {
         const el = child as Element;
-        if (NOT_RENDERED.has(el.tagName) || el.hasAttribute("hidden")) continue;
+        if (hidesItself(el)) continue;
         if (withAlt && el.tagName === "IMG") {
           text += ` ${el.getAttribute("alt") ?? ""} `;
           continue;

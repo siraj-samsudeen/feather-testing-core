@@ -496,6 +496,30 @@ line two</textarea>
     });
   });
 
+  describe("a closed <dialog>", () => {
+    const page = `<p>Behind the dialog</p>
+      <dialog open><form method="dialog"><p>Are you sure?</p><button>Close</button></form></dialog>
+      <dialog><p>Never opened</p><button>Hidden button</button></dialog>`;
+
+    it("is not rendered: its text is not page text, before or after closing", async () => {
+      const { driver } = driverFor({ "/": page });
+      await driver.visit("/");
+      await driver.assertText("Are you sure?");
+      await driver.refuteText("Never opened");
+      await driver.clickButton("Close");
+      await driver.refuteText("Are you sure?");
+      await driver.assertText("Behind the dialog");
+    });
+
+    it("cannot be used: its buttons are not found", async () => {
+      const { driver } = driverFor({ "/": page });
+      await driver.visit("/");
+      await expect(driver.clickButton("Hidden button")).rejects.toThrow();
+      await driver.clickButton("Close");
+      await expect(driver.clickButton("Close")).rejects.toThrow();
+    });
+  });
+
   describe("204 and 205 answers", () => {
     // Parity row #22 (docs/ADAPTER_PARITY.md). Not a contract test: in
     // Playwright 1.64 every locator waits forever for the 204 navigation to

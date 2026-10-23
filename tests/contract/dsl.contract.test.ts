@@ -237,6 +237,14 @@ for (const driver of drivers) {
       });
     }, TEST_TIMEOUT);
 
+    it("#24 a closed dialog's buttons cannot be clicked", async () => {
+      await withApp(async (h) => {
+        const error = await failure(h.session(FAST).visit("/dialog").clickButton("Close").clickButton("Close"));
+        expect(error.message).toContain(">>> [FAILED] clickButton('Close')");
+        expect(error.message).toContain("[ok] clickButton('Close')");
+      });
+    }, TEST_TIMEOUT);
+
     it("#33 labels match exactly, not as substrings", async () => {
       await withApp(async (h) => {
         await h
