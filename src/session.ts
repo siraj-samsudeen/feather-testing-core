@@ -254,51 +254,75 @@ export class Session<TContext = unknown, TNative = unknown>
   }): this {
     const { verb, label, value, knownSecret, run, askAfterRun } = spec;
     const nameShowingValue = `${verb}('${label}', '${value}')`;
-    const nameHidingValue = `${verb}('${label}', '${HIDDEN_VALUE}')`;
+    // An empty value has nothing to hide: it is always shown as ''.
+    const nameHidingValue =
+      value === "" ? nameShowingValue : `${verb}('${label}', '${HIDDEN_VALUE}')`;
 
-    let fieldNotFound: unknown;
+    let hidden = false;
+    let fieldNotFound: Error | undefined;
+    const hide = () => {
+      hidden = value !== "";
+      step.name = nameHidingValue;
+    };
 
     const step: QueuedStep = {
-      name: knownSecret ? nameHidingValue : nameShowingValue,
+      name: nameShowingValue,
       nameHidingValue,
       index: this.stepIndex++,
       prepare: async () => {
-        if (knownSecret || !this.driver.fieldIsPassword) {
+        if (knownSecret) hide();
+        if (!this.driver.fieldIsPassword) {
           return;
         }
+        // Asked for every value step, secret or not: it also tells a missing
+        // field apart from a failing fill or a value mismatch.
         try {
           if (await this.driver.fieldIsPassword(label)) {
-            step.name = nameHidingValue;
+            hide();
           }
         } catch (error) {
           // The field never appeared, so whether it is secret is unknown:
-          // hide the value, and fail with this error instead of waiting for
-          // the same field a second time.
-          step.name = nameHidingValue;
-          fieldNotFound = error;
+          // hide a non-empty value, and fail saying the field was not found
+          // instead of waiting for the same field a second time.
+          hide();
+          const scrubbed = hideValueInError(error, value);
+          // The driver's lookup detail, without a verb prefix of its own.
+          const detail = (
+            scrubbed instanceof Error ? scrubbed.message : String(scrubbed)
+          ).replace(/^\w+\('[^']*'\): /, "");
+          const ambiguous = /fields are labelled|multiple elements/i.test(detail);
+          fieldNotFound = new Error(
+            ambiguous
+              ? `${verb}('${label}'): ${detail}`
+              : `${verb}('${label}'): no field labelled '${label}' (or with ` +
+                  `that placeholder) was found. ${detail}`,
+          );
         }
       },
       action: async () => {
         if (fieldNotFound !== undefined) {
-          // A lookup error names the label, not the value; scrub it anyway.
-          throw hideValueInError(fieldNotFound, value);
+          throw fieldNotFound;
         }
         try {
           await run();
         } catch (error) {
           if (askAfterRun && (await this.lastFilledFieldIsPassword())) {
-            step.name = nameHidingValue;
+            hide();
           }
-          if (step.name === nameHidingValue) {
+          if (hidden) {
             throw withheldError(nameHidingValue);
           }
           throw error;
         }
         if (askAfterRun && (await this.lastFilledFieldIsPassword())) {
-          step.name = nameHidingValue;
+          hide();
         }
       },
     };
+    if (knownSecret) {
+      // Known before the step runs: hidden from the moment it is queued.
+      hide();
+    }
     this.steps.push(step);
     return this;
   }

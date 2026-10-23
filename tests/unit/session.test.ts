@@ -1166,3 +1166,63 @@ describe("steps that never ran keep typed values hidden", () => {
     expect(failed.join("\n")).not.toContain(SECRET);
   });
 });
+
+describe("a field that is not there", () => {
+  /** A driver whose field lookup fails the way a missing field does. */
+  function missingFieldDriver() {
+    return createMockDriver({
+      fieldIsPassword: vi.fn(async (label: string) => {
+        throw new Error(`waiting for getByLabel('${label}')`);
+      }),
+    }).driver;
+  }
+
+  async function failureOf(chain: { run(): Promise<void> }): Promise<StepError> {
+    const error = await chain.run().then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(error).toBeInstanceOf(StepError);
+    return error as StepError;
+  }
+
+  it.each([
+    ["assertValue", (s: Session) => s.assertValue("What needs to be done?", "")],
+    ["fillIn", (s: Session) => s.fillIn("What needs to be done?", "")],
+  ] as const)("%s with an empty value shows '' and says the field was not found", async (_verb, chain) => {
+    const error = await failureOf(chain(new Session(missingFieldDriver())));
+    expect(error.message).toContain(`('What needs to be done?', '')`);
+    expect(error.message).not.toContain("••••••");
+    expect(error.message).toContain(
+      "no field labelled 'What needs to be done?' (or with that placeholder) was found",
+    );
+  });
+
+  it("a non-empty value stays hidden, and the failure still says the field was not found", async () => {
+    const error = await failureOf(
+      new Session(missingFieldDriver()).fillIn("Login code", "fake-secret-value-123"),
+    );
+    expect(error.message).toContain("fillIn('Login code', '••••••')");
+    expect(error.message).not.toContain("fake-secret-value-123");
+    expect(error.message).toContain("no field labelled 'Login code' (or with that placeholder) was found");
+  });
+
+  it("a secret-looking label on a missing field says not found, not 'secret field'", async () => {
+    const error = await failureOf(
+      new Session(missingFieldDriver()).fillIn("Password", "fake-secret-value-123"),
+    );
+    expect(error.message).toContain("no field labelled 'Password' (or with that placeholder) was found");
+    expect(error.message).not.toContain("fake-secret-value-123");
+  });
+
+  it("several matching fields are reported as ambiguous, not as missing", async () => {
+    const driver = createMockDriver({
+      fieldIsPassword: vi.fn(async () => {
+        throw new Error("fillIn('Code'): 2 fields are labelled 'Code'.");
+      }),
+    }).driver;
+    const error = await failureOf(new Session(driver).assertValue("Code", "x"));
+    expect(error.message).toContain("assertValue('Code'): 2 fields are labelled 'Code'.");
+    expect(error.message).not.toContain("was found");
+  });
+});

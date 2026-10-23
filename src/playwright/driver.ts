@@ -585,7 +585,7 @@ export class PlaywrightDriver
     const count = await field.count();
     if (count > 1) {
       throw new Error(
-        `fillIn('${label}'): ${count} fields are labelled '${label}'. ` +
+        `${count} fields are labelled '${label}'. ` +
           "Scope the step with within(selector, ...) to pick one.",
       );
     }

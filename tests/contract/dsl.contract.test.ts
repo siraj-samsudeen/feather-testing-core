@@ -519,6 +519,16 @@ for (const driver of drivers) {
       }, TEST_TIMEOUT);
     }
 
+    it("#35 assertValue on a missing field says so, and shows an empty expected value as ''", async () => {
+      await withApp(async (h) => {
+        const error = await failure(h.session(FAST).visit("/about").assertValue("What needs to be done?", ""));
+        expect(error.message).toContain("[FAILED] assertValue('What needs to be done?', '')");
+        expect(error.message).toContain(
+          "no field labelled 'What needs to be done?' (or with that placeholder) was found",
+        );
+      });
+    }, TEST_TIMEOUT);
+
     it("#56 step() and raw() run inside the chain", async () => {
       await withApp(async (h) => {
         const seen: string[] = [];
