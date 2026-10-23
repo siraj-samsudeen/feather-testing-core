@@ -12,6 +12,7 @@ import type {
   UntilPredicate,
 } from "../types.js";
 import { BrowserOnlyVerbError } from "../errors.js";
+import { DEFAULT_TIMEOUT } from "../types.js";
 import { HIDDEN_VALUE } from "../secrets.js";
 import { RequestBrowser, type RequestHandler } from "./browser.js";
 import {
@@ -67,8 +68,8 @@ export interface RequestStepContext {
   fetch(input: string | URL, init?: RequestInit): Promise<Response>;
 }
 
-/** until()'s budget and cadence when the caller sets none, in ms. */
-const DEFAULT_UNTIL_TIMEOUT = 5000;
+/** until()'s cadence when the caller sets none, in ms. Its budget is the
+ * session `timeout` (default DEFAULT_TIMEOUT), as in the Playwright adapter. */
 const DEFAULT_UNTIL_INTERVAL = 100;
 
 /** Where BrowserOnlyVerbError says this adapter runs. */
@@ -146,11 +147,15 @@ export class RequestDriver
    * `app.fetch` (Hono), `fetch` itself. Scoped drivers pass the shared
    * RequestBrowser instead.
    */
+  /** The session options; within() hands them to the scoped driver. */
+  protected options: RequestDriverOptions;
+
   constructor(
     handler: RequestHandler | RequestBrowser,
     options: RequestDriverOptions = {},
     scopeSelectors: readonly string[] = [],
   ) {
+    this.options = options;
     this.browser =
       handler instanceof RequestBrowser
         ? handler
@@ -206,7 +211,7 @@ export class RequestDriver
   protected scoped(
     selectors: readonly string[],
   ): TestDriver<RequestStepContext, RequestPage> {
-    return new RequestDriver(this.browser, {}, selectors);
+    return new RequestDriver(this.browser, this.options, selectors);
   }
 
   // --- Navigation ---
@@ -1039,9 +1044,10 @@ export class RequestDriver
     predicate: UntilPredicate<RequestStepContext>,
     opts?: UntilOptions,
   ): Promise<void> {
-    const timeout = opts?.timeout ?? DEFAULT_UNTIL_TIMEOUT;
+    const timeout = opts?.timeout ?? this.options.timeout ?? DEFAULT_TIMEOUT;
     const interval = opts?.interval ?? DEFAULT_UNTIL_INTERVAL;
-    const deadline = Date.now() + timeout;
+    // 0 means no limit, as in Playwright.
+    const deadline = timeout === 0 ? Infinity : Date.now() + timeout;
     let checks = 0;
     for (;;) {
       checks++;

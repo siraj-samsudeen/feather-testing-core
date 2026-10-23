@@ -320,6 +320,41 @@ for (const driver of drivers) {
       });
     }, TEST_TIMEOUT);
 
+    it("#47 until's budget defaults to the session timeout", async () => {
+      await withApp(async (h) => {
+        const started = Date.now();
+        const error = await failure(
+          h.session({ timeout: 300 }).visit("/about").until("never", () => false, { interval: 20 }),
+        );
+        expect(error.message).toContain("[FAILED] until: never");
+        expect(Date.now() - started).toBeLessThan(2500);
+      });
+    }, TEST_TIMEOUT);
+
+    it("#47 the session timeout reaches until() inside within()", async () => {
+      await withApp(async (h) => {
+        const started = Date.now();
+        await failure(
+          h
+            .session({ timeout: 300 })
+            .visit("/about")
+            .within("h1", (s) => s.until("never", () => false, { interval: 20 })),
+        );
+        expect(Date.now() - started).toBeLessThan(2500);
+      });
+    }, TEST_TIMEOUT);
+
+    it("#48 timeout: 0 means no limit", async () => {
+      await withApp(async (h) => {
+        let checks = 0;
+        await h
+          .session()
+          .visit("/about")
+          .until("the fifth check", () => ++checks >= 5, { timeout: 0, interval: 20 });
+        expect(checks).toBe(5);
+      });
+    }, TEST_TIMEOUT);
+
     it("#50 a within() scope keeps working after a navigation inside it", async () => {
       await withApp(async (h) => {
         await h
