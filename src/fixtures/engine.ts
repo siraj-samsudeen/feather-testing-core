@@ -57,7 +57,12 @@ export type FixtureDefs<T, F> = { [K in keyof T]: FixtureDef<T[K], F> };
 /** The parts of a test runner the engine uses: bun:test and Vitest both have them. */
 export interface Runner {
   test(name: string, fn: () => Promise<void>, timeout?: number): unknown;
-  afterAll(fn: () => Promise<void>): unknown;
+  /**
+   * The engine passes the teardown allowance (plus slack) as `timeout`, so
+   * the runner's own hook timeout (bun: 5 s) does not cut cleanup short;
+   * bun:test and Vitest both take it as the second argument.
+   */
+  afterAll(fn: () => Promise<void>, timeout?: number): unknown;
 }
 
 export type TestBody<F> = (fixtures: F) => unknown | Promise<unknown>;
@@ -606,7 +611,10 @@ function build<F>(
     // (the file, or its describe): at the end of each block whatever
     // file-scoped fixtures exist are torn down, once — later hooks find
     // nothing left. A flag here would register only in the first block.
-    runner.afterAll(() => fileScope.teardown());
+    runner.afterAll(
+      () => fileScope.teardown(),
+      (settings.teardownTimeout ?? DEFAULT_TEARDOWN_TIMEOUT) + RUNNER_MARGIN,
+    );
     const timeout = settings.timeout?.(optionValues()) ?? settings.testTimeout ?? DEFAULT_TEST_TIMEOUT;
     const teardownAllowance = settings.teardownTimeout ?? DEFAULT_TEARDOWN_TIMEOUT;
     // One budget: the body gets `timeout`, teardown gets its allowance, and
