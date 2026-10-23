@@ -1505,3 +1505,45 @@ describe("assertValue on a password field", () => {
     expect(events.join("\n")).not.toContain(SECRET);
   });
 });
+
+describe("fillIn types { and [ literally", () => {
+  afterEach(cleanup);
+
+  it("types braces and brackets as text", async () => {
+    render(
+      <form>
+        <label htmlFor="name">Name</label>
+        <input id="name" />
+      </form>,
+    );
+    await createSession().fillIn("Name", "a{b}[c] {{x").assertValue("Name", "a{b}[c] {{x");
+  });
+
+  it("never shows part of a password with a stray { or [", async () => {
+    render(
+      <form>
+        <label htmlFor="code">Login code</label>
+        <input id="code" type="password" />
+      </form>,
+    );
+    const fragment = "{private-fragment";
+    const failed: string[] = [];
+    const error = await createSession({
+      onStep: (e) => {
+        if (e.status === "failed") failed.push(String((e.error as Error).message));
+      },
+    })
+      .fillIn("Login code", `x${fragment}`)
+      .assertValue("Login code", "wrong")
+      .run()
+      .then(
+        () => null,
+        (e: unknown) => e as StepError,
+      );
+    expect(error).toBeInstanceOf(StepError);
+    expect(error!.message).toContain("[ok] fillIn('Login code', '••••••')");
+    expect(error!.message).not.toContain("private-fragment");
+    expect(String((error!.cause as Error)?.message ?? "")).not.toContain("private-fragment");
+    expect(failed.join("\n")).not.toContain("private-fragment");
+  });
+});

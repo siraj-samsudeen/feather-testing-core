@@ -141,7 +141,9 @@ export class RTLDriver implements TestDriver<RTLStepContext, RTLQueries> {
     const input = await this.findField(label);
     this.lastFilledField = input;
     await this.user.clear(input);
-    if (value) await this.user.type(input, value);
+    // user.type() reads { and [ as key syntax ({Enter}, [ShiftLeft]); a
+    // value is text, so they are doubled to type them literally.
+    if (value) await this.user.type(input, value.replace(/[{[]/g, "$&$&"));
     this.lastFormElement = input.closest("form");
   }
 
