@@ -88,6 +88,12 @@ Core provides its own fixtures through `defineCoreTest(runner)`: `browser` (file
 
 **Decision:** Export the request adapter's cookie matching as a function. Given a cookie list (the `cookies` option's shape, or Playwright's `context.cookies()`) and a URL, it returns the `Cookie` header a browser would send, honouring domain, path, secure and expiry, or `null` when no cookie matches. The adapter's own jar applies the same rules. This is additive.
 
+### `setCookies(cookies)`: cookies now, not as a step
+
+**Requested by:** `feather-testing-elysia`. Its `logInAs` must take effect at the same moment in every client. Until now the browser applied cookies at once, but the request session only from its next queued step.
+
+**Decision:** Add `await session.setCookies(cookies)` on both adapters. It applies the cookies immediately, outside the step queue. It is additive, and the queued `addCookies` stays as it is. On Playwright, the `cookies` option's own cookies are applied first, so later ones win where they overlap.
+
 ## Deferred
 
 ### B2 (rest). A per-driver Session type that rejects unsupported verbs at compile time

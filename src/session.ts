@@ -519,6 +519,23 @@ export class Session<TContext = unknown, TNative = unknown>
   }
 
   /**
+   * Add cookies to the session NOW, not as a step: they are in effect for
+   * every step that runs after this resolves, including steps already
+   * queued. Use it when the cookies must take effect at a known moment
+   * outside the chain (signing a user in across several clients at once);
+   * use addCookies() to add them at a point in a chain.
+   */
+  async setCookies(cookies: readonly SessionCookie[]): Promise<void> {
+    if (!this.driver.addCookies) {
+      throw new Error(
+        "setCookies(): this adapter's driver does not implement addCookies. " +
+          "Use the request or Playwright adapter.",
+      );
+    }
+    await this.driver.addCookies(cookies);
+  }
+
+  /**
    * Add cookies to the session from this point on — e.g. sign a user in
    * after the first request. Same shape as createSession's `cookies`. The
    * step is named by the cookies' names only: their values are secrets.

@@ -180,7 +180,7 @@ export class PlaywrightDriver
   private seedCookies(): Promise<void> {
     if (this.cookieSeed.done) return this.cookieSeed.done;
     const cookies = this.options.cookies ?? [];
-    this.cookieSeed.done = cookies.length === 0 ? Promise.resolve() : this.addCookies(cookies);
+    this.cookieSeed.done = cookies.length === 0 ? Promise.resolve() : this.contextAddCookies(cookies);
     return this.cookieSeed.done;
   }
 
@@ -190,6 +190,12 @@ export class PlaywrightDriver
    * session's baseUrl (or the page's current URL), by domain and path.
    */
   async addCookies(cookies: readonly SessionCookie[]): Promise<void> {
+    // The option's cookies come first, so these win where they overlap.
+    await this.seedCookies();
+    await this.contextAddCookies(cookies);
+  }
+
+  private async contextAddCookies(cookies: readonly SessionCookie[]): Promise<void> {
     const base = this.options.baseUrl ?? this.page.url();
     const origin = /^https?:/.test(base) ? new URL(base) : null;
     await this.page.context().addCookies(

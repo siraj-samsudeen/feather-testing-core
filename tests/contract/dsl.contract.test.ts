@@ -721,6 +721,16 @@ for (const driver of drivers) {
       });
     }, TEST_TIMEOUT);
 
+    it("cookies: setCookies applies at once, before steps already queued run", async () => {
+      await withApp(async (h) => {
+        const session = h.session();
+        const chain = session.visit("/echo").within("#cookie", (s) => s.assertExactText("now=1"));
+        // Not queued: in effect before the visit queued above runs.
+        await session.setCookies([{ name: "now", value: "1" }]);
+        await chain;
+      });
+    }, TEST_TIMEOUT);
+
     it("#56 step() and raw() run inside the chain", async () => {
       await withApp(async (h) => {
         const seen: string[] = [];
