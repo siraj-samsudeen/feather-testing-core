@@ -123,6 +123,9 @@ export class CookieJar {
     },
     base: URL,
   ): void {
+    // As Playwright's context.cookies() reports them: a bare domain is that
+    // host only; a leading dot makes a domain cookie (subdomains too).
+    const hostOnly = cookie.domain === undefined || !cookie.domain.startsWith(".");
     const domain = (cookie.domain ?? base.hostname).replace(/^\./, "").toLowerCase();
     this.cookies = this.cookies.filter(
       (c) =>
@@ -132,7 +135,7 @@ export class CookieJar {
       name: cookie.name,
       value: cookie.value,
       domain,
-      hostOnly: cookie.domain === undefined,
+      hostOnly,
       path: cookie.path ?? "/",
       secure: cookie.secure === true,
       // -1 (or none) is a session cookie, as in Playwright's context.cookies().
@@ -165,8 +168,8 @@ export class CookieJar {
 /**
  * The Cookie header a browser would send to `url`, given a list of cookies
  * shaped like the `cookies` option (or Playwright's context.cookies()):
- * domain (none: `url`'s host only; a leading dot or any domain also covers
- * its subdomains), path, secure (sent over https, and to localhost or
+ * domain (none: `url`'s host only; a bare domain: that host only; a
+ * leading dot: that domain and its subdomains), path, secure (sent over https, and to localhost or
  * 127.0.0.1) and expiry (seconds; -1 or none: a session cookie). Null when
  * no cookie matches. The request adapter's own jar applies the same rules.
  */
