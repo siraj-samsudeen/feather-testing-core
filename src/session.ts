@@ -548,10 +548,10 @@ export class Session<TContext = unknown, TNative = unknown>
    * outside the chain (signing a user in across several clients at once);
    * use addCookies() to add them at a point in a chain.
    */
-  async setCookies(cookies: readonly SessionCookie[]): Promise<void> {
+  async addCookiesNow(cookies: readonly SessionCookie[]): Promise<void> {
     if (!this.driver.addCookies) {
       throw new Error(
-        "setCookies(): this adapter's driver does not implement addCookies. " +
+        "addCookiesNow(): this adapter's driver does not implement addCookies. " +
           "Use the request or Playwright adapter.",
       );
     }

@@ -726,12 +726,12 @@ for (const driver of drivers) {
       });
     }, TEST_TIMEOUT);
 
-    it("cookies: setCookies applies at once, before steps already queued run", async () => {
+    it("cookies: addCookiesNow applies at once, before steps already queued run", async () => {
       await withApp(async (h) => {
         const session = h.session();
         const chain = session.visit("/echo").within("#cookie", (s) => s.assertExactText("now=1"));
         // Not queued: in effect before the visit queued above runs.
-        await session.setCookies([{ name: "now", value: "1" }]);
+        await session.addCookiesNow([{ name: "now", value: "1" }]);
         await chain;
       });
     }, TEST_TIMEOUT);
@@ -792,6 +792,19 @@ for (const driver of drivers) {
         });
       }, TEST_TIMEOUT);
     }
+
+    it("cookies: addCookiesNow works on a within() scoped session too", async () => {
+      await withApp(async (h) => {
+        await h
+          .session()
+          .visit("/echo")
+          .within("#cookie", async (s) => {
+            await s.addCookiesNow([{ name: "scoped", value: "1" }]);
+          })
+          .visit("/echo")
+          .within("#cookie", (s) => s.assertExactText("scoped=1"));
+      });
+    }, TEST_TIMEOUT);
 
     it("#56 step() and raw() run inside the chain", async () => {
       await withApp(async (h) => {

@@ -28,7 +28,7 @@ This matrix lists every public surface and behaviour, as of the `bun-port-stacke
 | 7 | `options.baseUrl` | same | Both resolve `visit()` paths as `new URL(path, baseUrl)`. Defaults: R `http://localhost`; P the browser context's `baseURL`. The contract harness gives P pages no context `baseURL`, so every contract test uses the option. |
 | 7a | `options.cookies` (start signed in) | same | P: `context.addCookies` before the first step; R: seeds the session's cookie jar. Domain defaults to `baseUrl`'s host (host-only), path to `/`. Contract-tested, including the app deleting the cookie later. |
 | 7b | `session.addCookies(cookies)` (add cookies mid-chain) | same | P: `context.addCookies`; R: the cookie jar. Named by cookie names only. Contract-tested. RTL: not implemented (no requests). |
-| 7c | `await session.setCookies(cookies)` (now, not queued) | same | P: `context.addCookies` at once (after the option's cookies); R: straight into the jar. Contract-tested against an already-queued visit. |
+| 7c | `await session.addCookiesNow(cookies)` (now, not queued) | same | P: `context.addCookies` at once (after the option's cookies); R: straight into the jar. Contract-tested against an already-queued visit. |
 | 8 | `Session.run()` | same | It lives in `Session`. |
 | 9 | Step names and the `StepError` chain (`[ok]` / `[FAILED]` / `[skipped]`) | same | It lives in `Session`. |
 | 10 | `test.step()` reporting | n/a in R | Needs the Playwright runner. |
