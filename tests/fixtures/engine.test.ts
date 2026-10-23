@@ -264,4 +264,56 @@ describe("defineTest", () => {
     await run("thenable");
     expect(got).toBe(thenable);
   });
+
+  it("concurrent tests share one file-scoped instance, set up and torn down once", async () => {
+    const { runner, run, endFile } = recordingRunner();
+    let setups = 0;
+    let teardowns = 0;
+    // Held open until all three tests have asked for the fixture.
+    let open!: () => void;
+    const gate = new Promise<void>((resolve) => (open = resolve));
+    const test = defineTest(runner, {
+      server: [
+        async ({}, use: (v: number) => Promise<void>) => {
+          setups++;
+          await gate;
+          await use(setups);
+          teardowns++;
+        },
+        { scope: "file" },
+      ],
+    } as never);
+    const seen: number[] = [];
+    test("a", async ({ server }: { server: number }) => void seen.push(server));
+    test("b", async ({ server }: { server: number }) => void seen.push(server));
+    test("c", async ({ server }: { server: number }) => void seen.push(server));
+    const all = Promise.all([run("a"), run("b"), run("c")]);
+    open();
+    await all;
+    expect(seen).toEqual([1, 1, 1]);
+    expect(setups).toBe(1);
+    await endFile();
+    expect(teardowns).toBe(1);
+  });
+
+  it("a file-scoped setup that fails is retried by the next test, not cached", async () => {
+    const { runner, run } = recordingRunner();
+    let attempts = 0;
+    const test = defineTest(runner, {
+      flaky: [
+        async ({}, use: (v: number) => Promise<void>) => {
+          attempts++;
+          if (attempts === 1) throw new Error("first setup fails");
+          await use(attempts);
+        },
+        { scope: "file" },
+      ],
+    } as never);
+    test("first", async ({ flaky }: { flaky: number }) => void flaky);
+    test("second", async ({ flaky }: { flaky: number }) => {
+      expect(flaky).toBe(2);
+    });
+    await expect(run("first")).rejects.toThrow("first setup fails");
+    await run("second");
+  });
 });

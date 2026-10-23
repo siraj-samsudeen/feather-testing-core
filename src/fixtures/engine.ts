@@ -297,7 +297,11 @@ function definitionId(def: Definition): number {
 }
 
 class FileScope {
-  values = new Map<string, Active>();
+  /**
+   * Setups in progress or done, by key. The promise is stored before it is
+   * awaited, so tests running at the same time share one setup.
+   */
+  values = new Map<string, Promise<Active>>();
   order: string[] = [];
   registered = false;
 
@@ -305,7 +309,8 @@ class FileScope {
     const errors: unknown[] = [];
     for (const name of [...this.order].reverse()) {
       try {
-        await this.values.get(name)!.teardown();
+        const active = await this.values.get(name)!.catch(() => null);
+        await active?.teardown();
       } catch (error) {
         errors.push(error);
       }
@@ -387,7 +392,7 @@ function build<F>(
       name,
       async () => {
         const info: TestInfo = { title: name, status: "running" };
-        const active = new Map<string, Active>();
+        const active = new Map<string, Promise<Active>>();
         const order: string[] = [];
         // Boxed results: a fixture value can be a thenable (a session), and
         // an async function would await it on return.
@@ -398,23 +403,36 @@ function build<F>(
           const def = resolveName(fixture, chain);
           const key = def.scope === "file" ? fileKey(fixture) : fixture;
           const store = def.scope === "file" ? fileScope.values : active;
-          const existing = store.get(key);
-          if (existing) return { value: existing.value };
-          const deps: Record<string, unknown> = {};
-          for (const dep of def.deps) {
-            const depDef = resolveName(dep, [...chain, fixture]);
-            // A plain value has no lifetime; a test-scoped fixture function
-            // would be torn down under the file-scoped one.
-            if (def.scope === "file" && depDef.fn && depDef.scope === "test") {
-              throw new Error(
-                `file-scoped fixture '${fixture}' cannot depend on test-scoped fixture '${dep}'.`,
-              );
-            }
-            deps[dep] = (await setUp(dep, [...chain, fixture])).value;
+          const keys = def.scope === "file" ? fileScope.order : order;
+          let pending = store.get(key);
+          if (!pending) {
+            pending = (async () => {
+              const deps: Record<string, unknown> = {};
+              for (const dep of def.deps) {
+                const depDef = resolveName(dep, [...chain, fixture]);
+                // A plain value has no lifetime; a test-scoped fixture function
+                // would be torn down under the file-scoped one.
+                if (def.scope === "file" && depDef.fn && depDef.scope === "test") {
+                  throw new Error(
+                    `file-scoped fixture '${fixture}' cannot depend on test-scoped fixture '${dep}'.`,
+                  );
+                }
+                deps[dep] = (await setUp(dep, [...chain, fixture])).value;
+              }
+              return start(fixture, def, deps, info);
+            })();
+            // Cached before it is awaited, so concurrent tests share it;
+            // dropped if it fails, so the next test tries again.
+            store.set(key, pending);
+            keys.push(key);
+            const settled = pending;
+            settled.catch(() => {
+              if (store.get(key) === settled) store.delete(key);
+              const at = keys.indexOf(key);
+              if (at >= 0) keys.splice(at, 1);
+            });
           }
-          const started = await start(fixture, def, deps, info);
-          store.set(key, started);
-          (def.scope === "file" ? fileScope.order : order).push(key);
+          const started = await pending;
           return { value: started.value };
         };
         let failure: unknown;
@@ -435,7 +453,8 @@ function build<F>(
         let teardownError: unknown;
         for (const fixture of [...order].reverse()) {
           try {
-            await active.get(fixture)!.teardown();
+            const started = await active.get(fixture)!.catch(() => null);
+            await started?.teardown();
           } catch (error) {
             teardownError ??= error;
           }
