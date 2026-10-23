@@ -137,6 +137,11 @@ class TeardownBudget {
     this.ends = Date.now() + ms;
   }
 
+  /** Whether the allowance is used up. */
+  spent(): boolean {
+    return this.left() === 0;
+  }
+
   private left(): number {
     return Math.max(0, this.ends - Date.now());
   }
@@ -415,20 +420,61 @@ interface Entry {
   active?: Active;
   /** When the setup finished, in finishing order: teardown runs in reverse. */
   readyAt?: number;
+  /** The setup has finished, either way. */
+  settled?: boolean;
 }
 
 let readySequence = 0;
 
+/** Report a teardown failure that happened after the teardown report was made. */
+function reportLate(name: string, error: unknown): void {
+  console.error(
+    `feather-testing-core: fixture '${name}' was torn down late (it finished setting up ` +
+      "after its scope had closed) and its teardown failed:",
+    error,
+  );
+}
+
+/** Tear a late setup down once it finishes; a failure is reported, never left unhandled. */
+function tearDownWhenReady(entry: Entry): void {
+  entry.pending
+    .then(
+      (active) => active.teardown(),
+      () => undefined, // nothing was set up
+    )
+    .catch((error: unknown) => reportLate(entry.name, error));
+}
+
+/**
+ * The fixtures a scope keeps. A file's scope closes at the end of a block:
+ * setups still running belong to the closing generation, and so does every
+ * fixture they go on to create; later tests start a fresh generation.
+ */
+class Generation {
+  readonly values = new Map<string, Entry>();
+  /** Set once teardown has built its list: anything that appears now is torn down as it appears. */
+  closed = false;
+}
+
 /** Cache `pending` under `key` in `store`, recording when (and if) it becomes ready. */
-function track(store: Map<string, Entry>, key: string, name: string, pending: Promise<Active>): Entry {
+function track(
+  store: Map<string, Entry>,
+  key: string,
+  name: string,
+  pending: Promise<Active>,
+  closed: () => boolean = () => false,
+): Entry {
   const entry: Entry = { name, pending };
   store.set(key, entry);
   pending.then(
     (active) => {
       entry.active = active;
       entry.readyAt = ++readySequence;
+      entry.settled = true;
+      if (closed()) tearDownWhenReady(entry);
     },
     () => {
+      entry.settled = true;
       // Dropped if it fails, so the next test tries again.
       if (store.get(key) === entry) store.delete(key);
     },
@@ -437,54 +483,59 @@ function track(store: Map<string, Entry>, key: string, name: string, pending: Pr
 }
 
 /**
- * Tear down `entries` within `budget`: first wait (within the budget) for
- * setups still running, so a fixture is not torn down while one that sits
- * on it is still being set up; then tear everything that became ready down
- * in the reverse of the order it became ready. A setup that is still
- * running after that is torn down when it finishes, once.
+ * Tear down a scope within `budget`: first wait (within the budget) for
+ * setups still running — including the ones they start meanwhile — so a
+ * fixture is not torn down while one that sits on it is still being set
+ * up; then tear everything that became ready down in the reverse of the
+ * order it became ready. A setup still running after that is torn down
+ * when it finishes, once; a failure then is reported, not thrown.
  */
-async function tearDownEntries(entries: Entry[], budget: TeardownBudget): Promise<void> {
-  for (const entry of entries) {
-    if (entry.active) continue;
-    await budget.wait(
-      entry.name,
-      "setup",
-      entry.pending.then(
-        () => undefined,
-        () => undefined, // a failed setup has nothing to tear down
-      ),
-    );
+async function tearDownEntries(
+  values: Map<string, Entry>,
+  budget: TeardownBudget,
+  close: () => void = () => undefined,
+): Promise<void> {
+  for (;;) {
+    const unsettled = [...values.values()].filter((entry) => !entry.settled);
+    if (unsettled.length === 0 || budget.spent()) break;
+    for (const entry of unsettled) {
+      await budget.wait(
+        entry.name,
+        "setup",
+        entry.pending.then(
+          () => undefined,
+          () => undefined, // a failed setup has nothing to tear down
+        ),
+      );
+    }
   }
-  const ready = entries
-    .filter((entry) => entry.active)
-    .sort((a, b) => b.readyAt! - a.readyAt!);
+  close();
+  const entries = [...values.values()];
+  const ready = entries.filter((entry) => entry.active).sort((a, b) => b.readyAt! - a.readyAt!);
   for (const entry of ready) {
     await budget.wait(entry.name, "teardown", entry.active!.teardown());
   }
   for (const entry of entries) {
-    if (!entry.active) {
-      entry.pending.then(
-        (active) => active.teardown(),
-        () => undefined, // nothing was set up
-      );
-    }
+    if (!entry.active) tearDownWhenReady(entry);
   }
 }
 
 class FileScope {
-  values = new Map<string, Entry>();
+  current = new Generation();
   /** What file-scoped fixture functions learn about "the test": the file. */
   readonly info: TestInfo = { title: "(file-scoped fixtures)", status: "running" };
 
   constructor(private teardownTimeout: number) {}
 
   async teardown(): Promise<void> {
-    // What exists now; it leaves the scope at once, so a later hook (another
-    // block's) does not tear it down twice and later tests start afresh.
-    const entries = [...this.values.values()];
-    this.values.clear();
+    // What exists now closes; later tests start a fresh generation, and a
+    // later hook (another block's) finds nothing of this one.
+    const closing = this.current;
+    this.current = new Generation();
     const budget = new TeardownBudget(this.teardownTimeout);
-    await tearDownEntries(entries, budget);
+    await tearDownEntries(closing.values, budget, () => {
+      closing.closed = true;
+    });
     if (budget.errors.length > 0) throw budget.errors[0];
   }
 }
@@ -509,7 +560,7 @@ class TestLifecycle {
 
   async teardown(allowance: number): Promise<unknown[]> {
     const budget = new TeardownBudget(allowance);
-    await tearDownEntries([...this.values.values()], budget);
+    await tearDownEntries(this.values, budget);
     return budget.errors;
   }
 }
@@ -565,14 +616,18 @@ function build<F>(
    * file's own lifecycle: no test owns it, so a test that is abandoned while
    * it sets up does not abandon it — the next test (a retry) gets it.
    */
-  const setUpFile = (fixture: string, chain: string[]): Promise<Active> => {
+  const setUpFile = (
+    fixture: string,
+    chain: string[],
+    generation: Generation = fileScope.current,
+  ): Promise<Active> => {
     if (chain.includes(fixture)) {
       throw new Error(`fixtures depend on each other in a cycle: ${[...chain, fixture].join(" → ")}`);
     }
     const def = resolveName(fixture, chain);
     if (!def.fn) return Promise.resolve({ value: def.value, teardown: async () => {} });
     const key = fileKey(fixture);
-    const existing = fileScope.values.get(key);
+    const existing = generation.values.get(key);
     if (existing) return existing.pending;
     const pending = (async () => {
       const deps: Record<string, unknown> = {};
@@ -585,11 +640,13 @@ function build<F>(
             `file-scoped fixture '${fixture}' cannot depend on test-scoped fixture '${dep}'.`,
           );
         }
-        deps[dep] = (await setUpFile(dep, [...chain, fixture])).value;
+        // In the same generation: if the scope closes meanwhile, what this
+        // setup goes on to create closes with it.
+        deps[dep] = (await setUpFile(dep, [...chain, fixture], generation)).value;
       }
       return once(await start(fixture, def, deps, fileScope.info));
     })();
-    return track(fileScope.values, key, fixture, pending).pending;
+    return track(generation.values, key, fixture, pending, () => generation.closed).pending;
   };
 
   const register = (name: string, uses: string[] | null, body: TestBody<F>) => {

@@ -572,4 +572,96 @@ describe("defineTest", () => {
       expect(log).toEqual(["app down", "browser down"]);
     });
   });
+
+  describe("closing the file scope while setups are still running", () => {
+    it("tears down every fixture a pending setup goes on to create, exactly once", async () => {
+      const { runner, run, endFile } = recordingRunner();
+      const log: string[] = [];
+      let releaseA!: () => void;
+      const aGate = new Promise<void>((resolve) => (releaseA = resolve));
+      let aStarted!: () => void;
+      const aIsSettingUp = new Promise<void>((resolve) => (aStarted = resolve));
+      const fileFixture = (name: string, wait?: Promise<void>, started?: () => void) => [
+        async (_: unknown, use: (v: string) => Promise<void>) => {
+          started?.();
+          if (wait) await wait;
+          log.push(`up ${name}`);
+          await use(name);
+          log.push(`down ${name}`);
+        },
+        { scope: "file", deps: [] },
+      ];
+      const test = defineTest(
+        runner,
+        {
+          a: fileFixture("a", aGate, aStarted),
+          b: fileFixture("b"),
+          app: [
+            async ({ a, b }: { a: string; b: string }, use: (v: string) => Promise<void>) => {
+              log.push("up app");
+              await use(`${a}+${b}`);
+              log.push("down app");
+            },
+            { scope: "file" },
+          ],
+        } as never,
+        { testTimeout: 100, teardownTimeout: 2000 },
+      );
+      test("needs app", async ({ app }: { app: string }) => void app);
+      const attempt = run("needs app");
+      await aIsSettingUp;
+      await expect(attempt).rejects.toThrow("did not finish within 100ms");
+      // The block ends while 'a' (the first of app's two dependencies) is
+      // still setting up; 'b' and 'app' do not exist yet.
+      const closing = endFile();
+      releaseA();
+      await closing;
+      expect(log.filter((l) => l.startsWith("up")).sort()).toEqual(["up a", "up app", "up b"]);
+      expect(log.filter((l) => l.startsWith("down"))).toEqual(["down app", "down b", "down a"]);
+    });
+
+    it("a late teardown that fails is reported, never an unhandled rejection", async () => {
+      const unhandled: unknown[] = [];
+      const onUnhandled = (reason: unknown) => void unhandled.push(reason);
+      process.on("unhandledRejection", onUnhandled);
+      const reported: string[] = [];
+      const original = console.error;
+      console.error = (...args: unknown[]) => void reported.push(args.map(String).join(" "));
+      try {
+        const { runner, run, endFile } = recordingRunner();
+        let release!: () => void;
+        const gate = new Promise<void>((resolve) => (release = resolve));
+        let tornDown!: () => void;
+        const teardownRan = new Promise<void>((resolve) => (tornDown = resolve));
+        const test = defineTest(
+          runner,
+          {
+            late: [
+              async ({}, use: (v: number) => Promise<void>) => {
+                await gate;
+                await use(1);
+                tornDown();
+                throw new Error("late teardown broke");
+              },
+              { scope: "file" },
+            ],
+          } as never,
+          { testTimeout: 100, teardownTimeout: 100 },
+        );
+        test("needs late", async ({ late }: { late: number }) => void late);
+        await expect(run("needs late")).rejects.toThrow("did not finish within 100ms");
+        await expect(endFile()).rejects.toThrow("fixture 'late': setup did not finish");
+        release();
+        await teardownRan;
+        // Let the rejection (if any) surface.
+        await new Promise((resolve) => setImmediate(resolve));
+        await new Promise((resolve) => setImmediate(resolve));
+        expect(unhandled).toEqual([]);
+        expect(reported.join("\n")).toContain("late teardown broke");
+      } finally {
+        process.off("unhandledRejection", onUnhandled);
+        console.error = original;
+      }
+    });
+  });
 });
