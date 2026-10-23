@@ -1762,6 +1762,22 @@ test.describe("when the wait for a new page ends", () => {
     });
   });
 
+  test("the new page after a submit gets the page's navigation timeout, not its action timeout", async ({
+    page,
+  }) => {
+    await withApp(page, { slowBody: 1000 }, async (url) => {
+      page.setDefaultTimeout(500);
+      page.setDefaultNavigationTimeout(10000);
+      const driver = new PlaywrightDriver(page);
+      await driver.visit(`${url}/todos`);
+      await driver.fillIn("What needs to be done?", "Buy milk");
+      // The list commits at once but takes 1 s to load: past the 500 ms
+      // action timeout, well within the 10 s navigation timeout.
+      await driver.pressKey("Enter");
+      expect(await itemsNow(page)).toEqual(["Buy milk"]);
+    });
+  });
+
   test("method=\"dialog\" does not wait for a navigation", async ({ page }) => {
     await withApp(page, {}, async (url) => {
       const driver = new PlaywrightDriver(page, page, { timeout: 5000 });

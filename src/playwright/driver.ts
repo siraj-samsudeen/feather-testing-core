@@ -78,6 +78,9 @@ export const NAVIGATION_START_WINDOW_MS = 500;
  */
 export const REPLACED_NAVIGATION_WINDOW_MS = 250;
 
+/** Playwright's documented default navigation timeout. */
+const PLAYWRIGHT_DEFAULT_NAVIGATION_TIMEOUT = 30_000;
+
 /** The session timeout used outside the Playwright Test runner. */
 export const DEFAULT_TIMEOUT_OUTSIDE_RUNNER = DEFAULT_TIMEOUT;
 
@@ -143,6 +146,35 @@ export class PlaywrightDriver
    * Whether a Playwright Test runner test is running, asked once per driver
    * on first use (a driver lives inside one test).
    */
+  /**
+   * The budget for page loads, shared by visit(), reload() and the new page
+   * after a submit: the navigationTimeout option, else the page's own
+   * navigation timeout (setDefaultNavigationTimeout, the runner's
+   * navigationTimeout, else Playwright's 30 s). Playwright has no public
+   * getter for that, so it is read from the page's timeout settings, with
+   * Playwright's documented default if those are not there.
+   */
+  private navigationTimeout(): number {
+    if (this.options.navigationTimeout !== undefined) {
+      return this.options.navigationTimeout;
+    }
+    const settings = (
+      this.page as unknown as {
+        _timeoutSettings?: {
+          navigationTimeout?: (options: object) => number | { timeout?: number };
+        };
+      }
+    )._timeoutSettings;
+    try {
+      const value = settings?.navigationTimeout?.({});
+      const ms = typeof value === "number" ? value : value?.timeout;
+      if (typeof ms === "number") return ms;
+    } catch {
+      // Fall through to Playwright's default.
+    }
+    return PLAYWRIGHT_DEFAULT_NAVIGATION_TIMEOUT;
+  }
+
   private insideRunner(): boolean {
     this.insideRunnerCache ??= insidePlaywrightRunner();
     return this.insideRunnerCache;
@@ -322,7 +354,7 @@ export class PlaywrightDriver
         }
       }
 
-      const timeout = this.options.navigationTimeout;
+      const timeout = this.navigationTimeout();
       // "complete" (the load event) rather than "interactive": it is what
       // visit() waits for (page.goto's default), so a step after a submit
       // sees the page in the same state as a step after a visit, including
@@ -397,11 +429,11 @@ export class PlaywrightDriver
       this.options.baseUrl === undefined
         ? path
         : new URL(path, this.options.baseUrl).href;
-    await this.page.goto(url, { timeout: this.options.navigationTimeout });
+    await this.page.goto(url, { timeout: this.navigationTimeout() });
   }
 
   async reload(): Promise<void> {
-    await this.page.reload({ timeout: this.options.navigationTimeout });
+    await this.page.reload({ timeout: this.navigationTimeout() });
   }
 
   async click(text: string): Promise<void> {
