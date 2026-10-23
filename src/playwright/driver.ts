@@ -102,19 +102,27 @@ function insidePlaywrightRunner(): boolean {
   }
 }
 
-type MarkedWindow = {
-  __featherDocumentBeforeAction?: boolean;
+/**
+ * What the session keeps in the app's page, under one Symbol-keyed store
+ * (window[Symbol.for("feather-testing-core")]): no window globals, no
+ * patched prototypes. Besides it, the first navigating action installs four
+ * listeners on window — click and keydown (capture: to recognise submit
+ * attempts and followed links), submit, invalid (capture: to see a refused
+ * submit), and beforeunload — which only record, never prevent or change.
+ */
+type PageState = {
+  documentBeforeAction?: boolean;
   /** Tokens of new-page waits settled from outside, one per wait. */
-  __featherStoppedWaits?: Set<string>;
-  __featherLeaving?: boolean;
-  __featherListening?: boolean;
+  stoppedWaits?: Set<string>;
+  leaving?: boolean;
+  listening?: boolean;
   /** The first control that blocked a submission during the action. */
-  __featherInvalid?: BlockedSubmit | null;
-  __featherInvalidEl?: Element | null;
+  invalid?: BlockedSubmit | null;
+  invalidEl?: Element | null;
   /** The form a submit was attempted on during the action, if any. */
-  __featherSubmitAttempt?: HTMLFormElement | null;
+  submitAttempt?: HTMLFormElement | null;
   /** Whether a submit event fired during the action. */
-  __featherSubmitted?: boolean;
+  submitted?: boolean;
 };
 
 /** What happened to a form during an action. */
@@ -295,20 +303,21 @@ export class PlaywrightDriver
   private async markDocumentBeforeAction(): Promise<void> {
     const mark = () =>
       this.page.evaluate(() => {
-        const w = window as MarkedWindow;
-        w.__featherDocumentBeforeAction = true;
-        w.__featherLeaving = false;
-        w.__featherInvalid = null;
-        w.__featherInvalidEl = null;
-        w.__featherSubmitAttempt = null;
-        w.__featherSubmitted = false;
-        if (w.__featherListening) return;
-        w.__featherListening = true;
+        const w = ((window as unknown as Record<symbol, PageState>)[Symbol.for("feather-testing-core")] ??= {});
+        w.documentBeforeAction = true;
+        w.leaving = false;
+        w.invalid = null;
+        w.invalidEl = null;
+        w.submitAttempt = null;
+        w.submitted = false;
+        if (w.listening) return;
+        w.listening = true;
         // Submit attempts: activating a submit button (Enter's implicit
-        // submission clicks the default one), Enter in a field of a form
-        // with no submit button, and requestSubmit(). Only an 'invalid'
-        // event on the attempted form counts as a refused submit; a
-        // checkValidity()/reportValidity() from a type=button does not.
+        // submission clicks the default one) and Enter in a field of a
+        // form with no submit button. Only an 'invalid' event on the
+        // attempted form counts as a refused submit; a checkValidity() or
+        // reportValidity() from a type=button does not. (A page script's
+        // own requestSubmit() is not watched: nothing is patched.)
         window.addEventListener(
           "click",
           (event) => {
@@ -320,7 +329,7 @@ export class PlaywrightDriver
                 : el instanceof HTMLInputElement &&
                   (el.type === "submit" || el.type === "image");
             if (isSubmit && (el as HTMLButtonElement).form) {
-              w.__featherSubmitAttempt = (el as HTMLButtonElement).form;
+              w.submitAttempt = (el as HTMLButtonElement).form;
             }
           },
           true,
@@ -330,25 +339,20 @@ export class PlaywrightDriver
           (event) => {
             const el = event.target as HTMLInputElement | null;
             if (event.key === "Enter" && el instanceof HTMLInputElement && el.form) {
-              w.__featherSubmitAttempt = el.form;
+              w.submitAttempt = el.form;
             }
           },
           true,
         );
-        const requestSubmit = HTMLFormElement.prototype.requestSubmit;
-        HTMLFormElement.prototype.requestSubmit = function (submitter) {
-          w.__featherSubmitAttempt = this;
-          return requestSubmit.call(this, submitter);
-        };
         // A submission blocked by constraint validation fires 'invalid' on
         // each invalid control (it does not bubble, so capture); the first
         // is the one the browser reports.
         window.addEventListener(
           "invalid",
           (event) => {
-            if (w.__featherInvalid) return;
+            if (w.invalid) return;
             const el = event.target as HTMLInputElement;
-            if (!w.__featherSubmitAttempt || el.form !== w.__featherSubmitAttempt) {
+            if (!w.submitAttempt || el.form !== w.submitAttempt) {
               return;
             }
             const label =
@@ -357,18 +361,18 @@ export class PlaywrightDriver
               el.getAttribute("placeholder") ||
               el.getAttribute("name") ||
               el.tagName.toLowerCase();
-            w.__featherInvalid = {
+            w.invalid = {
               label,
               valueMissing: el.validity?.valueMissing === true,
               message: el.validationMessage ?? "",
             };
-            w.__featherInvalidEl = el;
+            w.invalidEl = el;
           },
           true,
         );
         // Window bubble phase: runs after the form's own submit handlers.
         window.addEventListener("submit", (event) => {
-          w.__featherSubmitted = true;
+          w.submitted = true;
           if (event.defaultPrevented) return;
           const form = event.target as HTMLFormElement;
           const submitter = (event as SubmitEvent).submitter;
@@ -389,7 +393,7 @@ export class PlaywrightDriver
           if (target !== "" && target !== "_self" && target !== "_top" && target !== "_parent") {
             return;
           }
-          w.__featherLeaving = true;
+          w.leaving = true;
         });
         // A followed link (clicked, or Enter on a focused link).
         window.addEventListener("click", (event) => {
@@ -411,10 +415,10 @@ export class PlaywrightDriver
             location.origin + location.pathname + location.search;
           // A same-page #fragment link scrolls; it does not load a page.
           if (samePage && href.hash !== "") return;
-          w.__featherLeaving = true;
+          w.leaving = true;
         });
         window.addEventListener("beforeunload", () => {
-          w.__featherLeaving = true;
+          w.leaving = true;
         });
       });
     try {
@@ -512,12 +516,12 @@ export class PlaywrightDriver
       let submitted = false;
       try {
         [state, blocked, submitted] = await this.page.evaluate(() => {
-          const w = window as MarkedWindow;
-          if (!w.__featherDocumentBeforeAction) return ["new-document", null, true] as const;
+          const w = ((window as unknown as Record<symbol, PageState>)[Symbol.for("feather-testing-core")] ??= {});
+          if (!w.documentBeforeAction) return ["new-document", null, true] as const;
           return [
-            w.__featherLeaving ? "leaving" : "staying",
-            w.__featherInvalid ?? null,
-            w.__featherSubmitted === true,
+            w.leaving ? "leaving" : "staying",
+            w.invalid ?? null,
+            w.submitted === true,
           ] as const;
         });
       } catch (error) {
@@ -560,10 +564,10 @@ export class PlaywrightDriver
       const token = `wait-${++waitCounter}`;
       const newDocument = this.page.waitForFunction(
         (stopToken) => {
-          const w = window as MarkedWindow;
-          if (w.__featherStoppedWaits?.delete(stopToken)) return true;
+          const w = ((window as unknown as Record<symbol, PageState>)[Symbol.for("feather-testing-core")] ??= {});
+          if (w.stoppedWaits?.delete(stopToken)) return true;
           return (
-            !w.__featherDocumentBeforeAction &&
+            !w.documentBeforeAction &&
             document.readyState === "complete"
           );
         },
@@ -590,8 +594,8 @@ export class PlaywrightDriver
           // stops. Wait (briefly) for it to stop before moving on.
           const stopped = await this.page
             .evaluate((stopToken) => {
-              const w = window as MarkedWindow;
-              (w.__featherStoppedWaits ??= new Set()).add(stopToken);
+              const w = ((window as unknown as Record<symbol, PageState>)[Symbol.for("feather-testing-core")] ??= {});
+              (w.stoppedWaits ??= new Set()).add(stopToken);
             }, token)
             .then(
               () => true,
@@ -823,7 +827,7 @@ export class PlaywrightDriver
     );
     if (blocked) {
       const byThisField = await field.evaluate(
-        (el) => (window as MarkedWindow).__featherInvalidEl === el,
+        (el) => (window as unknown as Record<symbol, PageState>)[Symbol.for("feather-testing-core")]?.invalidEl === el,
       );
       if (!byThisField) {
         throw new Error(`${verb}: the form was blocked by '${blocked.label}', not by '${label}'.`);

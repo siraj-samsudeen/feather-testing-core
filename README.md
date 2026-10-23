@@ -281,6 +281,8 @@ test("a failing chain names the failed step", async () => {
 
 Outside the Playwright Test runner the session timeout also bounds actions (fillIn, click, ...), so `page.setDefaultTimeout()` does not apply to session steps — set `timeout` on the session instead.
 
+**What the session puts in your page.** No window globals and no patched prototypes: its page state lives under one Symbol-keyed store (`window[Symbol.for("feather-testing-core")]`). The first action that may navigate installs listeners on `window`: `click` and `keydown` (capture), `submit`, `invalid` (capture) and `beforeunload`. They only record what happens; they never prevent or change it. A page script's own `requestSubmit()` is not watched.
+
 **Waiting for the next page.** `submit()`, `click()`, `clickLink()`, `clickButton()` and `pressKey()` wait for the new document when the action starts a navigation of this page — such as a form POST answered with a redirect — so the next step never reads the page that was just left. When no navigation starts (a form handled by JavaScript, `method="dialog"`, a form or link aimed at another window or an iframe), they return at once. A 204/205 answer, a download or a failed request ends the wait; a navigation replaced by a newer one (a script setting `location`) waits for the newer page.
 
 **`.rejects` needs `run()`.** `await session...` works everywhere. But bun's `expect(...).rejects` / `.resolves` accept only a real Promise, and a session chain is a thenable, so hand them `chain.run()`, which runs the queued steps and returns a real Promise.

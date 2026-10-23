@@ -1790,7 +1790,10 @@ test.describe("when the wait for a new page ends", () => {
         const w = window as unknown as Record<string, unknown>;
         let value: unknown;
         w.__reads = 0;
-        Object.defineProperty(w, "__featherDocumentBeforeAction", {
+        // The session's page state lives under one Symbol-keyed store.
+        const key = Symbol.for("feather-testing-core");
+        const store = ((w as Record<symbol, Record<string, unknown>>)[key] ??= {});
+        Object.defineProperty(store, "documentBeforeAction", {
           configurable: true,
           get() {
             (w.__reads as number)++;
@@ -1827,7 +1830,10 @@ test.describe("when the wait for a new page ends", () => {
         const w = window as unknown as Record<string, unknown>;
         let value: unknown;
         w.__reads = 0;
-        Object.defineProperty(w, "__featherDocumentBeforeAction", {
+        // The session's page state lives under one Symbol-keyed store.
+        const key = Symbol.for("feather-testing-core");
+        const store = ((w as Record<symbol, Record<string, unknown>>)[key] ??= {});
+        Object.defineProperty(store, "documentBeforeAction", {
           configurable: true,
           get() {
             (w.__reads as number)++;
@@ -1848,8 +1854,11 @@ test.describe("when the wait for a new page ends", () => {
       expect(
         await page.evaluate(
           () =>
-            (window as unknown as { __featherStoppedWaits?: Set<string> })
-              .__featherStoppedWaits?.size,
+            (
+              (window as unknown as Record<symbol, { stoppedWaits?: Set<string> }>)[
+                Symbol.for("feather-testing-core")
+              ]
+            )?.stoppedWaits?.size,
         ),
       ).toBe(0);
       const reads = () => page.evaluate(() => (window as unknown as { __reads: number }).__reads);
@@ -2164,5 +2173,38 @@ test.describe("cookies option", () => {
     }).visit("/");
     const [cookie] = await page.context().cookies();
     expect(cookie).toMatchObject({ name: "s", domain: "testapp.local", path: "/", secure: true });
+  });
+});
+
+test.describe("what the session leaves in the app's page", () => {
+  test("no patched prototypes and no window globals; refused submits still fail loudly", async ({ page }) => {
+    await page.route("**/clean", (route) =>
+      route.fulfill({
+        contentType: "text/html",
+        body: `<script>
+            window.originalRequestSubmit = HTMLFormElement.prototype.requestSubmit;
+            window.keysAtLoad = Object.keys(window);
+          </script>
+          <form><label for="t">Title</label><input id="t" required><button>Add</button></form>`,
+      }),
+    );
+    const error = await createSession(page, { timeout: 1000 })
+      .visit("/clean")
+      .fillIn("Title", "")
+      .clickButton("Add")
+      .then(
+        () => null,
+        (e: unknown) => e as StepError,
+      );
+    expect(error).toBeInstanceOf(StepError);
+    expect(error!.message).toContain("form not sent: 'Title' is required");
+    const seen = await page.evaluate(() => {
+      const w = window as unknown as { originalRequestSubmit: unknown; keysAtLoad: string[] };
+      return {
+        samePrototypeMethod: HTMLFormElement.prototype.requestSubmit === w.originalRequestSubmit,
+        newKeys: Object.keys(window).filter((k) => !w.keysAtLoad.includes(k) && k !== "keysAtLoad"),
+      };
+    });
+    expect(seen).toEqual({ samePrototypeMethod: true, newKeys: [] });
   });
 });
