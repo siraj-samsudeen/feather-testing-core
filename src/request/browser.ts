@@ -1,5 +1,6 @@
 import { Window } from "happy-dom";
 import { CookieJar } from "./cookies.js";
+import type { SessionCookie } from "../types.js";
 import { describeControl } from "./dom.js";
 import {
   buildSubmission,
@@ -80,6 +81,11 @@ export class RequestBrowser {
     readonly baseUrl: URL,
   ) {
     openWindows.register(this, this.holder);
+  }
+
+  /** Start the tab with these cookies (createSession's `cookies` option). */
+  seedCookies(cookies: readonly SessionCookie[]): void {
+    for (const cookie of cookies) this.cookies.seed(cookie, this.baseUrl);
   }
 
   get current(): CurrentPage {

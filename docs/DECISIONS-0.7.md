@@ -50,6 +50,14 @@ These are the design decisions taken for 0.7.0. Each has a short entry with its 
 
 **Decision:** Every verb an adapter cannot run fails with a message naming the adapter, the verb and what to use instead. `docs/ADAPTER_PARITY.md` now covers the RTL adapter too.
 
+### Cookies: `createSession(…, { cookies })` starts a session signed in
+
+**Adapters:** both.
+
+**Decision:** Both entry points take `cookies: [{ name, value, domain?, path?, expires?, httpOnly?, secure?, sameSite? }]`, shaped like Playwright's. The Playwright adapter adds them to the browser context before the session's first step. A cookie without `domain` is host-only for `baseUrl`'s host, and `path` defaults to `/`. The request adapter seeds its private cookie jar the same way.
+
+**Why:** Clear and additive, so it is decided under the author's rule. A later package (`feather-testing-elysia`) can then offer `logInAs(user)` on top of it, while "how to mint a session for user X" stays the consumer's callback.
+
 ## Deferred
 
 ### B2 (rest). A per-driver Session type that rejects unsupported verbs at compile time

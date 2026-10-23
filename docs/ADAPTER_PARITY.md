@@ -26,6 +26,7 @@ This matrix lists every public surface and behaviour, as of the `bun-port-stacke
 | 5 | `options.navigationStartWindow`, `options.replacedNavigationWindow` | n/a in R | These tune P's wait for a browser navigation. |
 | 6 | `options.onStep` | same | Emitted by `Session` for every driver (RTL too); it was P's `wrapStep`. |
 | 7 | `options.baseUrl` | same | Both resolve `visit()` paths as `new URL(path, baseUrl)`. Defaults: R `http://localhost`; P the browser context's `baseURL`. The contract harness gives P pages no context `baseURL`, so every contract test uses the option. |
+| 7a | `options.cookies` (start signed in) | same | P: `context.addCookies` before the first step; R: seeds the session's cookie jar. Domain defaults to `baseUrl`'s host (host-only), path to `/`. Contract-tested, including the app deleting the cookie later. |
 | 8 | `Session.run()` | same | It lives in `Session`. |
 | 9 | Step names and the `StepError` chain (`[ok]` / `[FAILED]` / `[skipped]`) | same | It lives in `Session`. |
 | 10 | `test.step()` reporting | n/a in R | Needs the Playwright runner. |

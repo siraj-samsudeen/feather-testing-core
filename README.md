@@ -122,6 +122,7 @@ const session = createSession(app.handle /* or a Playwright page */, {
   baseUrl: "http://localhost:3000", // what visit() paths resolve against
   timeout: 4000,                    // budget for anything that waits; 0 = no limit
   onStep: (e) => console.log(e.status, e.name), // started / passed / failed, secrets hidden
+  cookies: [{ name: "session", value: token }], // start signed in (optional)
 });
 ```
 
@@ -271,6 +272,7 @@ test("a failing chain names the failed step", async () => {
 | `navigationTimeout` | The page's navigation timeout (`setDefaultNavigationTimeout`, the runner's `navigationTimeout`, else 30 s) | Budget for page loads: `visit()`, `reload()`, and the new page after a submit or click that navigates. `0` means no limit. |
 | `navigationStartWindow` | `500` ms | After an action signals it is leaving the page but before any request is seen: how long to wait for the navigation to start. Raise it if submits return too early on a slow CI machine. |
 | `replacedNavigationWindow` | `250` ms | After a navigation of the page fails: how long to wait for a newer one that replaced it (a script setting `location`) before ending the wait. |
+| `cookies` | none | Cookies the session starts with, e.g. a signed-in user's session cookie: `[{ name, value, domain?, path?, expires?, httpOnly?, secure?, sameSite? }]` (`expires` in seconds). Without `domain` a cookie is host-only for `baseUrl`'s host; `path` defaults to `/`. Added to the browser context before the first step. The app's own cookies behave as usual afterwards. |
 | `onStep` | none | Called with `{ name, status: "started" \| "passed" \| "failed", error? }` for each step — a stand-in for `test.step()`, e.g. to log progress. A value typed into a password or secret-looking field shows as `••••••` in every event. |
 
 **Timeouts.** The 4000 ms session default sits below bun's 5000 ms per-test default, so a failing assertion or action reports its chain (`>>> [FAILED] assertText('Nope')`) instead of a bare "test timed out". Keep the session `timeout` below bun's limit. Page loads keep Playwright's longer navigation timeout, so a dev server that is slow to answer its first request is not cut short. `timeout: 0` (or `navigationTimeout: 0`) removes the limit, leaving only bun's per-test limit, so a failure then shows as "test timed out" without the chain.
@@ -783,11 +785,12 @@ The third constructor argument is a per-lookup timeout in ms; omit it to keep RT
 ### The handler contract
 
 ```ts
-createSession(handler, { baseUrl?, timeout?, onStep? })
+createSession(handler, { baseUrl?, timeout?, onStep?, cookies? })
 ```
 
 - `handler` is any `(request: Request) => Response | Promise<Response>`: Elysia's `app.handle`, Hono's `app.fetch`, or `fetch` itself pointed at a running server. Pass a function that keeps its `this` (both of those are already bound). The adapter has no framework dependency.
 - `baseUrl` is what `visit()` paths resolve against — an origin, optionally with a base path (`"http://localhost/app/"`). It defaults to `http://localhost`. Every request carries a full URL on that origin.
+- `cookies` starts the session with cookies in its jar (a signed-in session cookie, say), as in the Playwright adapter: without `domain` a cookie is host-only for `baseUrl`'s host, `path` defaults to `/`, `expires` is in seconds.
 - `timeout` is the budget of `until()`, the one verb that waits here (default 4000 ms, `0` = no limit), and `onStep` reports each step as it starts, passes or fails, as in the Playwright adapter.
 - Each request is sent with `redirect: "manual"`; the adapter follows redirects itself.
 

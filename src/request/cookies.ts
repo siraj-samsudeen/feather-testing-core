@@ -108,6 +108,37 @@ export class CookieJar {
     }
   }
 
+  /**
+   * Put a cookie in the jar directly, as a session that starts signed in
+   * would have it. Without a domain it is host-only for `base`'s host.
+   */
+  seed(
+    cookie: {
+      name: string;
+      value: string;
+      domain?: string;
+      path?: string;
+      expires?: number;
+      secure?: boolean;
+    },
+    base: URL,
+  ): void {
+    const domain = (cookie.domain ?? base.hostname).replace(/^\./, "").toLowerCase();
+    this.cookies = this.cookies.filter(
+      (c) =>
+        !(c.name === cookie.name && c.domain === domain && c.path === (cookie.path ?? "/")),
+    );
+    this.cookies.push({
+      name: cookie.name,
+      value: cookie.value,
+      domain,
+      hostOnly: cookie.domain === undefined,
+      path: cookie.path ?? "/",
+      secure: cookie.secure === true,
+      expires: cookie.expires === undefined ? null : cookie.expires * 1000,
+    });
+  }
+
   /** The Cookie header a browser would send with a request to `url`, or null. */
   header(url: URL): string | null {
     const host = url.hostname.toLowerCase();

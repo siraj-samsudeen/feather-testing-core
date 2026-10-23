@@ -57,6 +57,24 @@ export interface StepEvent {
 }
 
 /**
+ * A cookie to start a session with, e.g. a signed-in session's cookie.
+ * Shaped like Playwright's: `expires` is in seconds since the epoch.
+ */
+export interface SessionCookie {
+  name: string;
+  value: string;
+  /** Default: the host of the session's baseUrl (a host-only cookie). */
+  domain?: string;
+  /** Default: "/". */
+  path?: string;
+  /** Seconds since the epoch; default: a session cookie. */
+  expires?: number;
+  httpOnly?: boolean;
+  secure?: boolean;
+  sameSite?: "Strict" | "Lax" | "None";
+}
+
+/**
  * Options every adapter's createSession(native, options) accepts. Adapters
  * add their own (e.g. Playwright's navigationTimeout).
  */
@@ -82,6 +100,12 @@ export interface SessionOptions {
    * every event.
    */
   onStep?: (event: StepEvent) => void;
+  /**
+   * Cookies the session starts with — e.g. a signed-in user's session
+   * cookie, minted by the test — sent from the first request on. Cookies the
+   * app sets or deletes later behave as usual.
+   */
+  cookies?: SessionCookie[];
 }
 
 /** The session timeout when none is set (and, for Playwright, outside its runner). */

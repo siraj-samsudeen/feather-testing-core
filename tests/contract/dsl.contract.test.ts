@@ -637,6 +637,36 @@ for (const driver of drivers) {
       });
     }, 60_000);
 
+    it("cookies: a session can start signed in; the server's own cookies behave as before", async () => {
+      await withApp(async (h) => {
+        await h
+          .session({ cookies: [{ name: "session", value: "ada%40example.com", httpOnly: true }] })
+          .visit("/dashboard")
+          .assertPath("/dashboard")
+          .assertText("Signed in as ada@example.com")
+          .clickLink("Sign out")
+          .assertPath("/login")
+          .visit("/dashboard")
+          .assertPath("/login");
+      });
+    }, TEST_TIMEOUT);
+
+    it("cookies: path is honoured and the first request carries them", async () => {
+      await withApp(async (h) => {
+        await h
+          .session({
+            cookies: [
+              { name: "theme", value: "dark" },
+              { name: "flash", value: "Hi", path: "/dashboard" },
+            ],
+          })
+          .visit("/echo")
+          .within("#cookie", (s) => s.assertExactText("theme=dark"));
+        const first = h.app.requests[0]!;
+        expect(first.headers.get("cookie")).toBe("theme=dark");
+      });
+    }, TEST_TIMEOUT);
+
     it("#56 step() and raw() run inside the chain", async () => {
       await withApp(async (h) => {
         const seen: string[] = [];

@@ -166,6 +166,9 @@ export class RequestDriver
             new URL(options.baseUrl ?? "http://localhost"),
           );
     this.scopeSelectors = scopeSelectors;
+    if (!(handler instanceof RequestBrowser) && options.cookies) {
+      this.browser.seedCookies(options.cookies);
+    }
   }
 
   // --- Scope ---

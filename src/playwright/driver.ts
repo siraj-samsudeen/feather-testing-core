@@ -155,7 +155,44 @@ export class PlaywrightDriver
     private options: PlaywrightSessionOptions = {},
     /** Whether the Playwright runner is active, when already known (within()). */
     private insideRunnerCache?: boolean,
+    /** The session's cookie seeding, shared with within()'s scoped drivers. */
+    private cookieSeed: { done: Promise<void> | null } = { done: null },
   ) {}
+
+  /**
+   * Add the `cookies` option's cookies to the browser context, once per
+   * session, before its first step. A cookie without a domain is set for
+   * the session's baseUrl (or the page's current URL) — host-only.
+   */
+  private seedCookies(): Promise<void> {
+    if (this.cookieSeed.done) return this.cookieSeed.done;
+    const cookies = this.options.cookies ?? [];
+    this.cookieSeed.done =
+      cookies.length === 0
+        ? Promise.resolve()
+        : (async () => {
+            const base = this.options.baseUrl ?? this.page.url();
+            const origin = /^https?:/.test(base) ? new URL(base) : null;
+            await this.page.context().addCookies(
+              cookies.map((c) => {
+                const { domain, path, ...rest } = c;
+                if (domain !== undefined) {
+                  return { ...rest, domain, path: path ?? "/" };
+                }
+                if (!origin) {
+                  throw new Error(
+                    `cookies: '${c.name}' has no domain, and the session has no baseUrl ` +
+                      "to take it from. Pass baseUrl to createSession, or give the cookie a domain.",
+                  );
+                }
+                return path === undefined
+                  ? { ...rest, url: `${origin.origin}/` }
+                  : { ...rest, domain: origin.hostname, path };
+              }),
+            );
+          })();
+    return this.cookieSeed.done;
+  }
 
   /**
    * The session budget: the caller's option, else Playwright's own defaults
@@ -553,6 +590,7 @@ export class PlaywrightDriver
   }
 
   async visit(path: string): Promise<void> {
+    await this.seedCookies(); // also when the driver is used without a Session
     // With baseUrl, paths resolve as in the request adapter; without it,
     // Playwright resolves them against the browser context's baseURL.
     const url =
@@ -1109,6 +1147,7 @@ export class PlaywrightDriver
       scopedLocator,
       this.options,
       this.insideRunner(),
+      this.cookieSeed,
     );
   }
 
@@ -1120,7 +1159,11 @@ export class PlaywrightDriver
   }
 
   async wrapStep(name: string, fn: () => Promise<void>): Promise<void> {
+    const run = async () => {
+      await this.seedCookies();
+      await fn();
+    };
     // Outside @playwright/test there is no test.step(): run the step directly.
-    return this.insideRunner() ? test.step(name, fn) : fn();
+    return this.insideRunner() ? test.step(name, run) : run();
   }
 }
