@@ -2071,8 +2071,10 @@ test.describe("an action that closes the page", () => {
   test("reports the closed page, not a navigation that never finished", async ({
     page,
   }) => {
-    // The button asks the test to close the page while the click runs.
-    await page.exposeFunction("closeThisPage", () => page.close());
+    // The button makes a synchronous request, which blocks the page (and so
+    // the click) until it is answered; the test closes the page instead of
+    // answering. The page is always closed before the click can finish.
+    await page.route("**/close-this-page", () => void page.close());
     const error = await createSession(page, { timeout: 1000 })
       .visit("/closing")
       .clickButton("Close this window")

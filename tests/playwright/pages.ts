@@ -325,7 +325,9 @@ export const pages: Record<string, string> = {
 
   "/closing": `<!DOCTYPE html>
 <html><body>
-  <button onclick="closeThisPage()">Close this window</button>
+  <!-- A synchronous request blocks the page until the test closes it, so
+       the click can never finish first, however busy the machine is. -->
+  <button onclick="const x = new XMLHttpRequest(); x.open('GET', '/close-this-page', false); x.send();">Close this window</button>
 </body></html>`,
 
   "/late-password": `<!DOCTYPE html>
