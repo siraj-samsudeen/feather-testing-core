@@ -223,6 +223,16 @@ export class RequestBrowser {
         `${verb}: a browser would not submit this form: '${describeControl(missing)}' is required but empty.`,
       );
     }
+    // method="dialog" (or the submitter's formmethod="dialog") closes the
+    // form's dialog and sends nothing: plain HTML, no JavaScript involved.
+    const methodAttr =
+      (submitter?.hasAttribute("formmethod")
+        ? submitter.getAttribute("formmethod")
+        : null) ?? form.getAttribute("method");
+    if (methodAttr?.trim().toLowerCase() === "dialog") {
+      form.closest("dialog")?.removeAttribute("open");
+      return;
+    }
     const { method, url, body, headers } = buildSubmission(
       verb,
       form,

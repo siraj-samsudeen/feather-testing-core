@@ -50,6 +50,8 @@ const pages: Pages = {
       <button>Send</button>
     </form>`,
   "/list": `<ul><li class="item">One</li><li class="item">Two</li></ul>`,
+  "/dialog": `<p>Behind the dialog</p>
+    <dialog open><form method="dialog"><p>Are you sure?</p><button>Close</button></form></dialog>`,
 };
 
 for (const driver of drivers) {
@@ -218,6 +220,20 @@ for (const driver of drivers) {
           .visit("/links")
           .assertDownload("report.csv", (s) => s.clickLink("Report"))
           .assertPath("/links");
+      });
+    }, TEST_TIMEOUT);
+
+    it("#24 a method=\"dialog\" form closes its dialog and sends nothing", async () => {
+      await withApp(async (h) => {
+        await h
+          .session()
+          .visit("/dialog")
+          .clickButton("Close")
+          .assertPath("/dialog")
+          .assertHas("dialog", { count: 1 })
+          .refuteHas("dialog[open]")
+          .assertText("Behind the dialog");
+        expect(h.app.requests.map((r) => r.method)).toEqual(["GET"]);
       });
     }, TEST_TIMEOUT);
 
