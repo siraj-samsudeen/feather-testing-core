@@ -88,39 +88,120 @@ export interface DefineTestOptions<F> {
   timeout?: (options: Record<string, unknown>) => number | undefined;
 }
 
+/** What a function's first parameter looks like, as far as fixtures care. */
+type FirstParam =
+  | { kind: "none" }
+  | { kind: "destructured"; names: string[] }
+  | { kind: "identifier"; name: string }
+  | { kind: "unsupported"; why: string };
+
 /**
- * The names a function's first parameter destructures: `({ a, b: x }) =>`
- * gives ["a", "b"]. Null when the parameter is not an object pattern.
+ * Split `text` at top-level commas, skipping strings, template literals,
+ * comments and anything nested in (), [] or {}. Comments are dropped.
  */
-export function destructuredNames(fn: (...args: never[]) => unknown): string[] | null {
-  const source = Function.prototype.toString.call(fn);
-  const open = source.indexOf("(");
-  const arrowOnly = /^\s*(async\s+)?[A-Za-z_$][\w$]*\s*=>/.test(source);
-  if (open < 0 || arrowOnly) return null;
-  let i = open + 1;
-  while (/\s/.test(source[i] ?? "")) i++;
-  if (source[i] !== "{") return null;
-  let depth = 0;
-  let start = i + 1;
+function splitTopLevel(text: string): string[] {
   const parts: string[] = [];
-  for (; i < source.length; i++) {
-    const c = source[i];
-    if (c === "{" || c === "[" || c === "(") depth++;
-    else if (c === "}" || c === "]" || c === ")") {
+  let depth = 0;
+  let current = "";
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i]!;
+    const next = text[i + 1];
+    if (c === "/" && next === "/") {
+      const end = text.indexOf("\n", i);
+      i = end < 0 ? text.length : end;
+      continue;
+    }
+    if (c === "/" && next === "*") {
+      const end = text.indexOf("*/", i + 2);
+      i = end < 0 ? text.length : end + 1;
+      continue;
+    }
+    if (c === '"' || c === "'" || c === "`") {
+      let j = i + 1;
+      while (j < text.length && text[j] !== c) j += text[j] === "\\" ? 2 : 1;
+      current += text.slice(i, j + 1);
+      i = j;
+      continue;
+    }
+    if (c === "(" || c === "[" || c === "{") depth++;
+    if (c === ")" || c === "]" || c === "}") depth--;
+    if (c === "," && depth === 0) {
+      parts.push(current);
+      current = "";
+      continue;
+    }
+    current += c;
+  }
+  parts.push(current);
+  return parts.map((part) => part.trim()).filter((part) => part !== "");
+}
+
+/** The text between the parentheses that open at `open`, comments kept. */
+function parenthesised(source: string, open: number): string {
+  let depth = 0;
+  for (let i = open; i < source.length; i++) {
+    const c = source[i]!;
+    if (c === '"' || c === "'" || c === "`") {
+      let j = i + 1;
+      while (j < source.length && source[j] !== c) j += source[j] === "\\" ? 2 : 1;
+      i = j;
+      continue;
+    }
+    if (c === "/" && source[i + 1] === "/") {
+      const end = source.indexOf("\n", i);
+      i = end < 0 ? source.length : end;
+      continue;
+    }
+    if (c === "/" && source[i + 1] === "*") {
+      const end = source.indexOf("*/", i + 2);
+      i = end < 0 ? source.length : end + 1;
+      continue;
+    }
+    if (c === "(") depth++;
+    if (c === ")") {
       depth--;
-      if (depth === 0) {
-        parts.push(source.slice(start, i));
-        break;
-      }
-    } else if (c === "," && depth === 1) {
-      parts.push(source.slice(start, i));
-      start = i + 1;
+      if (depth === 0) return source.slice(open + 1, i);
     }
   }
-  return parts
-    .map((part) => part.trim())
-    .filter((part) => part !== "" && !part.startsWith("..."))
-    .map((part) => part.split(/[:=]/)[0]!.trim().replace(/^["']|["']$/g, ""));
+  return source.slice(open + 1);
+}
+
+function firstParam(fn: (...args: never[]) => unknown): FirstParam {
+  const source = Function.prototype.toString.call(fn);
+  const arrow = /^\s*(?:async\s+)?([A-Za-z_$][\w$]*)\s*=>/.exec(source);
+  if (arrow) return { kind: "identifier", name: arrow[1]! };
+  const open = source.indexOf("(");
+  if (open < 0) return { kind: "none" };
+  const params = splitTopLevel(parenthesised(source, open));
+  const first = params[0];
+  if (first === undefined) return { kind: "none" };
+  if (first.startsWith("...")) return { kind: "unsupported", why: "a rest parameter" };
+  if (!first.startsWith("{")) {
+    const name = /^[A-Za-z_$][\w$]*/.exec(first)?.[0] ?? first;
+    return { kind: "identifier", name };
+  }
+  // The object pattern, without its braces (and without a default after it).
+  const close = first.lastIndexOf("}");
+  const names: string[] = [];
+  for (const entry of splitTopLevel(first.slice(1, close))) {
+    if (entry.startsWith("...")) return { kind: "unsupported", why: `a rest pattern (${entry})` };
+    if (entry.startsWith("[")) return { kind: "unsupported", why: `a computed key (${entry})` };
+    const key = /^(?:"([^"]*)"|'([^']*)'|([A-Za-z_$][\w$]*))/.exec(entry);
+    if (!key) return { kind: "unsupported", why: `the entry ${entry}` };
+    names.push(key[1] ?? key[2] ?? key[3]!);
+  }
+  return { kind: "destructured", names };
+}
+
+/**
+ * The names a function's first parameter destructures: `({ a, b: x }) =>`
+ * gives ["a", "b"]; no parameter gives []. Null when the parameter is not
+ * an object pattern the engine can read (a plain name, a rest pattern).
+ */
+export function destructuredNames(fn: (...args: never[]) => unknown): string[] | null {
+  const param = firstParam(fn);
+  if (param.kind === "none") return [];
+  return param.kind === "destructured" ? param.names : null;
 }
 
 function normalize(name: string, def: unknown): Definition {
@@ -139,8 +220,17 @@ function normalize(name: string, def: unknown): Definition {
   const scope = options.scope === "file" || options.scope === "worker" ? "file" : "test";
   if (typeof body === "function" && !options.value) {
     const fn = body as FixtureFn<unknown, Record<string, unknown>>;
-    const deps = options.deps ?? destructuredNames(fn) ?? [];
-    return { fn, scope, deps };
+    if (options.deps) return { fn, scope, deps: options.deps };
+    const param = firstParam(fn as (...args: never[]) => unknown);
+    if (param.kind === "none") return { fn, scope, deps: [] };
+    if (param.kind === "destructured") return { fn, scope, deps: param.names };
+    // `_` or `_anything`: the fixtures are not used.
+    if (param.kind === "identifier" && param.name.startsWith("_")) return { fn, scope, deps: [] };
+    throw new Error(
+      `fixture '${name}': cannot read its dependencies from ` +
+        `${param.kind === "unsupported" ? param.why : `the parameter '${param.name}'`}. ` +
+        `Destructure them (async ({ baseUrl }, use) => …), or name them: [fn, { deps: ["baseUrl"] }].`,
+    );
   }
   return { fn: null, value: body, scope, deps: [] };
 }
@@ -274,12 +364,19 @@ function build<F>(
   };
 
   const register = (name: string, uses: string[] | null, body: TestBody<F>) => {
-    const wanted = uses ?? destructuredNames(body as (...args: never[]) => unknown);
-    if (wanted === null) {
-      throw new Error(
-        `test '${name}': cannot see which fixtures the test uses — destructure them ` +
-          "(async ({ session }) => …) or name them: test(name, ['session'], fn).",
-      );
+    let wanted = uses;
+    if (!wanted) {
+      const param = firstParam(body as (...args: never[]) => unknown);
+      if (param.kind === "destructured") wanted = param.names;
+      else if (param.kind === "none") wanted = [];
+      else {
+        throw new Error(
+          `test '${name}': cannot see which fixtures the test uses ` +
+            `(${param.kind === "unsupported" ? param.why : `the parameter '${param.name}'`}) — ` +
+            "destructure them (async ({ session, request }) => …) or name them: " +
+            "test(name, ['session', 'request'], fn).",
+        );
+      }
     }
     if (!fileScope.registered) {
       fileScope.registered = true;

@@ -51,6 +51,50 @@ function loggingFixtures(log: string[]) {
   };
 }
 
+describe("reading destructured names from real code", () => {
+  it("handles comments, defaults with commas and braces, renames and quoted keys", () => {
+    const withComments = async ({
+      // the browser session
+      session /* , notAFixture */,
+      request = "a,b}" as unknown,
+      "baseUrl": renamed,
+      other = { nested: [1, 2] },
+    }: Record<string, unknown>) => [session, request, renamed, other];
+    expect(destructuredNames(withComments)).toEqual(["session", "request", "baseUrl", "other"]);
+  });
+
+  it("refuses a rest pattern or an undestructured parameter in a test, showing the explicit form", () => {
+    const { runner } = recordingRunner();
+    const test = defineTest(runner, { a: 1 } as never);
+    expect(() => test("rest", async ({ ...all }: Record<string, unknown>) => void all)).toThrow(
+      "test(name, ['session', 'request'], fn)",
+    );
+    expect(() => test("plain", async (all: unknown) => void all)).toThrow(
+      "test(name, ['session', 'request'], fn)",
+    );
+  });
+
+  it("refuses a fixture function whose dependencies it cannot read, showing { deps }", () => {
+    const { runner } = recordingRunner();
+    expect(() =>
+      defineTest(runner, {
+        x: async (fixtures: Record<string, unknown>, use: (v: unknown) => Promise<void>) => use(fixtures),
+      } as never),
+    ).toThrow("[fn, { deps: [");
+    expect(() =>
+      defineTest(runner, {
+        y: async ({ ...all }: Record<string, unknown>, use: (v: unknown) => Promise<void>) => use(all),
+      } as never),
+    ).toThrow("[fn, { deps: [");
+    // An unused first parameter named with a leading underscore means no dependencies.
+    expect(() =>
+      defineTest(runner, {
+        z: async (_: unknown, use: (v: number) => Promise<void>) => use(1),
+      } as never),
+    ).not.toThrow();
+  });
+});
+
 describe("destructuredNames", () => {
   it("reads the names a function's first parameter destructures", () => {
     expect(destructuredNames(async ({ a, b: renamed, c = 1 }: Record<string, number>) => [a, renamed, c])).toEqual(["a", "b", "c"]);
