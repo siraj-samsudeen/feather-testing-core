@@ -113,6 +113,10 @@ Core provides its own fixtures through `defineCoreTest(runner)`: `browser` (file
   - The explicit-list hint is copy-pasteable.
   - `session` needs no `baseUrl` fixture when the context has a `baseURL`.
 
+### Consumer-supplied core fixtures have runtime definitions
+
+**Decision:** `handler` (and `baseUrl`, which defaults to none) are defined by core, so `defineCoreTest(runner).with({ handler: value(app.handle) })` works. Used without being supplied, `handler` fails with how to supply it. This was decided after Codex round 13.
+
 ## Deferred
 
 ### B2 (rest). A per-driver Session type that rejects unsupported verbs at compile time

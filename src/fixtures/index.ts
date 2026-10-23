@@ -118,6 +118,14 @@ export function coreFixtures(): FixtureDefs<CoreFixtures, CoreFixtures> {
     record: recordFromEnv,
     outputDir: "test-results",
     baseUrl: undefined,
+    // Declared so .with({ handler: value(app.handle) }) can replace it; used
+    // as is, it says how to supply it.
+    handler: async () => {
+      throw new Error(
+        "the 'handler' fixture is not supplied: give it with .with({ handler: value(app.handle) }) " +
+          "or .extend({ handler: … }) — the request fixture needs it.",
+      );
+    },
 
     browser: [
       async ({ browserName, headed, slowMo }, use) => {
