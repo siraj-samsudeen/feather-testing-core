@@ -359,7 +359,10 @@ Core's fixtures:
 - `.with({ browserName: "firefox" })` gives a file its own option values. `defineTest(runner, fixtures, { overrides })` does the same for every test.
 - A file-scoped fixture is shared by the tests that see the same definitions of it and of what it depends on: changing `headed` with `.with()` gets its own browser, changing `record` does not.
 - In minified code, name the fixtures explicitly: `test(name, ["session"], fn)`.
-- **Timeouts.** A test gets a 30 s timeout unless you set one: `defineTest(runner, fixtures, { testTimeout })`, or a 120 s timeout when headed. On a timeout, bun:test and Vitest fail the test but leave its body running. So the engine stops waiting for the body a little before the runner's limit, tears the test's fixtures down, and fails the test with "did not finish within …". A setup still running then is torn down when it finishes. Each teardown may take `teardownTimeout` (10 s): a hung one is reported, and the others still run.
+- **Timeouts.** A test (setup and body) gets a 30 s budget unless you set one: `defineTest(runner, fixtures, { testTimeout })`, or 120 s when headed. Its fixtures then get a teardown allowance, `teardownTimeout` (10 s), shared by all of them. The runner is handed the sum plus 1 s of slack, so it never gives up while cleanup is running.
+  - When the budget is spent, the engine abandons the test: nothing more is set up, the body never starts if it had not yet, and the fixtures are torn down in the exact reverse of the order they became ready.
+  - A hung teardown, or a setup still running (test- or file-scoped), is waited for only within the allowance and reported. The rest still run, and a late setup is torn down once, when it finishes.
+  - On a timeout, bun:test and Vitest fail the test but leave its body running, which is why the engine keeps its own clock.
 
 ### React Testing Library
 

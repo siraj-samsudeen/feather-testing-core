@@ -89,18 +89,25 @@ export interface DefineTestOptions<F> {
   /**
    * The per-test timeout when `timeout` gives none, in ms (default
    * {@link DEFAULT_TEST_TIMEOUT}). The engine hands it to the runner and
-   * stops waiting for a hung test a little before it, so the test's
+   * stops waiting for a hung test when it is spent, so the test's
    * fixtures are still torn down.
    */
   testTimeout?: number;
-  /** How long each fixture's teardown may take, in ms (default {@link DEFAULT_TEARDOWN_TIMEOUT}). */
+  /**
+   * The total time the fixtures of one test (or one block's file-scoped
+   * fixtures) get to tear down, in ms (default
+   * {@link DEFAULT_TEARDOWN_TIMEOUT}). The runner is handed the test's
+   * timeout plus this, so it never gives up while cleanup is running.
+   */
   teardownTimeout?: number;
 }
 
 /** The per-test timeout the engine hands the runner when none is given. */
 export const DEFAULT_TEST_TIMEOUT = 30_000;
-/** How long one fixture's teardown may take before it is reported and skipped. */
+/** The total teardown allowance of one test (and of one block's file-scoped fixtures). */
 export const DEFAULT_TEARDOWN_TIMEOUT = 10_000;
+/** Slack between the engine's own deadline and the runner's. */
+const RUNNER_MARGIN = 1000;
 
 /** A promise that rejects with `message` after `ms`, and a way to cancel it. */
 function deadline(ms: number, message: string): { reached: Promise<never>; cancel: () => void } {
@@ -112,14 +119,47 @@ function deadline(ms: number, message: string): { reached: Promise<never>; cance
   return { reached, cancel: () => clearTimeout(timer) };
 }
 
-/** Run a teardown with a time limit; a hung one is reported, not waited for. */
-async function limitedTeardown(name: string, active: Active, ms: number): Promise<void> {
-  const limit = deadline(ms, `fixture '${name}': teardown did not finish within ${ms}ms`);
-  try {
-    await Promise.race([active.teardown(), limit.reached]);
-  } finally {
-    limit.cancel();
+/**
+ * A total time allowance shared by a series of teardowns: each one is
+ * waited for only as long as what is left; a hung one is reported and the
+ * rest still run, and nothing is ever waited for past the allowance.
+ */
+class TeardownBudget {
+  private readonly ends: number;
+  readonly errors: unknown[] = [];
+
+  constructor(private readonly ms: number) {
+    this.ends = Date.now() + ms;
   }
+
+  private left(): number {
+    return Math.max(0, this.ends - Date.now());
+  }
+
+  /** Wait for `work` within what is left; report it under `name` if it does not finish. */
+  async wait<T>(name: string, what: string, work: Promise<T>): Promise<T | undefined> {
+    const limit = deadline(
+      this.left(),
+      `fixture '${name}': ${what} did not finish within the ${this.ms}ms teardown allowance`,
+    );
+    try {
+      return await Promise.race([work, limit.reached]);
+    } catch (error) {
+      this.errors.push(error);
+      return undefined;
+    } finally {
+      limit.cancel();
+    }
+  }
+}
+
+/** Tear `active` down once, however many times it is asked to. */
+function once(active: Active): Active {
+  let torn: Promise<void> | null = null;
+  return {
+    value: active.value,
+    teardown: () => (torn ??= active.teardown()),
+  };
 }
 
 /** What a function's first parameter looks like, as far as fixtures care. */
@@ -330,33 +370,88 @@ function definitionId(def: Definition): number {
   return id;
 }
 
+/** A fixture instance and its setup, as a scope keeps it. */
+interface Entry {
+  name: string;
+  /** The setup, cached before it is awaited so concurrent tests share it. */
+  pending: Promise<Active>;
+  /** Set once the setup has finished. */
+  active?: Active;
+}
+
 class FileScope {
-  /**
-   * Setups in progress or done, by key. The promise is stored before it is
-   * awaited, so tests running at the same time share one setup.
-   */
-  values = new Map<string, Promise<Active>>();
-  order: string[] = [];
+  values = new Map<string, Entry>();
+  /** Keys in the order their setup FINISHED; teardown runs in reverse. */
+  ready: string[] = [];
 
   constructor(private teardownTimeout: number) {}
 
   async teardown(): Promise<void> {
-    const errors: unknown[] = [];
-    // Only what exists now; each key is removed as it is torn down, so a
+    const budget = new TeardownBudget(this.teardownTimeout);
+    // What exists now; each key leaves the scope as it is torn down, so a
     // later hook (another block's) does not tear it down twice.
-    for (const name of [...this.order].reverse()) {
-      const pending = this.values.get(name);
-      this.values.delete(name);
-      const at = this.order.indexOf(name);
-      if (at >= 0) this.order.splice(at, 1);
-      try {
-        const active = await pending?.catch(() => null);
-        if (active) await limitedTeardown(name.split("#")[0]!, active, this.teardownTimeout);
-      } catch (error) {
-        errors.push(error);
-      }
+    const finished = [...this.ready].reverse();
+    const unfinished = [...this.values.keys()].filter((key) => !finished.includes(key));
+    this.ready = [];
+    const entries = new Map(this.values);
+    for (const key of [...finished, ...unfinished]) this.values.delete(key);
+    for (const key of finished) {
+      const entry = entries.get(key)!;
+      await budget.wait(entry.name, "teardown", entry.active!.teardown());
     }
-    if (errors.length > 0) throw errors[0];
+    // A setup still running (perhaps hung) is waited for only within the
+    // allowance; if it finishes later, it is torn down then, once.
+    for (const key of unfinished) {
+      const entry = entries.get(key)!;
+      const late = entry.pending.then(
+        (active) => active.teardown(),
+        () => undefined, // a failed setup has nothing to tear down
+      );
+      await budget.wait(entry.name, "setup", late);
+    }
+    if (budget.errors.length > 0) throw budget.errors[0];
+  }
+}
+
+/**
+ * Everything one test owns: whether it has been abandoned, the fixtures it
+ * set up (in the order their setup finished), and its teardown.
+ */
+class TestLifecycle {
+  abandoned = false;
+  readonly values = new Map<string, Entry>();
+  readonly ready: string[] = [];
+
+  constructor(private readonly name: string) {}
+
+  /** Throw if the test was given up on: nothing more may start. */
+  check(): void {
+    if (this.abandoned) {
+      throw new Error(`test '${this.name}' was abandoned; nothing more is started`);
+    }
+  }
+
+  async teardown(allowance: number): Promise<unknown[]> {
+    const budget = new TeardownBudget(allowance);
+    for (const key of [...this.ready].reverse()) {
+      const entry = this.values.get(key)!;
+      await budget.wait(entry.name, "teardown", entry.active!.teardown());
+    }
+    // Setups still running were abandoned with the test; each tears itself
+    // down when it finishes (see setUp), so they are only waited for here
+    // within what is left of the allowance.
+    for (const [key, entry] of this.values) {
+      if (this.ready.includes(key)) continue;
+      await budget.wait(
+        entry.name,
+        "setup",
+        entry.pending.then(
+          (active) => active.teardown(),
+          () => undefined, // a failed setup has nothing to tear down
+        ),
+      );
+    }
+    return budget.errors;
   }
 }
 
@@ -427,66 +522,75 @@ function build<F>(
     // nothing left. A flag here would register only in the first block.
     runner.afterAll(() => fileScope.teardown());
     const timeout = settings.timeout?.(optionValues()) ?? settings.testTimeout ?? DEFAULT_TEST_TIMEOUT;
-    const teardownTimeout = settings.teardownTimeout ?? DEFAULT_TEARDOWN_TIMEOUT;
-    // Stop waiting a little before the runner gives up, to tear down in time.
-    const engineDeadline = timeout > 0 ? Math.max(1, timeout - Math.min(1000, timeout / 10)) : 0;
+    const teardownAllowance = settings.teardownTimeout ?? DEFAULT_TEARDOWN_TIMEOUT;
+    // One budget: the body gets `timeout`, teardown gets its allowance, and
+    // the runner is handed both (plus slack), so it never gives up while the
+    // engine is still cleaning up. 0 means no limit, for the runner too.
+    const runnerTimeout = timeout > 0 ? timeout + teardownAllowance + RUNNER_MARGIN : 0;
     runner.test(
       name,
       async () => {
         const info: TestInfo = { title: name, status: "running" };
-        let abandoned = false;
-        /** Test-scoped fixtures whose setup has finished. */
-        const done = new Map<string, Active>();
-        const active = new Map<string, Promise<Active>>();
-        const order: string[] = [];
+        const life = new TestLifecycle(name);
         // Boxed results: a fixture value can be a thenable (a session), and
         // an async function would await it on return.
         const setUp = async (fixture: string, chain: string[]): Promise<{ value: unknown }> => {
+          life.check();
           if (chain.includes(fixture)) {
             throw new Error(`fixtures depend on each other in a cycle: ${[...chain, fixture].join(" → ")}`);
           }
           const def = resolveName(fixture, chain);
-          const key = def.scope === "file" ? fileKey(fixture) : fixture;
-          const store = def.scope === "file" ? fileScope.values : active;
-          const keys = def.scope === "file" ? fileScope.order : order;
-          let pending = store.get(key);
-          if (!pending) {
-            pending = (async () => {
+          const fileScoped = def.scope === "file";
+          const key = fileScoped ? fileKey(fixture) : fixture;
+          const store = fileScoped ? fileScope.values : life.values;
+          const ready = fileScoped ? fileScope.ready : life.ready;
+          let entry = store.get(key);
+          if (!entry) {
+            const pending = (async () => {
               const deps: Record<string, unknown> = {};
               for (const dep of def.deps) {
                 const depDef = resolveName(dep, [...chain, fixture]);
                 // A plain value has no lifetime; a test-scoped fixture function
                 // would be torn down under the file-scoped one.
-                if (def.scope === "file" && depDef.fn && depDef.scope === "test") {
+                if (fileScoped && depDef.fn && depDef.scope === "test") {
                   throw new Error(
                     `file-scoped fixture '${fixture}' cannot depend on test-scoped fixture '${dep}'.`,
                   );
                 }
                 deps[dep] = (await setUp(dep, [...chain, fixture])).value;
+                if (!fileScoped) life.check();
               }
-              const started = await start(fixture, def, deps, info);
-              if (abandoned && def.scope === "test") {
-                // The test was given up on while this was setting up.
-                await limitedTeardown(fixture, started, teardownTimeout).catch(() => undefined); // nothing left to report to
+              const active = once(await start(fixture, def, deps, info));
+              if (!fileScoped && life.abandoned) {
+                // Finished after the test was given up on: tear it down now.
+                // (TestLifecycle.teardown waits for this within its allowance.)
+                await active.teardown();
                 throw new Error(`fixture '${fixture}' finished setting up after the test was abandoned`);
               }
-              if (def.scope === "test") done.set(key, started);
-              return started;
+              return active;
             })();
+            const created: Entry = { name: fixture, pending };
+            entry = created;
             // Cached before it is awaited, so concurrent tests share it;
-            // dropped if it fails, so the next test tries again.
-            store.set(key, pending);
-            keys.push(key);
-            const settled = pending;
-            settled.catch(() => {
-              if (store.get(key) === settled) store.delete(key);
-              const at = keys.indexOf(key);
-              if (at >= 0) keys.splice(at, 1);
-            });
+            // recorded as ready when it FINISHES, so teardown is the exact
+            // reverse of readiness; dropped if it fails, so the next test
+            // tries again.
+            store.set(key, created);
+            pending.then(
+              (active) => {
+                created.active = active;
+                if (store.get(key) === created) ready.push(key);
+              },
+              () => {
+                if (store.get(key) === created) store.delete(key);
+              },
+            );
           }
-          const started = await pending;
-          return { value: started.value };
+          const active = await entry.pending;
+          life.check();
+          return { value: active.value };
         };
+
         let failure: unknown;
         let failed = false;
         const run = (async () => {
@@ -494,14 +598,14 @@ function build<F>(
           for (const fixture of wanted) {
             fixtures[fixture] = (await setUp(fixture, [])).value;
           }
+          life.check(); // a slow setup must not let an abandoned test start its body
           await body(fixtures as F);
         })();
         const limit =
-          engineDeadline > 0
+          timeout > 0
             ? deadline(
-                engineDeadline,
-                `test '${name}' did not finish within ${timeout}ms; its fixtures were torn down ` +
-                  `(the engine stopped waiting at ${Math.round(engineDeadline)}ms).`,
+                timeout,
+                `test '${name}' did not finish within ${timeout}ms; its fixtures were torn down.`,
               )
             : null;
         try {
@@ -513,30 +617,16 @@ function build<F>(
           limit?.cancel();
         }
         if (failed) {
-          // Abandoned or failed: anything still setting up is torn down when
-          // it finishes, instead of being left running.
-          abandoned = true;
+          life.abandoned = true;
           run.catch(() => undefined); // its failure is reported above, or not at all
         }
         info.status = failed ? "failed" : "passed";
         if (failed) info.error = failure;
-        // Teardown in reverse order of setup, every one even if some fail,
-        // each within its time limit. A setup still running is not waited
-        // for here: it is torn down when it finishes (see setUp).
-        let teardownError: unknown;
-        for (const fixture of [...order].reverse()) {
-          const ready = done.get(fixture);
-          if (!ready) continue; // failed, or still setting up
-          try {
-            await limitedTeardown(fixture, ready, teardownTimeout);
-          } catch (error) {
-            teardownError ??= error;
-          }
-        }
+        const teardownErrors = await life.teardown(teardownAllowance);
         if (failed) throw failure;
-        if (teardownError !== undefined) throw teardownError;
+        if (teardownErrors.length > 0) throw teardownErrors[0];
       },
-      timeout,
+      runnerTimeout,
     );
   };
 

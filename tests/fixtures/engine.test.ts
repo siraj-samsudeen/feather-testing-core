@@ -238,8 +238,9 @@ describe("defineTest", () => {
     });
     test("plain", async ({}) => undefined);
     test.with({ headed: true } as never)("headed", async ({}) => undefined);
-    // Without one, the engine's own default (30 s) is handed to the runner.
-    expect(tests.map((t) => t.timeout)).toEqual([30_000, 120_000]);
+    // The runner gets the test's budget plus the teardown allowance (10 s)
+    // plus 1 s of slack; without a timeout, the engine's default is 30 s.
+    expect(tests.map((t) => t.timeout)).toEqual([41_000, 131_000]);
   });
 
   it("a .with() that changes a file-scoped fixture's option gets its own instance; others share it", async () => {
@@ -357,7 +358,9 @@ describe("defineTest", () => {
       });
       const started = Date.now();
       await expect(run("hangs")).rejects.toThrow("did not finish within 400ms");
-      expect(Date.now() - started).toBeLessThan(400);
+      // The body gets its 400 ms; the runner was handed 400 ms + the
+      // teardown allowance + slack, so it is still waiting here.
+      expect(Date.now() - started).toBeLessThan(900);
       expect(log).toEqual(["server torn down"]);
     });
 
@@ -380,7 +383,7 @@ describe("defineTest", () => {
       );
       test("uses both", async ({ stuck }: { stuck: number }) => void stuck);
       await expect(run("uses both")).rejects.toThrow(
-        "fixture 'stuck': teardown did not finish within 100ms",
+        "fixture 'stuck': teardown did not finish within the 100ms teardown allowance",
       );
       expect(log).toEqual(["first torn down"]);
     });
@@ -407,6 +410,126 @@ describe("defineTest", () => {
       await expect(run("waits for slow")).rejects.toThrow("did not finish within 300ms");
       await teardownRan; // the test's own timeout fails it if this never happens
       expect(log).toEqual(["slow set up", "slow torn down"]);
+    });
+  });
+
+  describe("lifecycle ownership", () => {
+    // eslint-disable-next-line feather-testing/no-wait-for-timeout -- builds deliberately slow fixtures; no test waits on it
+    const after = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+    it("tears down in the exact reverse of readiness when a fixture has several dependencies", async () => {
+      const { runner, run } = recordingRunner();
+      const log: string[] = [];
+      const fixture = (name: string) => async (_deps: unknown, use: (v: string) => Promise<void>) => {
+        log.push(`ready ${name}`);
+        await use(name);
+        log.push(`down ${name}`);
+      };
+      const test = defineTest(runner, {
+        a: [fixture("a"), { deps: [] }],
+        b: [fixture("b"), { deps: [] }],
+        c: [fixture("c"), { deps: ["a", "b"] }],
+      } as never);
+      test("c", async ({ c }: { c: string }) => void c);
+      await run("c");
+      expect(log).toEqual(["ready a", "ready b", "ready c", "down c", "down b", "down a"]);
+    });
+
+    it("an abandoned test never starts its body after a slow file-scoped setup", async () => {
+      const { runner, run, endFile } = recordingRunner();
+      let bodyRan = false;
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => (release = resolve));
+      const test = defineTest(
+        runner,
+        {
+          slowServer: [
+            async ({}, use: (v: number) => Promise<void>) => {
+              await gate;
+              await use(1);
+            },
+            { scope: "file" },
+          ],
+        } as never,
+        { testTimeout: 200, teardownTimeout: 200 },
+      );
+      test("waits", async ({ slowServer }: { slowServer: number }) => {
+        bodyRan = slowServer > 0;
+      });
+      await expect(run("waits")).rejects.toThrow("did not finish within 200ms");
+      release();
+      await endFile();
+      expect(bodyRan).toBe(false);
+    });
+
+    it("all teardowns of a test share one allowance: two hung ones take it once, not twice", async () => {
+      const { runner, run } = recordingRunner();
+      const hung = async ({}, use: (v: number) => Promise<void>) => {
+        await use(1);
+        await new Promise(() => undefined);
+      };
+      const test = defineTest(runner, { h1: hung, h2: hung } as never, { teardownTimeout: 300 });
+      test("two hung", async ({ h1, h2 }: { h1: number; h2: number }) => void (h1 + h2));
+      const started = Date.now();
+      await expect(run("two hung")).rejects.toThrow("teardown did not finish within the 300ms teardown allowance");
+      expect(Date.now() - started).toBeLessThan(550);
+    });
+
+    it("a hung file-scoped setup does not block the block's teardown", async () => {
+      const { runner, run, endFile } = recordingRunner();
+      const log: string[] = [];
+      const test = defineTest(
+        runner,
+        {
+          fine: [
+            async ({}, use: (v: number) => Promise<void>) => {
+              await use(1);
+              log.push("fine torn down");
+            },
+            { scope: "file" },
+          ],
+          stuck: [
+            async ({}, use: (v: number) => Promise<void>) => {
+              await new Promise(() => undefined); // never finishes setting up
+              await use(1);
+            },
+            { scope: "file" },
+          ],
+        } as never,
+        { testTimeout: 200, teardownTimeout: 200 },
+      );
+      test("fine", async ({ fine }: { fine: number }) => void fine);
+      test("stuck", async ({ stuck }: { stuck: number }) => void stuck);
+      await run("fine");
+      await expect(run("stuck")).rejects.toThrow("did not finish within 200ms");
+      const started = Date.now();
+      await expect(endFile()).rejects.toThrow("fixture 'stuck': setup did not finish");
+      expect(Date.now() - started).toBeLessThan(450);
+      expect(log).toEqual(["fine torn down"]);
+    });
+
+    it("a late test-scoped setup is torn down exactly once", async () => {
+      const { runner, run } = recordingRunner();
+      let teardowns = 0;
+      let tornDown!: () => void;
+      const done = new Promise<void>((resolve) => (tornDown = resolve));
+      const test = defineTest(
+        runner,
+        {
+          late: async ({}, use: (v: number) => Promise<void>) => {
+            await after(400);
+            await use(1);
+            teardowns++;
+            tornDown();
+          },
+        } as never,
+        { testTimeout: 150, teardownTimeout: 100 },
+      );
+      test("late", async ({ late }: { late: number }) => void late);
+      await expect(run("late")).rejects.toThrow("did not finish within 150ms");
+      await done;
+      await after(50);
+      expect(teardowns).toBe(1);
     });
   });
 });
