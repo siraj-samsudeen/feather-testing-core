@@ -783,6 +783,10 @@ session.visit("/").fillIn("Name", "x").clickButton("Go")
 
 This means you write one `await` per chain, not one per line.
 
+### Discarding queued steps
+
+`session.discard()` drops the steps queued on a session that have not started, and returns how many it dropped. A chain that is already running is not touched. It works on `within()` scoped sessions too.
+
 ### Breaking chains
 
 If you need conditional logic mid-flow, break into multiple chains:

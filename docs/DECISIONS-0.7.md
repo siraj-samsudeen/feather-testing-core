@@ -117,6 +117,12 @@ Core provides its own fixtures through `defineCoreTest(runner)`: `browser` (file
 
 **Decision:** `handler` (and `baseUrl`, which defaults to none) are defined by core, so `defineCoreTest(runner).with({ handler: value(app.handle) })` works. Used without being supplied, `handler` fails with how to supply it. This was decided after Codex round 13.
 
+### `session.discard()`
+
+**Requested by:** `feather-testing-elysia`. It refuses steps started during `logInAs` and used to clear the private `Session.steps` to drop them.
+
+**Decision:** Add a public `discard()` that drops queued steps that have not started and returns how many were dropped. A running chain is untouched. It works on every adapter's sessions and on scoped sessions. It is additive.
+
 ## Deferred
 
 ### B2 (rest). A per-driver Session type that rejects unsupported verbs at compile time

@@ -115,6 +115,17 @@ export class Session<TContext = unknown, TNative = unknown>
     return this.executeSteps();
   }
 
+  /**
+   * Drop the steps queued on this session that have not started, and say
+   * how many. A chain already running is not touched: it took its steps
+   * when it started. Works the same on a within() scoped session.
+   */
+  discard(): number {
+    const dropped = this.steps.length;
+    this.steps = [];
+    return dropped;
+  }
+
   private async executeSteps(): Promise<void> {
     const steps = [...this.steps];
     this.steps = [];

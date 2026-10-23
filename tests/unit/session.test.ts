@@ -1230,3 +1230,46 @@ describe("a field that is not there", () => {
     expect(error.message).not.toContain("was found");
   });
 });
+
+describe("discard()", () => {
+  it("drops queued steps that have not started and says how many; awaiting then runs nothing", async () => {
+    const { driver, calls } = createMockDriver();
+    const session = new Session(driver);
+    session.visit("/").clickButton("Go").assertText("Done");
+    expect(session.discard()).toBe(3);
+    await session;
+    expect(calls).toEqual([]);
+    expect(session.discard()).toBe(0);
+  });
+
+  it("does not touch a chain that is already running", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const { driver, calls } = createMockDriver({
+      visit: vi.fn(async () => {
+        calls.push('visit("/")');
+        await gate;
+      }),
+    });
+    const session = new Session(driver);
+    const running = session.visit("/").clickButton("Go").run();
+    // Queued after the chain started: not part of it.
+    session.assertText("Later");
+    expect(session.discard()).toBe(1);
+    release();
+    await running;
+    expect(calls).toEqual(['visit("/")', 'clickButton("Go")']);
+  });
+
+  it("works on a within() scoped session", async () => {
+    const { driver, calls } = createMockDriver();
+    driver.within = vi.fn(async () => driver);
+    let dropped = -1;
+    await new Session(driver).within("form", async (s) => {
+      s.fillIn("Name", "x");
+      dropped = s.discard();
+    });
+    expect(dropped).toBe(1);
+    expect(calls).toEqual([]);
+  });
+});
