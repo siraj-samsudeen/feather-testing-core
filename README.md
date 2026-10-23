@@ -934,7 +934,13 @@ Deliberate exceptions stay possible and stay visible: an `eslint-disable-next-li
 
 **Why these five.** They are not style preferences. Each one is a way a suite goes green while proving nothing: a sleep passes on a slow machine and fails on a fast one, a conditional skip silently un-tests a spec for its entire life, `toBeTruthy()` accepts almost any value, a swallowed cleanup error surfaces three tests later as something else, and serial mode turns one failure into a wall of red that hides its own cause. `session.until()` exists so the first rule has an honest alternative to point at — see [the document set](docs/document-set.md) for why conventions belong in executable form rather than in a style guide nobody re-reads.
 
-## Upgrading to 0.7.0
+## Known limitations
+
+- Secret values can still appear in some error output (e.g. Testing Library DOM dumps, app-thrown errors) — tracked in an issue; don't run 0.7.0-beta against real credentials.
+
+## Upgrading to 0.7.0 (beta: 0.7.0-beta.1)
+
+0.7.0 is in beta. Install it with `npm install feather-testing-core@0.7.0-beta.1`; see [Known limitations](#known-limitations) first.
 
 - The optional peer dependency is now `playwright` (`>=1.64.0`, the version tested) instead of `@playwright/test` (`>=1.40.0`). `@playwright/test` installs `playwright`, so Playwright Test users on 1.64 or later change nothing; library users no longer need `@playwright/test`.
 - Without the `navigationTimeout` option, the adapter reads the page's own navigation timeout from a private Playwright field (Playwright has no public getter), falling back to 30 s if that field ever goes away. Set `navigationTimeout` explicitly when the budget must be guaranteed across Playwright upgrades.
