@@ -63,6 +63,21 @@ describe("reading destructured names from real code", () => {
     expect(destructuredNames(withComments)).toEqual(["session", "request", "baseUrl", "other"]);
   });
 
+  it("a test body with no parameter uses no fixtures", async () => {
+    const { runner, run } = recordingRunner();
+    const test = defineTest(runner, { a: 1 } as never);
+    let ran = false;
+    test("no fixtures", async () => {
+      ran = true;
+    });
+    test("no fixtures, plain function", function () {
+      ran = ran && true;
+    });
+    await run("no fixtures");
+    await run("no fixtures, plain function");
+    expect(ran).toBe(true);
+  });
+
   it("refuses a rest pattern or an undestructured parameter in a test, showing the explicit form", () => {
     const { runner } = recordingRunner();
     const test = defineTest(runner, { a: 1 } as never);
