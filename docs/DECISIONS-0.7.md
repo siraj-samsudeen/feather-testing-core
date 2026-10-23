@@ -1,0 +1,77 @@
+# Decisions for 0.7
+
+These are the design decisions taken for 0.7.0. Each has a short entry with its reasoning. They follow the parity matrix in [ADAPTER_PARITY.md](ADAPTER_PARITY.md). The author can veto any of them before 0.7.0 leaves beta.
+
+## Decided and built
+
+### D1. `within(selector)` matches exactly one element
+
+**Adapters:** Playwright and request.
+
+**Decision:** If the selector matches no element, or several, the `within()` step fails. The error names the count and says how to narrow the selector.
+
+**Why:** A scope that matches several containers is almost always a mistake. Under it, every step inside is ambiguous, and in Playwright it fails later and further from the cause. The request adapter already worked this way, so making Playwright match removes a difference a shared spec would trip over.
+
+**Cost:** This breaks 0.6 Playwright specs whose scope matched several elements. The upgrade note gives the fix: narrow the selector, or use `:first-of-type` if the first one is really meant. The RTL adapter keeps "the first match", noted in the parity doc.
+
+### D2. An empty required field fails the submit loudly; `assertSubmitBlocked(label)` covers the deliberate case
+
+**Adapters:** both.
+
+**Decision:** A submit the browser refuses fails the step, naming the field: "form not sent: 'Title' is required". In Playwright this is a click, Enter or `submit()` on a form held back by constraint validation. The new verb `assertSubmitBlocked(label)` submits the field's form, the way Enter in that field would. It passes only if the form is held back because that required field is empty, and fails if the form is sent or is held back by another field.
+
+**Why:** A silently refused submit used to pass in Playwright. The failure then surfaced at a later, unrelated assertion. The request adapter already failed on it. Failing loudly in both, and giving the intentional case its own verb, keeps both kinds of spec honest.
+
+**Cost:** This breaks 0.6 Playwright specs that clicked through a refused form. They should use `assertSubmitBlocked` instead. The RTL adapter throws `BrowserOnlyVerbError` for `assertSubmitBlocked`.
+
+### D3. In the request adapter, links and forms aimed at another window throw
+
+**Decision:** A link or form whose `target`, `formtarget` or `<base target>` is anything other than empty, `_self`, `_top` or `_parent` makes the step fail with `BrowserOnlyVerbError`. The message is: "It opens another window (target=…); the request adapter has one page — test the destination with visit('…') or use the Playwright adapter." `_parent` is accepted because at the top level it is the page itself. Download links and `method="dialog"` forms are unaffected. The Playwright adapter is unchanged.
+
+**Why:** Navigating the session's only page to a destination meant for another window would make the spec pass while testing the wrong thing.
+
+### D4. `assertHas(selector)` passes when any match is visible
+
+**Adapters:** both.
+
+**Decision:** Playwright now uses the first visible match. `count` and `refuteHas` still count every match.
+
+**Why:** "Is there such an element on the page?" should not depend on whether a hidden duplicate comes first in the DOM. The request adapter already behaved this way.
+
+**Cost:** It is more lenient. Specs that failed before may now pass; no spec that passed before now fails.
+
+### B1. Every waiting verb takes `{ timeout }`
+
+**Decision:** The assertions and actions take a last `{ timeout }` argument. Precedence is the step's own timeout, then the session's, then the adapter default. The request adapter accepts it and ignores it, because nothing in it waits except `until`. The RTL factory takes `createSession({ timeout })` for Testing Library's waits.
+
+**Why:** A slow step, such as one waiting for a background job, should not force a long timeout on the whole session.
+
+### B2 (part). Unsupported verbs say what to do instead; RTL is in the parity doc
+
+**Decision:** Every verb an adapter cannot run fails with a message naming the adapter, the verb and what to use instead. `docs/ADAPTER_PARITY.md` now covers the RTL adapter too.
+
+## Deferred
+
+### B2 (rest). A per-driver Session type that rejects unsupported verbs at compile time
+
+**Deferred** to an issue.
+
+**Why:** It changes the public types of every adapter. Today the runtime errors already name the alternative.
+
+### B3. Semantic scopes: `within({ role, text })`
+
+**Deferred** to an issue.
+
+**Why:** It is useful, but it is new API. With D1, the CSS form is now strict enough to stay correct in the meantime.
+
+### B4. Step-event identity (ids on `onStep` events, nesting)
+
+**Deferred** to an issue.
+
+**Why:** No consumer needs it yet. Adding ids later is additive.
+
+### `sensitive` on `assertValue`
+
+**Not added.**
+
+**Why:** Adding the option would be new public API. The secret-scrubbing work (issue #16, branch `secret-scrubbing`) remembers fields that the chain has marked sensitive, and that covers the case. Until it lands, see Known limitations in the README.

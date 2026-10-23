@@ -999,6 +999,8 @@ The workflow refuses non-`main` refs, mismatched lockfile versions, versions alr
 
 ## Documentation
 
+- [Decisions for 0.7](docs/DECISIONS-0.7.md) — the design decisions taken for 0.7 (and what was deferred), with their reasoning.
+- [Adapter parity](docs/ADAPTER_PARITY.md) — every surface of the Playwright, request and RTL adapters, and where they differ.
 - [The document set](docs/document-set.md) — the minimal set of documents a project needs, what each one answers, and why hand-maintained cross-reference matrices lose to generated reports plus CI checks.
 
 ## License
