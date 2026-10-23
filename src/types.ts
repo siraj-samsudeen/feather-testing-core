@@ -132,7 +132,11 @@ export interface TestDriver<TContext = unknown, TNative = unknown> {
    * started, so the value never reaches a step title or step event. Throws
    * when the field never appears.
    */
-  fieldIsPassword?(label: string): Promise<boolean>;
+  fieldIsPassword?(
+    label: string,
+    /** Which step asks: a fill's budget is an action's, an assertion's an assertion's. */
+    purpose?: "fill" | "assert",
+  ): Promise<boolean>;
   selectOption(label: string, option: string): Promise<void>;
   check(label: string): Promise<void>;
   uncheck(label: string): Promise<void>;

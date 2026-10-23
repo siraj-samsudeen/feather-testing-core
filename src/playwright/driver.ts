@@ -575,10 +575,20 @@ export class PlaywrightDriver
   /** When fieldIsPassword() began looking for a field, and which. */
   private fillProbe: { label: string; startedAt: number } | null = null;
 
-  async fieldIsPassword(label: string): Promise<boolean> {
+  async fieldIsPassword(
+    label: string,
+    purpose: "fill" | "assert" = "fill",
+  ): Promise<boolean> {
     this.fillProbe = { label, startedAt: Date.now() };
     const field = this.fieldByLabelOrPlaceholder(label);
-    await field.first().waitFor({ state: "attached", timeout: this.timeout });
+    if (purpose === "assert") {
+      // An assertion's budget: with no session timeout inside Playwright
+      // Test that is expect.timeout, not the (often unlimited) action
+      // timeout; toHaveValue then gets what is left of a session timeout.
+      await expect(field.first()).toBeAttached({ timeout: this.timeout });
+    } else {
+      await field.first().waitFor({ state: "attached", timeout: this.timeout });
+    }
     // Several matches: fill() would fail on strict mode, and which field the
     // value was meant for is unknown, so say so now (the value stays hidden,
     // as in the request adapter).

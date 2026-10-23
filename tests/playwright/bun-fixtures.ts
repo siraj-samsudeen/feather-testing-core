@@ -69,6 +69,8 @@ export const test = Object.assign(
         }
       });
     },
+    /** bun:test's per-test limit comes from bunfig.toml; nothing to do. */
+    setTimeout(_ms: number) {},
     use(options: UseOptions) {
       currentUse = { ...currentUse, ...options };
     },

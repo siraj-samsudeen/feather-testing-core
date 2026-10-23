@@ -2100,3 +2100,24 @@ test.describe("asking whether the Playwright runner is active", () => {
     expect(asked).toBe(1);
   });
 });
+
+test.describe("assertValue on a missing field", () => {
+  test("fails within the assertion budget, not the (unlimited) action timeout", async ({
+    page,
+  }) => {
+    // Inside Playwright Test the default action timeout is 0 (no limit);
+    // expect's is 5 s. Outside it, the session default applies to both.
+    test.setTimeout(20_000);
+    const started = Date.now();
+    const error = await new Session(new PlaywrightDriver(page))
+      .visit("/form")
+      .assertValue("No such field", "x")
+      .then(
+        () => null,
+        (e: unknown) => e,
+      );
+    expect(error).toBeInstanceOf(StepError);
+    expect((error as StepError).message).toContain("no field labelled 'No such field'");
+    expect(Date.now() - started).toBeLessThan(10_000);
+  });
+});
