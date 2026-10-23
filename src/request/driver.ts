@@ -569,7 +569,7 @@ export class RequestDriver
    * so the field is looked up once, as fillIn() will look it up; a field
    * that is missing or ambiguous throws the same error fillIn() would.
    */
-  async fillTargetIsPassword(label: string): Promise<boolean> {
+  async fieldIsPassword(label: string): Promise<boolean> {
     return isInput(this.findField(label, `fillIn('${label}')`), "password");
   }
 

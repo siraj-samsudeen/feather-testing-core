@@ -495,6 +495,30 @@ for (const driver of drivers) {
       });
     }, TEST_TIMEOUT);
 
+    for (const [page, label] of [
+      ["/codes", "Login code"],
+      ["/login", "Password"],
+    ] as const) {
+      it(`#12 assertValue never shows a password field's value (${label})`, async () => {
+        await withApp(async (h) => {
+          const events: string[] = [];
+          const onStep = (e: { status: string; name: string; error?: unknown }) =>
+            events.push(`${e.status} ${e.name} ${e.error ? String((e.error as Error).message) : ""}`);
+          // A match: the expected value must not reach step names or events.
+          await h.session({ onStep }).visit(page).fillIn(label, FAKE_SECRET).assertValue(label, FAKE_SECRET);
+          expect(events).toContain(`passed assertValue('${label}', '${HIDDEN}') `);
+          // A mismatch: the driver's message can carry the actual value.
+          const error = await failure(
+            h.session({ ...FAST, onStep }).visit(page).fillIn(label, FAKE_SECRET).assertValue(label, "wrong"),
+          );
+          expect(error.message).toContain(`[FAILED] assertValue('${label}', '${HIDDEN}')`);
+          expect(error.message).not.toContain(FAKE_SECRET);
+          expect(String((error.cause as Error)?.message ?? "")).not.toContain(FAKE_SECRET);
+          expect(events.join("\n")).not.toContain(FAKE_SECRET);
+        });
+      }, TEST_TIMEOUT);
+    }
+
     it("#56 step() and raw() run inside the chain", async () => {
       await withApp(async (h) => {
         const seen: string[] = [];

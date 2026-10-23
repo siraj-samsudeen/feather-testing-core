@@ -1476,3 +1476,32 @@ describe("a password fill skipped after an earlier failure", () => {
     expect(failed.join("\n")).not.toContain(SECRET);
   });
 });
+
+describe("assertValue on a password field", () => {
+  afterEach(cleanup);
+  const SECRET = "fake-secret-value-123";
+
+  it("keeps the value out of names, events, the chain and the cause", async () => {
+    render(
+      <form>
+        <label htmlFor="code">Login code</label>
+        <input id="code" type="password" />
+      </form>,
+    );
+    const events: string[] = [];
+    const onStep = (e: { status: string; name: string; error?: unknown }) =>
+      events.push(`${e.status} ${e.name} ${e.error ? String((e.error as Error).message) : ""}`);
+    await createSession({ onStep }).fillIn("Login code", SECRET).assertValue("Login code", SECRET);
+    const error = await createSession({ onStep })
+      .assertValue("Login code", "wrong")
+      .run()
+      .then(
+        () => null,
+        (e: unknown) => e as StepError,
+      );
+    expect(error).toBeInstanceOf(StepError);
+    expect(error!.message).not.toContain(SECRET);
+    expect(String((error!.cause as Error)?.message ?? "")).not.toContain(SECRET);
+    expect(events.join("\n")).not.toContain(SECRET);
+  });
+});

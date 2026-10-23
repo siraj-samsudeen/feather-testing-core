@@ -36,7 +36,7 @@ This matrix lists every public surface and behaviour, as of the `bun-port-stacke
 |---|---------|--------|-------|
 | 11 | Value hidden for a secret-looking label or `{ sensitive: true }` | same | It lives in `Session`. |
 | 12 | Value hidden in the failure report for an `<input type=password>` (via `lastFilledFieldIsPassword`) | same | Both drivers implement it. |
-| 13 | Value hidden before the step starts (`fillTargetIsPassword`), so step titles and `onStep` never see it | same | R implements it too. A label matching several fields now hides the value and fails with the same wording in both drivers (#35). |
+| 13 | Value hidden before the step starts (`fieldIsPassword`), so step titles and `onStep` never see it | same | R implements it too. A label matching several fields now hides the value and fails with the same wording in both drivers (#35). |
 | 14 | `debug()` | differs (choice) | P saves a screenshot, where the browser masks password fields. R prints the HTML with password values replaced by `••••••`. |
 
 ### Navigation, forms and waiting

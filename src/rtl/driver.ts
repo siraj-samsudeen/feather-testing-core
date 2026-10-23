@@ -151,7 +151,7 @@ export class RTLDriver implements TestDriver<RTLStepContext, RTLQueries> {
    * does; a field that never appears throws, and the session then hides
    * the value and fails the step with that error.
    */
-  async fillTargetIsPassword(label: string): Promise<boolean> {
+  async fieldIsPassword(label: string): Promise<boolean> {
     const field = await this.findField(label);
     return field instanceof HTMLInputElement && field.type === "password";
   }

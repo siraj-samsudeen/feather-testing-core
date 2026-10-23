@@ -126,12 +126,13 @@ export interface TestDriver<TContext = unknown, TNative = unknown> {
    */
   lastFilledFieldIsPassword?(): Promise<boolean>;
   /**
-   * Optional: wait (within the driver's own budget) until the field fillIn()
-   * would target is present, and say whether it is a password field. The
-   * session asks before the step is reported as started, so the value never
-   * reaches a step title or step event. Throws when the field never appears.
+   * Optional: wait (within the driver's own budget) until the field that
+   * fillIn() or assertValue() would target is present, and say whether it
+   * is a password field. The session asks before the step is reported as
+   * started, so the value never reaches a step title or step event. Throws
+   * when the field never appears.
    */
-  fillTargetIsPassword?(label: string): Promise<boolean>;
+  fieldIsPassword?(label: string): Promise<boolean>;
   selectOption(label: string, option: string): Promise<void>;
   check(label: string): Promise<void>;
   uncheck(label: string): Promise<void>;

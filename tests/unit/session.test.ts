@@ -1058,7 +1058,7 @@ describe("secrets in step names before a step starts", () => {
 
   it("hides the value before the step starts when the field is a password field", async () => {
     const { driver, names } = recordingDriver({
-      fillTargetIsPassword: vi.fn(async () => true),
+      fieldIsPassword: vi.fn(async () => true),
     });
 
     await new Session(driver).fillIn("Login code", FAKE_SECRET);
@@ -1086,7 +1086,7 @@ describe("secrets in step names before a step starts", () => {
     const fillIn = vi.fn(async () => {});
     const { driver, names } = recordingDriver({
       fillIn,
-      fillTargetIsPassword: vi.fn(async () => {
+      fieldIsPassword: vi.fn(async () => {
         throw new Error(`no field labelled 'Login code' (typed ${FAKE_SECRET})`);
       }),
     });
@@ -1107,7 +1107,7 @@ describe("secrets in step names before a step starts", () => {
 
   it("shows an ordinary value", async () => {
     const { driver, names } = recordingDriver({
-      fillTargetIsPassword: vi.fn(async () => false),
+      fieldIsPassword: vi.fn(async () => false),
     });
 
     await new Session(driver).fillIn("Email", "someone@example.com");

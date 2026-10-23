@@ -41,6 +41,18 @@ function describe(expected: string | RegExp): string {
  * value went into a password field. Index is kept, so the chain still marks
  * it as skipped.
  */
+/**
+ * What a failed step on a secret field reports instead of the driver's
+ * error, which can contain the value or part of it.
+ */
+function withheldError(stepName: string): Error {
+  return new Error(
+    `${stepName} failed on a secret field. The driver's message is not shown, ` +
+      "because it can contain the field's value. Re-run the step on a " +
+      "non-secret field, or with debug(), to see why.",
+  );
+}
+
 function unrunView(step: QueuedStep): QueuedStep {
   return step.nameHidingValue === undefined
     ? step
@@ -208,9 +220,41 @@ export class Session<TContext = unknown, TNative = unknown>
    * events too; if the field never appears, the value is hidden as well.
    */
   fillIn(label: string, value: string, opts?: FillInOptions): this {
-    const nameShowingValue = `fillIn('${label}', '${value}')`;
-    const nameHidingValue = `fillIn('${label}', '${HIDDEN_VALUE}')`;
-    const knownSecret = opts?.sensitive === true || labelLooksSecret(label);
+    return this.fieldValueStep({
+      verb: "fillIn",
+      label,
+      value,
+      knownSecret: opts?.sensitive === true || labelLooksSecret(label),
+      run: () => this.driver.fillIn(label, value),
+      askAfterRun: true,
+    });
+  }
+
+  /**
+   * A step that carries a field's value: fillIn() and assertValue(). The
+   * value is shown in the step's name unless it is secret: `sensitive`, a
+   * label that looks secret, or a password field. The driver is asked about
+   * the field before the step starts (fieldIsPassword), so a secret value
+   * never reaches a step name, test.step title or onStep event; a field the
+   * driver cannot find is treated as secret.
+   *
+   * When a secret step fails, the driver's message is withheld, cause
+   * included: it can quote the value typed, the value found in the field
+   * (assertValue's mismatch), or a fragment of either (Testing Library's
+   * key-syntax errors), and replacing the known value cannot catch those.
+   */
+  private fieldValueStep(spec: {
+    verb: string;
+    label: string;
+    value: string;
+    knownSecret: boolean;
+    run: () => Promise<void>;
+    /** fillIn: ask lastFilledFieldIsPassword() after running, too. */
+    askAfterRun: boolean;
+  }): this {
+    const { verb, label, value, knownSecret, run, askAfterRun } = spec;
+    const nameShowingValue = `${verb}('${label}', '${value}')`;
+    const nameHidingValue = `${verb}('${label}', '${HIDDEN_VALUE}')`;
 
     let fieldNotFound: unknown;
 
@@ -219,11 +263,11 @@ export class Session<TContext = unknown, TNative = unknown>
       nameHidingValue,
       index: this.stepIndex++,
       prepare: async () => {
-        if (knownSecret || !this.driver.fillTargetIsPassword) {
+        if (knownSecret || !this.driver.fieldIsPassword) {
           return;
         }
         try {
-          if (await this.driver.fillTargetIsPassword(label)) {
+          if (await this.driver.fieldIsPassword(label)) {
             step.name = nameHidingValue;
           }
         } catch (error) {
@@ -236,20 +280,21 @@ export class Session<TContext = unknown, TNative = unknown>
       },
       action: async () => {
         if (fieldNotFound !== undefined) {
+          // A lookup error names the label, not the value; scrub it anyway.
           throw hideValueInError(fieldNotFound, value);
         }
         try {
-          await this.driver.fillIn(label, value);
+          await run();
         } catch (error) {
-          if (await this.lastFilledFieldIsPassword()) {
+          if (askAfterRun && (await this.lastFilledFieldIsPassword())) {
             step.name = nameHidingValue;
           }
           if (step.name === nameHidingValue) {
-            throw hideValueInError(error, value);
+            throw withheldError(nameHidingValue);
           }
           throw error;
         }
-        if (await this.lastFilledFieldIsPassword()) {
+        if (askAfterRun && (await this.lastFilledFieldIsPassword())) {
           step.name = nameHidingValue;
         }
       },
@@ -412,10 +457,16 @@ export class Session<TContext = unknown, TNative = unknown>
     );
   }
 
+  /** Hides `value` exactly as fillIn() does when the field is secret. */
   assertValue(label: string, value: string): this {
-    return this.enqueue(`assertValue('${label}', '${value}')`, () =>
-      this.driver.assertValue(label, value),
-    );
+    return this.fieldValueStep({
+      verb: "assertValue",
+      label,
+      value,
+      knownSecret: labelLooksSecret(label),
+      run: () => this.driver.assertValue(label, value),
+      askAfterRun: false,
+    });
   }
 
   assertChecked(label: string): this {
