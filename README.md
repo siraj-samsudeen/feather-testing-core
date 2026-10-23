@@ -136,7 +136,7 @@ const session = createSession(app.handle /* or a Playwright page */, {
 | A 204/205 answer to a form | The browser stays, but Playwright 1.64's locators then hang | Stays on the page | Upstream Playwright |
 | Name of a wrapping `<label>` with a `<select>` inside | Includes the option texts | Excludes them | Give such labels `for` |
 | An empty `required` field when submitting | The browser blocks it; the step passes | The step fails, naming the field | Undecided, see the parity doc |
-| `target` on a form or link | This page stays | Ignored: this page navigates | Undecided, see the parity doc |
+| `target` on a form or link (another window or frame) | This page stays; the other window loads | `BrowserOnlyVerbError`, naming the destination to `visit()` | One page per session |
 | Adapter-only options | `navigationTimeout`, `navigationStartWindow`, `replacedNavigationWindow`, the `@playwright/test` fixture | `close()` on the driver | |
 
 ## Installation
@@ -829,6 +829,7 @@ These throw `BrowserOnlyVerbError`, which the chain reports as the failed step, 
 | `assertNoHorizontalOverflow` / `assertHorizontalOverflow` / `assertHorizontallyContained` / `scrollToHorizontalEnd` | Nothing is laid out | A Playwright spec |
 | `clickButton` / `click` on a `type="button"` button, a `role="button"` element that is not a link, or a button outside any form | It does nothing without JavaScript | A Playwright spec |
 | `clickLink` on a `javascript:` URL, `click` on text that is no link, button or label | Same | A Playwright spec |
+| A link or form aimed at another window or frame (`target`, `formtarget` or `<base target>` other than `_self`, `_top`, `_parent`; a `download` link still downloads) | The session has one page | `visit()` the destination, or a Playwright spec |
 
 Every other verb is implemented, `assertDownload` included (see Responses above).
 

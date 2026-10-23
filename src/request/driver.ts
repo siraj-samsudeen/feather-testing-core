@@ -455,6 +455,9 @@ export class RequestDriver
         ENVIRONMENT,
       );
     }
+    if (!link.hasAttribute("download")) {
+      this.requireThisWindow(verb, link.getAttribute("target"), target);
+    }
     await this.browser.followLink(verb, target, {
       download: link.getAttribute("download") ?? undefined,
       hasFragment: href.includes("#"),
@@ -473,6 +476,7 @@ export class RequestDriver
     this.browser.focused = button;
     const form = isButtonElement(button) ? formOwner(button) : null;
     if (form && isSubmitButton(button)) {
+      this.requireFormInThisWindow(verb, form, button);
       await this.browser.submit(verb, form, button);
       return;
     }
@@ -685,7 +689,53 @@ export class RequestDriver
         `${verb}: a browser would not submit this form: it has no submit button and more than one text field.`,
       );
     }
+    this.requireFormInThisWindow(verb, form, null);
     await this.browser.submit(verb, form, null);
+  }
+
+  /**
+   * A link or form aimed at another window or frame (`target`, a
+   * submitter's `formtarget`, else `<base target>`; anything but empty,
+   * `_self`, `_top` and `_parent`, which at the top level is the page
+   * itself) cannot be followed: the session has one page.
+   */
+  private requireThisWindow(
+    verb: string,
+    ownTarget: string | null,
+    destination: URL,
+  ): void {
+    const { document } = this.browser.current;
+    const raw = (
+      ownTarget ??
+      document.querySelector("base[target]")?.getAttribute("target") ??
+      ""
+    ).trim();
+    if (["", "_self", "_top", "_parent"].includes(raw.toLowerCase())) return;
+    throw new BrowserOnlyVerbError(
+      verb,
+      `It opens another window (target="${raw}"); the request adapter has one ` +
+        `page — test the destination with visit('${destination.pathname}${destination.search}') ` +
+        "or use the Playwright adapter.",
+      ENVIRONMENT,
+    );
+  }
+
+  /** requireThisWindow() for a form submission, unless it only closes a dialog. */
+  private requireFormInThisWindow(
+    verb: string,
+    form: HTMLFormElement,
+    submitter: Element | null,
+  ): void {
+    const attr = (own: string, formAttr: string) =>
+      (submitter?.hasAttribute(own) ? submitter.getAttribute(own) : null) ??
+      form.getAttribute(formAttr);
+    if ((attr("formmethod", "method") ?? "").trim().toLowerCase() === "dialog") {
+      return;
+    }
+    const { document, url } = this.browser.current;
+    const action = (attr("formaction", "action") ?? "").trim();
+    const destination = action === "" ? new URL(url) : new URL(action, baseUrl(document, url));
+    this.requireThisWindow(verb, attr("formtarget", "target"), destination);
   }
 
   /** Reads the file from disk; the form sends its bytes, name, and a type

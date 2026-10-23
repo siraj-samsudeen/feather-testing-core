@@ -520,6 +520,51 @@ line two</textarea>
     });
   });
 
+  describe("target on a form or link (another window)", () => {
+    const page = `
+      <a href="/about" target="_blank">New tab</a>
+      <a href="/about" target="_self">Same tab</a>
+      <a href="/report.csv" download target="_blank">Download</a>
+      <form method="post" action="/echo" target="side"><input name="q" value="a"><button>Send aside</button></form>
+      <form method="post" action="/echo"><input name="q" value="b">
+        <button formtarget="_blank">Send to new tab</button><button>Send here</button></form>`;
+
+    it.each([
+      ["clickLink", "New tab", '"_blank"', "/about"],
+      ["clickButton", "Send aside", '"side"', "/echo"],
+      ["clickButton", "Send to new tab", '"_blank"', "/echo"],
+    ] as const)("%s('%s') throws BrowserOnlyVerbError naming the target and the destination", async (verb, text, target, path) => {
+      const { app, driver } = driverFor({ "/": page });
+      await driver.visit("/");
+      const error = await (verb === "clickLink" ? driver.clickLink(text) : driver.clickButton(text)).then(
+        () => null,
+        (e: unknown) => e as Error,
+      );
+      expect(error).toBeInstanceOf(BrowserOnlyVerbError);
+      expect(error!.message).toContain(`opens another window (target=${target})`);
+      expect(error!.message).toContain("the request adapter has one page");
+      expect(error!.message).toContain(`visit('${path}')`);
+      expect(app.requests).toHaveLength(1);
+    });
+
+    it("a <base target> applies to links without their own", async () => {
+      const { driver } = driverFor({ "/": `<base target="_blank"><a href="/about">About</a>` });
+      await driver.visit("/");
+      await expect(driver.clickLink("About")).rejects.toThrow(BrowserOnlyVerbError);
+    });
+
+    it("_self, _top, no target and download links still work", async () => {
+      const { driver } = driverFor({ "/": page });
+      await driver.visit("/");
+      await driver.clickLink("Same tab");
+      await driver.assertPath("/about");
+      await driver.visit("/");
+      await driver.assertDownload("report.csv", () => driver.clickLink("Download"));
+      await driver.clickButton("Send here");
+      await driver.assertPath("/echo");
+    });
+  });
+
   describe("204 and 205 answers", () => {
     // Parity row #22 (docs/ADAPTER_PARITY.md). Not a contract test: in
     // Playwright 1.64 every locator waits forever for the 204 navigation to
