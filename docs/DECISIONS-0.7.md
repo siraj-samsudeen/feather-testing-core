@@ -123,13 +123,18 @@ Core provides its own fixtures through `defineCoreTest(runner)`: `browser` (file
 
 **Decision:** Add a public `discard()` that drops queued steps that have not started and returns how many were dropped. A running chain is untouched. It works on every adapter's sessions and on scoped sessions. It is additive.
 
-### Playwright peer range widened to `>=1.40.0`
+### Playwright peer range: `>=1.51.0`
 
-**Decided by:** the author.
+**Decided by:** the coordinator, for the author, who may veto.
 
-**Decision:** The optional `playwright` peer is `>=1.40.0` again. No API the adapter uses needs 1.64, and it is tested on 1.64.1 (see "Tested with" in the README). This reverses the earlier `>=1.64.0` floor.
+**Decision:** The floor is raised from 1.40.0 to 1.51.0, because `assertHas` needs `locator.filter({ visible })`. The range stays broad, as the author chose, instead of being pinned to the tested version. It is tested on 1.64.1.
 
-**Caveat found while making the change, for the author:** `assertHas(selector)` uses `locator.filter({ visible: true })` (D4), which Playwright added in 1.51. Below 1.51 that call is an error. The options are to raise the floor to `>=1.51.0`, or to replace the call with one 1.40 has.
+The earlier history:
+1. The floor was `>=1.64.0`, the version tested.
+2. The author widened it to `>=1.40.0`.
+3. A check then found that 1.51 is the lowest version the code works with.
+
+`MIN_PLAYWRIGHT_VERSION` in the Playwright driver records that minimum and why. A unit test fails if the package.json floor drops below it.
 
 ### Navigation wait options renamed to `…Timeout`
 

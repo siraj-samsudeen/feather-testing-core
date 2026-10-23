@@ -112,6 +112,13 @@ export function pageDefaultNavigationTimeout(page: Page): number | undefined {
   }
 }
 
+/**
+ * The lowest Playwright version this adapter works with, and why: the
+ * newest API it calls. package.json's peer floor must not be lower (a unit
+ * test checks). 1.51: locator.filter({ visible: true }) in assertHas.
+ */
+export const MIN_PLAYWRIGHT_VERSION = "1.51.0";
+
 /** Playwright's documented default navigation timeout. */
 const PLAYWRIGHT_DEFAULT_NAVIGATION_TIMEOUT = 30_000;
 
