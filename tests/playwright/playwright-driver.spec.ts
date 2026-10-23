@@ -1493,6 +1493,8 @@ async function serveTodoList(
   opts: {
     post?: "redirect" | "204" | "download" | "drop" | "slow";
     getDelay?: number;
+    /** Send the list's headers and first bytes at once, the rest this many ms later. */
+    slowBody?: number;
   } = {},
 ): Promise<{ url: string; close: () => Promise<void> }> {
   const todos: string[] = [];
@@ -1555,6 +1557,13 @@ async function serveTodoList(
   <button type="submit">Add</button>
 </form>
 <ul>${todos.map((t) => `<li>${t}</li>`).join("")}</ul>`;
+    if (opts.slowBody !== undefined && path === "/todos") {
+      // The new document commits at once but does not finish loading.
+      res.writeHead(200, { "content-type": "text/html" });
+      res.write(`<!doctype html><p>Loading`);
+      setTimeout(() => res.end(html), opts.slowBody);
+      return;
+    }
     setTimeout(
       () => {
         res.writeHead(200, { "content-type": "text/html" }).end(html);
@@ -1731,10 +1740,12 @@ test.describe("when the wait for a new page ends", () => {
   test("a page that never loads fails with a message saying so", async ({
     page,
   }) => {
-    await withApp(page, { getDelay: 3000 }, async (url) => {
+    await withApp(page, { slowBody: 3000 }, async (url) => {
       await page.goto(`${url}/todos`);
-      // Enter in a form field submits it; page.keyboard does not wait for
-      // that navigation, so only feather's own wait (500 ms here) does.
+      // The list after the POST commits at once but takes 3 s to finish
+      // loading. Whether or not Playwright waits for the navigation itself,
+      // that wait ends at the commit; only feather's wait for a loaded page
+      // (500 ms here) is still waiting, and it fails.
       const failure = await new Session(
         new PlaywrightDriver(page, page, { navigationTimeout: 500 }),
       )
