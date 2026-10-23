@@ -19,6 +19,11 @@ export type Pages = Parameters<typeof createFixtureApp>[0];
 /** Options both entry points are meant to accept (see docs/ADAPTER_PARITY.md). */
 export interface ContractOptions {
   timeout?: number;
+  onStep?: (event: {
+    name: string;
+    status: "started" | "passed" | "failed";
+    error?: unknown;
+  }) => void;
 }
 
 export interface Harness {

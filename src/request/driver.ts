@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { basename, extname } from "node:path";
 import type {
+  SessionOptions,
   AssertHasOptions,
   AssertPathOptions,
   AssertionOptions,
@@ -32,7 +33,7 @@ import {
   isSubmitButton,
 } from "./form.js";
 
-export interface RequestDriverOptions {
+export interface RequestDriverOptions extends SessionOptions {
   /**
    * What visit() paths resolve against: an origin, optionally with a base
    * path. Defaults to http://localhost.

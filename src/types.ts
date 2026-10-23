@@ -40,6 +40,46 @@ export interface DownloadOptions {
   timeout?: number;
 }
 
+/** What onStep() is told about each step of a chain. */
+export interface StepEvent {
+  /** The step as the chain trace names it, e.g. `fillIn('Email', 'a@b.c')`. */
+  name: string;
+  status: "started" | "passed" | "failed";
+  /** The cause, when status is "failed". */
+  error?: unknown;
+}
+
+/**
+ * Options every adapter's createSession(native, options) accepts. Adapters
+ * add their own (e.g. Playwright's navigationTimeout).
+ */
+export interface SessionOptions {
+  /**
+   * Budget in ms for anything the session waits for; each adapter documents
+   * what waits in it. A per-call timeout still wins. 0 means no limit.
+   * Default: {@link DEFAULT_TIMEOUT} (Playwright: its own configured
+   * timeouts while inside the Playwright Test runner).
+   */
+  timeout?: number;
+  /**
+   * What visit() paths resolve against, as `new URL(path, baseUrl)`: an
+   * origin, optionally with a base path. Each adapter documents its default.
+   */
+  baseUrl?: string;
+  /**
+   * Called as each step starts, passes or fails — a stand-in for
+   * test.step() that works under any runner, e.g. to log progress. Steps
+   * inside within() are reported too, between the within() step's own
+   * "started" and "passed". The name hides a value typed into a password
+   * field, a field whose label looks secret, or one marked `sensitive`, in
+   * every event.
+   */
+  onStep?: (event: StepEvent) => void;
+}
+
+/** The session timeout when none is set (and, for Playwright, outside its runner). */
+export const DEFAULT_TIMEOUT = 4000;
+
 export interface QueuedStep {
   name: string;
   action: () => Promise<void>;

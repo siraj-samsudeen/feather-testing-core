@@ -9,6 +9,7 @@ import {
 
 export { Session } from "../session.js";
 export { StepError, BrowserOnlyVerbError } from "../errors.js";
+export { DEFAULT_TIMEOUT } from "../types.js";
 export {
   DEFAULT_TIMEOUT_OUTSIDE_RUNNER,
   NAVIGATION_START_WINDOW_MS,
@@ -25,6 +26,7 @@ export type {
   DownloadOptions,
   FillInOptions,
   LayoutAssertionOptions,
+  SessionOptions,
   TestDriver,
   UntilOptions,
   UntilPredicate,
@@ -39,7 +41,9 @@ export function createSession(
   page: Page,
   options?: PlaywrightSessionOptions,
 ): Session<PlaywrightStepContext, Page> {
-  return new Session(new PlaywrightDriver(page, page, options));
+  return new Session(new PlaywrightDriver(page, page, options), {
+    onStep: options?.onStep,
+  });
 }
 
 export const test = base.extend<{

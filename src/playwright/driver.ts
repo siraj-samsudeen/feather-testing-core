@@ -9,9 +9,11 @@ import type {
   DownloadOptions,
   LayoutAssertionOptions,
   TestDriver,
+  SessionOptions,
   UntilOptions,
   UntilPredicate,
 } from "../types.js";
+import { DEFAULT_TIMEOUT } from "../types.js";
 
 /** Context handed to custom step() callbacks in the Playwright adapter. */
 export interface PlaywrightStepContext {
@@ -20,16 +22,9 @@ export interface PlaywrightStepContext {
   scope: Page | Locator;
 }
 
-/** What onStep() is told about each step of a chain. */
-export interface StepEvent {
-  /** The step as the chain trace names it, e.g. `fillIn('Email', 'a@b.c')`. */
-  name: string;
-  status: "started" | "passed" | "failed";
-  /** The cause, when status is "failed". */
-  error?: unknown;
-}
+export type { StepEvent } from "../types.js";
 
-export interface PlaywrightSessionOptions {
+export interface PlaywrightSessionOptions extends SessionOptions {
   /**
    * Budget in ms for every assertion, every wait (until, assertPath, ...) and
    * every action (fillIn, click, ...) in this session; page loads use
@@ -66,14 +61,6 @@ export interface PlaywrightSessionOptions {
    * {@link REPLACED_NAVIGATION_WINDOW_MS} (250).
    */
   replacedNavigationWindow?: number;
-  /**
-   * Called as each step starts, passes or fails: a stand-in for test.step()
-   * when there is no Playwright Test runner, e.g. to log progress. It is also
-   * called inside the runner. The name hides a value typed into a password
-   * field, a field whose label looks secret, or one marked `sensitive`, in
-   * every event: the field is inspected before the step starts.
-   */
-  onStep?: (event: StepEvent) => void;
 }
 
 /**
@@ -92,7 +79,7 @@ export const NAVIGATION_START_WINDOW_MS = 500;
 export const REPLACED_NAVIGATION_WINDOW_MS = 250;
 
 /** The session timeout used outside the Playwright Test runner. */
-export const DEFAULT_TIMEOUT_OUTSIDE_RUNNER = 4000;
+export const DEFAULT_TIMEOUT_OUTSIDE_RUNNER = DEFAULT_TIMEOUT;
 
 /** True while a Playwright Test runner test is executing. */
 function insidePlaywrightRunner(): boolean {
@@ -892,26 +879,8 @@ export class PlaywrightDriver
     });
   }
 
-  async wrapStep(
-    name: string,
-    fn: () => Promise<void>,
-    step?: { readonly name: string },
-  ): Promise<void> {
-    const onStep = this.options.onStep;
-    // The name can change while the step runs (a secret value gets hidden),
-    // so it is read again when the step ends.
-    const currentName = () => step?.name ?? name;
-    const run = async () => {
-      onStep?.({ name: currentName(), status: "started" });
-      try {
-        await fn();
-      } catch (error) {
-        onStep?.({ name: currentName(), status: "failed", error });
-        throw error;
-      }
-      onStep?.({ name: currentName(), status: "passed" });
-    };
+  async wrapStep(name: string, fn: () => Promise<void>): Promise<void> {
     // Outside @playwright/test there is no test.step(): run the step directly.
-    return this.insideRunner() ? test.step(name, run) : run();
+    return this.insideRunner() ? test.step(name, fn) : fn();
   }
 }

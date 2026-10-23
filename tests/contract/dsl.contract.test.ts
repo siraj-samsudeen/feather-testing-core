@@ -365,6 +365,38 @@ for (const driver of drivers) {
       });
     }, TEST_TIMEOUT);
 
+    /** Collects onStep events as "status name". */
+    function recorder() {
+      const events: string[] = [];
+      return {
+        events,
+        onStep: (e: { name: string; status: string }) => events.push(`${e.status} ${e.name}`),
+      };
+    }
+
+    it("#6 #52 onStep reports every step as it starts, passes or fails, inside within() too", async () => {
+      await withApp(async (h) => {
+        const { events, onStep } = recorder();
+        await failure(
+          h
+            .session({ ...FAST, onStep })
+            .visit("/about")
+            .within("h1", (s) => s.assertText("About"))
+            .assertText("Nope"),
+        );
+        expect(events).toEqual([
+          "started visit('/about')",
+          "passed visit('/about')",
+          "started within('h1')",
+          "started assertText('About')",
+          "passed assertText('About')",
+          "passed within('h1')",
+          "started assertText('Nope')",
+          "failed assertText('Nope')",
+        ]);
+      });
+    }, TEST_TIMEOUT);
+
     it("#56 step() and raw() run inside the chain", async () => {
       await withApp(async (h) => {
         const seen: string[] = [];

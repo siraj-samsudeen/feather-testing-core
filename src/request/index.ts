@@ -9,6 +9,7 @@ import {
 
 export { Session } from "../session.js";
 export { StepError, BrowserOnlyVerbError } from "../errors.js";
+export { DEFAULT_TIMEOUT } from "../types.js";
 export {
   RequestDriver,
   type RequestDriverOptions,
@@ -27,6 +28,8 @@ export type {
   DownloadOptions,
   FillInOptions,
   LayoutAssertionOptions,
+  SessionOptions,
+  StepEvent,
   TestDriver,
   UntilOptions,
   UntilPredicate,
@@ -42,5 +45,7 @@ export function createSession(
   handler: RequestHandler,
   options?: RequestDriverOptions,
 ): Session<RequestStepContext, RequestPage> {
-  return new Session(new RequestDriver(handler, options));
+  return new Session(new RequestDriver(handler, options), {
+    onStep: options?.onStep,
+  });
 }

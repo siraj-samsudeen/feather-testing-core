@@ -6,6 +6,8 @@ import type {
   FillInOptions,
   LayoutAssertionOptions,
   QueuedStep,
+  SessionOptions,
+  StepEvent,
   TestDriver,
   UntilOptions,
   UntilPredicate,
@@ -39,7 +41,27 @@ export class Session<TContext = unknown, TNative = unknown>
   private executedSteps: QueuedStep[] = [];
   private stepIndex = 0;
 
-  constructor(private driver: TestDriver<TContext, TNative>) {}
+  /**
+   * `options.onStep` is told about every step this session runs, and about
+   * the steps of the sessions within() and assertDownload() create from it.
+   */
+  constructor(
+    private driver: TestDriver<TContext, TNative>,
+    private options: Pick<SessionOptions, "onStep"> = {},
+  ) {}
+
+  /** Tell onStep about a step, by the name it has right now. */
+  private report(
+    step: QueuedStep,
+    status: StepEvent["status"],
+    error?: unknown,
+  ): void {
+    this.options.onStep?.(
+      status === "failed"
+        ? { name: step.name, status, error }
+        : { name: step.name, status },
+    );
+  }
 
   then<TResult1 = void, TResult2 = never>(
     onfulfilled?:
@@ -76,8 +98,17 @@ export class Session<TContext = unknown, TNative = unknown>
 
     for (const [i, step] of steps.entries()) {
       try {
+        // prepare() settles the name (a secret value hidden) before anyone
+        // hears of the step; the name is read again when it ends.
         await step.prepare?.();
-        await wrap(step.name, step.action, step);
+        this.report(step, "started");
+        try {
+          await wrap(step.name, step.action, step);
+        } catch (error) {
+          this.report(step, "failed", error);
+          throw error;
+        }
+        this.report(step, "passed");
         this.executedSteps.push(step);
       } catch (error) {
         // Include steps executed in earlier chains so the full walk is
@@ -416,7 +447,7 @@ export class Session<TContext = unknown, TNative = unknown>
       this.driver.assertDownload(
         expected,
         async () => {
-          await trigger(new Session(this.driver));
+          await trigger(new Session(this.driver, this.options));
         },
         opts,
       ),
@@ -483,7 +514,7 @@ export class Session<TContext = unknown, TNative = unknown>
   ): this {
     return this.enqueue(`within('${selector}')`, async () => {
       const scopedDriver = await this.driver.within(selector);
-      const scopedSession = new Session(scopedDriver);
+      const scopedSession = new Session(scopedDriver, this.options);
       await fn(scopedSession);
     });
   }
