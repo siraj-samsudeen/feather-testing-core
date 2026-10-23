@@ -10,12 +10,19 @@ export interface AssertionOptions {
   timeout?: number;
 }
 
+/**
+ * Options every waiting verb takes. `timeout` is this step's budget in ms:
+ * it wins over the session's `timeout`, which wins over the adapter's
+ * default. The request adapter, which never waits, accepts and ignores it.
+ */
+export type StepOptions = AssertionOptions;
+
 export interface LayoutAssertionOptions extends AssertionOptions {
   /** Allowed rounding difference in CSS pixels. Defaults to 1. */
   tolerance?: number;
 }
 
-export interface FillInOptions {
+export interface FillInOptions extends StepOptions {
   /**
    * Show the value as '••••••' in failure reports and step titles. Values
    * typed into a password field, or into a field whose label looks secret,
@@ -24,7 +31,7 @@ export interface FillInOptions {
   sensitive?: boolean;
 }
 
-export interface AssertPathOptions {
+export interface AssertPathOptions extends StepOptions {
   queryParams?: Record<string, string>;
 }
 
@@ -124,10 +131,10 @@ export type UntilPredicate<TContext> = (
 export interface TestDriver<TContext = unknown, TNative = unknown> {
   visit(path: string): Promise<void>;
   reload(): Promise<void>;
-  click(text: string): Promise<void>;
-  clickLink(text: string): Promise<void>;
-  clickButton(text: string): Promise<void>;
-  fillIn(label: string, value: string): Promise<void>;
+  click(text: string, opts?: StepOptions): Promise<void>;
+  clickLink(text: string, opts?: StepOptions): Promise<void>;
+  clickButton(text: string, opts?: StepOptions): Promise<void>;
+  fillIn(label: string, value: string, opts?: StepOptions): Promise<void>;
   /**
    * Optional: whether the field the most recent fillIn() targeted is a
    * password field (type="password"). The session asks right after every
@@ -148,26 +155,28 @@ export interface TestDriver<TContext = unknown, TNative = unknown> {
     label: string,
     /** Which step asks: a fill's budget is an action's, an assertion's an assertion's. */
     purpose?: "fill" | "assert",
+    /** The step's own timeout, when it set one. */
+    timeout?: number,
   ): Promise<boolean>;
-  selectOption(label: string, option: string): Promise<void>;
-  check(label: string): Promise<void>;
-  uncheck(label: string): Promise<void>;
-  choose(label: string): Promise<void>;
-  submit(): Promise<void>;
-  attachFile(label: string, path: string): Promise<void>;
+  selectOption(label: string, option: string, opts?: StepOptions): Promise<void>;
+  check(label: string, opts?: StepOptions): Promise<void>;
+  uncheck(label: string, opts?: StepOptions): Promise<void>;
+  choose(label: string, opts?: StepOptions): Promise<void>;
+  submit(opts?: StepOptions): Promise<void>;
+  attachFile(label: string, path: string, opts?: StepOptions): Promise<void>;
   /** @deprecated The older name for {@link TestDriver.attachFile}. */
   upload?(label: string, path: string): Promise<void>;
   dropFile(selector: string, path: string): Promise<void>;
-  pressKey(key: string): Promise<void>;
-  hover(text: string): Promise<void>;
+  pressKey(key: string, opts?: StepOptions): Promise<void>;
+  hover(text: string, opts?: StepOptions): Promise<void>;
   assertHas(selector: string, opts?: AssertHasOptions): Promise<void>;
   refuteHas(selector: string, opts?: AssertHasOptions): Promise<void>;
-  assertText(text: string): Promise<void>;
+  assertText(text: string, opts?: StepOptions): Promise<void>;
   assertExactText(
     text: string,
     opts?: AssertionOptions,
   ): Promise<void>;
-  refuteText(text: string): Promise<void>;
+  refuteText(text: string, opts?: StepOptions): Promise<void>;
   assertAttribute(
     name: string,
     value?: string,
@@ -186,13 +195,13 @@ export interface TestDriver<TContext = unknown, TNative = unknown> {
     opts?: LayoutAssertionOptions,
   ): Promise<void>;
   scrollToHorizontalEnd(opts?: LayoutAssertionOptions): Promise<void>;
-  assertValue(label: string, value: string): Promise<void>;
-  assertChecked(label: string): Promise<void>;
-  refuteChecked(label: string): Promise<void>;
-  assertSelected(label: string, optionLabel: string): Promise<void>;
-  assertOptions(label: string, optionLabels: string[]): Promise<void>;
+  assertValue(label: string, value: string, opts?: StepOptions): Promise<void>;
+  assertChecked(label: string, opts?: StepOptions): Promise<void>;
+  refuteChecked(label: string, opts?: StepOptions): Promise<void>;
+  assertSelected(label: string, optionLabel: string, opts?: StepOptions): Promise<void>;
+  assertOptions(label: string, optionLabels: string[], opts?: StepOptions): Promise<void>;
   assertPath(path: string, opts?: AssertPathOptions): Promise<void>;
-  refutePath(path: string): Promise<void>;
+  refutePath(path: string, opts?: StepOptions): Promise<void>;
   /**
    * Run `trigger` and assert the browser offers a download whose suggested
    * filename matches `expected`. Browser-only: the RTL adapter throws.

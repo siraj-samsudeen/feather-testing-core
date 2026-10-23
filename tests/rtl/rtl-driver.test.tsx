@@ -1570,3 +1570,21 @@ describe("assertSubmitBlocked", () => {
     expect(error!.message).toContain("use the request or Playwright adapter");
   });
 });
+
+describe("createSession({ timeout })", () => {
+  afterEach(cleanup);
+
+  function Late() {
+    const [shown, setShown] = useState(false);
+    useEffect(() => {
+      const timer = setTimeout(() => setShown(true), 1500);
+      return () => clearTimeout(timer);
+    }, []);
+    return <p>{shown ? "Arrived" : "Waiting"}</p>;
+  }
+
+  it("passes the session timeout to the driver (Testing Library's default is 1 s)", async () => {
+    render(<Late />);
+    await createSession({ timeout: 4000 }).assertText("Arrived");
+  });
+});

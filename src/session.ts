@@ -8,6 +8,7 @@ import type {
   QueuedStep,
   SessionOptions,
   StepEvent,
+  StepOptions,
   TestDriver,
   UntilOptions,
   UntilPredicate,
@@ -192,19 +193,19 @@ export class Session<TContext = unknown, TNative = unknown>
 
   // --- Interactions ---
 
-  click(text: string): this {
-    return this.enqueue(`click('${text}')`, () => this.driver.click(text));
+  click(text: string, opts?: StepOptions): this {
+    return this.enqueue(`click('${text}')`, () => this.driver.click(text, opts));
   }
 
-  clickLink(text: string): this {
+  clickLink(text: string, opts?: StepOptions): this {
     return this.enqueue(`clickLink('${text}')`, () =>
-      this.driver.clickLink(text),
+      this.driver.clickLink(text, opts),
     );
   }
 
-  clickButton(text: string): this {
+  clickButton(text: string, opts?: StepOptions): this {
     return this.enqueue(`clickButton('${text}')`, () =>
-      this.driver.clickButton(text),
+      this.driver.clickButton(text, opts),
     );
   }
 
@@ -225,7 +226,8 @@ export class Session<TContext = unknown, TNative = unknown>
       label,
       value,
       knownSecret: opts?.sensitive === true || labelLooksSecret(label),
-      run: () => this.driver.fillIn(label, value),
+      timeout: opts?.timeout,
+      run: () => this.driver.fillIn(label, value, opts),
       askAfterRun: true,
     });
   }
@@ -248,11 +250,13 @@ export class Session<TContext = unknown, TNative = unknown>
     label: string;
     value: string;
     knownSecret: boolean;
+    /** The step's own timeout, for the field check before it starts. */
+    timeout?: number;
     run: () => Promise<void>;
     /** fillIn: ask lastFilledFieldIsPassword() after running, too. */
     askAfterRun: boolean;
   }): this {
-    const { verb, label, value, knownSecret, run, askAfterRun } = spec;
+    const { verb, label, value, knownSecret, timeout, run, askAfterRun } = spec;
     const nameShowingValue = `${verb}('${label}', '${value}')`;
     // An empty value has nothing to hide: it is always shown as ''.
     const nameHidingValue =
@@ -278,7 +282,7 @@ export class Session<TContext = unknown, TNative = unknown>
         // field apart from a failing fill or a value mismatch.
         try {
           const purpose = verb === "assertValue" ? "assert" : "fill";
-          if (await this.driver.fieldIsPassword(label, purpose)) {
+          if (await this.driver.fieldIsPassword(label, purpose, timeout)) {
             hide();
           }
         } catch (error) {
@@ -341,36 +345,36 @@ export class Session<TContext = unknown, TNative = unknown>
     }
   }
 
-  selectOption(label: string, option: string): this {
+  selectOption(label: string, option: string, opts?: StepOptions): this {
     return this.enqueue(`selectOption('${label}', '${option}')`, () =>
-      this.driver.selectOption(label, option),
+      this.driver.selectOption(label, option, opts),
     );
   }
 
-  check(label: string): this {
-    return this.enqueue(`check('${label}')`, () => this.driver.check(label));
+  check(label: string, opts?: StepOptions): this {
+    return this.enqueue(`check('${label}')`, () => this.driver.check(label, opts));
   }
 
-  uncheck(label: string): this {
+  uncheck(label: string, opts?: StepOptions): this {
     return this.enqueue(`uncheck('${label}')`, () =>
-      this.driver.uncheck(label),
+      this.driver.uncheck(label, opts),
     );
   }
 
-  choose(label: string): this {
+  choose(label: string, opts?: StepOptions): this {
     return this.enqueue(`choose('${label}')`, () =>
-      this.driver.choose(label),
+      this.driver.choose(label, opts),
     );
   }
 
-  submit(): this {
-    return this.enqueue("submit()", () => this.driver.submit());
+  submit(opts?: StepOptions): this {
+    return this.enqueue("submit()", () => this.driver.submit(opts));
   }
 
   /** Set a file input, found by its label, to the file at `path`. */
-  attachFile(label: string, path: string): this {
+  attachFile(label: string, path: string, opts?: StepOptions): this {
     return this.enqueue(`attachFile('${label}', '${path}')`, () =>
-      this.driver.attachFile(label, path),
+      this.driver.attachFile(label, path, opts),
     );
   }
 
@@ -390,20 +394,20 @@ export class Session<TContext = unknown, TNative = unknown>
   }
 
   /** Press a key on the focused element, e.g. 'Enter' or 'Control+A'. */
-  pressKey(key: string): this {
-    return this.enqueue(`pressKey('${key}')`, () => this.driver.pressKey(key));
+  pressKey(key: string, opts?: StepOptions): this {
+    return this.enqueue(`pressKey('${key}')`, () => this.driver.pressKey(key, opts));
   }
 
   /** Hover the element with this text. */
-  hover(text: string): this {
-    return this.enqueue(`hover('${text}')`, () => this.driver.hover(text));
+  hover(text: string, opts?: StepOptions): this {
+    return this.enqueue(`hover('${text}')`, () => this.driver.hover(text, opts));
   }
 
   // --- Assertions ---
 
-  assertText(text: string): this {
+  assertText(text: string, opts?: StepOptions): this {
     return this.enqueue(`assertText('${text}')`, () =>
-      this.driver.assertText(text),
+      this.driver.assertText(text, opts),
     );
   }
 
@@ -414,9 +418,9 @@ export class Session<TContext = unknown, TNative = unknown>
     );
   }
 
-  refuteText(text: string): this {
+  refuteText(text: string, opts?: StepOptions): this {
     return this.enqueue(`refuteText('${text}')`, () =>
-      this.driver.refuteText(text),
+      this.driver.refuteText(text, opts),
     );
   }
 
@@ -483,13 +487,14 @@ export class Session<TContext = unknown, TNative = unknown>
   }
 
   /** Hides `value` exactly as fillIn() does when the field is secret. */
-  assertValue(label: string, value: string): this {
+  assertValue(label: string, value: string, opts?: StepOptions): this {
     return this.fieldValueStep({
       verb: "assertValue",
       label,
       value,
       knownSecret: labelLooksSecret(label),
-      run: () => this.driver.assertValue(label, value),
+      timeout: opts?.timeout,
+      run: () => this.driver.assertValue(label, value, opts),
       askAfterRun: false,
     });
   }
@@ -512,29 +517,29 @@ export class Session<TContext = unknown, TNative = unknown>
     });
   }
 
-  assertChecked(label: string): this {
+  assertChecked(label: string, opts?: StepOptions): this {
     return this.enqueue(`assertChecked('${label}')`, () =>
-      this.driver.assertChecked(label),
+      this.driver.assertChecked(label, opts),
     );
   }
 
-  refuteChecked(label: string): this {
+  refuteChecked(label: string, opts?: StepOptions): this {
     return this.enqueue(`refuteChecked('${label}')`, () =>
-      this.driver.refuteChecked(label),
+      this.driver.refuteChecked(label, opts),
     );
   }
 
-  assertSelected(label: string, optionLabel: string): this {
+  assertSelected(label: string, optionLabel: string, opts?: StepOptions): this {
     return this.enqueue(
       `assertSelected('${label}', '${optionLabel}')`,
-      () => this.driver.assertSelected(label, optionLabel),
+      () => this.driver.assertSelected(label, optionLabel, opts),
     );
   }
 
-  assertOptions(label: string, optionLabels: string[]): this {
+  assertOptions(label: string, optionLabels: string[], opts?: StepOptions): this {
     const list = optionLabels.map((l) => `'${l}'`).join(", ");
     return this.enqueue(`assertOptions('${label}', [${list}])`, () =>
-      this.driver.assertOptions(label, optionLabels),
+      this.driver.assertOptions(label, optionLabels, opts),
     );
   }
 
@@ -558,9 +563,9 @@ export class Session<TContext = unknown, TNative = unknown>
     );
   }
 
-  refutePath(path: string): this {
+  refutePath(path: string, opts?: StepOptions): this {
     return this.enqueue(`refutePath('${path}')`, () =>
-      this.driver.refutePath(path),
+      this.driver.refutePath(path, opts),
     );
   }
 

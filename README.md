@@ -323,6 +323,13 @@ See [Request adapter](#request-adapter) for what it does and does not do.
 
 Every method returns `this` for chaining. A single `await` at the start of the chain executes all steps sequentially.
 
+
+**Per-step timeouts.** Every verb that waits takes a last `{ timeout }` argument: the assertions (`assertText`, `refuteText`, `assertValue`, `assertChecked`, `refuteChecked`, `assertSelected`, `assertOptions`, `assertPath`, `refutePath`, `assertHas`, ...) and the actions (`click`, `clickLink`, `clickButton`, `fillIn`, `selectOption`, `check`, `uncheck`, `choose`, `submit`, `pressKey`, `hover`, `attachFile`). The step's own timeout wins over the session's `timeout`, which wins over the adapter's default. The request adapter never waits, so it accepts and ignores a step timeout (only `until` uses one). The RTL adapter takes a session `timeout` in `createSession({ timeout })` for its Testing Library waits, and ignores a step's own.
+
+```ts
+await session.clickButton("Save").assertText("Saved", { timeout: 10_000 });
+```
+
 ### Navigation
 
 | Method | Description |
@@ -952,6 +959,7 @@ Deliberate exceptions stay possible and stay visible: an `eslint-disable-next-li
 0.7.0 is in beta. Install it with `npm install feather-testing-core@0.7.0-beta.1`; see [Known limitations](#known-limitations) first.
 
 - **Breaking (Playwright adapter):** a submit the browser refuses because a field is invalid (an empty `required` field above all) now fails the step: `form not sent: 'Title' is required`. It used to pass silently. Where the refusal is the point of the spec, use the new `assertSubmitBlocked(label)`.
+- New: every waiting verb takes `{ timeout }` (step > session > adapter default); `createSession({ timeout })` on the RTL adapter.
 - **More lenient (Playwright adapter):** `assertHas(selector)` passes when any matching element is visible; it used to need the first match to be visible. `count` and `refuteHas` still count every match, visible or not.
 - **Breaking (Playwright adapter):** `within(selector)` must match exactly one element, as in the request adapter. A selector matching none or several now fails the `within()` step, naming the count. Fix: narrow the selector (an id, a class, a data attribute), or use `:first-of-type` if the first one is really meant.
 - The optional peer dependency is now `playwright` (`>=1.64.0`, the version tested) instead of `@playwright/test` (`>=1.40.0`). `@playwright/test` installs `playwright`, so Playwright Test users on 1.64 or later change nothing; library users no longer need `@playwright/test`.

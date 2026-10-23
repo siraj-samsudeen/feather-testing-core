@@ -23,11 +23,14 @@ export type {
 } from "../types.js";
 
 /**
- * `onStep` works as in the other adapters. The RTL adapter waits through
- * Testing Library's own `findBy` timeouts, so it takes no `timeout` here.
+ * `onStep` works as in the other adapters. `timeout` is the budget of every
+ * Testing Library `findBy` wait in the session (Testing Library's default
+ * is 1000 ms). A step's own `{ timeout }` is accepted and ignored here.
  */
 export function createSession(
-  options?: Pick<SessionOptions, "onStep">,
+  options?: Pick<SessionOptions, "onStep" | "timeout">,
 ): Session<RTLStepContext, RTLQueries> {
-  return new Session(new RTLDriver(), { onStep: options?.onStep });
+  return new Session(new RTLDriver(undefined, undefined, options?.timeout), {
+    onStep: options?.onStep,
+  });
 }

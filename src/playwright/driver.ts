@@ -10,6 +10,7 @@ import type {
   LayoutAssertionOptions,
   TestDriver,
   SessionOptions,
+  StepOptions,
   UntilOptions,
   UntilPredicate,
 } from "../types.js";
@@ -212,8 +213,16 @@ export class PlaywrightDriver
    * navigation budget. Otherwise Playwright waits for the navigation inside
    * click()/press() and holds it to the (shorter) action timeout.
    */
-  private navigatingActionOptions(): { timeout?: number; noWaitAfter: true } {
-    return { timeout: this.timeout, noWaitAfter: true };
+  private navigatingActionOptions(opts?: StepOptions): {
+    timeout?: number;
+    noWaitAfter: true;
+  } {
+    return { timeout: this.budget(opts), noWaitAfter: true };
+  }
+
+  /** A step's budget: its own timeout, else the session's (see timeout). */
+  private budget(opts?: StepOptions): number | undefined {
+    return opts?.timeout ?? this.timeout;
   }
 
   /**
@@ -557,25 +566,25 @@ export class PlaywrightDriver
     await this.page.reload({ timeout: this.navigationTimeout() });
   }
 
-  async click(text: string): Promise<void> {
+  async click(text: string, opts?: StepOptions): Promise<void> {
     await this.acting(() =>
-      this.scope.getByText(text, EXACT).click(this.navigatingActionOptions()),
+      this.scope.getByText(text, EXACT).click(this.navigatingActionOptions(opts)),
     );
   }
 
-  async clickLink(text: string): Promise<void> {
+  async clickLink(text: string, opts?: StepOptions): Promise<void> {
     await this.acting(() =>
       this.scope
         .getByRole("link", { name: text, ...EXACT })
-        .click(this.navigatingActionOptions()),
+        .click(this.navigatingActionOptions(opts)),
     );
   }
 
-  async clickButton(text: string): Promise<void> {
+  async clickButton(text: string, opts?: StepOptions): Promise<void> {
     await this.acting(() =>
       this.scope
         .getByRole("button", { name: text, ...EXACT })
-        .click(this.navigatingActionOptions()),
+        .click(this.navigatingActionOptions(opts)),
     );
   }
 
@@ -593,10 +602,10 @@ export class PlaywrightDriver
     return this.labelled(label).or(this.scope.getByPlaceholder(label, EXACT));
   }
 
-  async fillIn(label: string, value: string): Promise<void> {
+  async fillIn(label: string, value: string, opts?: StepOptions): Promise<void> {
     const field = this.fieldByLabelOrPlaceholder(label);
     this.lastFilledField = field;
-    await field.fill(value, { timeout: this.timeoutAfterProbe(label) });
+    await field.fill(value, { timeout: this.timeoutAfterProbe(label, opts) });
     this.lastFormLocator = this.scope.locator("form", { has: field });
   }
 
@@ -621,10 +630,10 @@ export class PlaywrightDriver
    * same field, so finding the field and filling it share one `timeout`
    * instead of taking up to twice as long.
    */
-  private timeoutAfterProbe(label: string): number | undefined {
+  private timeoutAfterProbe(label: string, opts?: StepOptions): number | undefined {
     const probe = this.fillProbe;
     this.fillProbe = null;
-    const timeout = this.timeout;
+    const timeout = this.budget(opts);
     if (!probe || probe.label !== label || !timeout) {
       return timeout; // undefined: Playwright's own; 0: no limit
     }
@@ -637,16 +646,18 @@ export class PlaywrightDriver
   async fieldIsPassword(
     label: string,
     purpose: "fill" | "assert" = "fill",
+    stepTimeout?: number,
   ): Promise<boolean> {
+    const timeout = stepTimeout ?? this.timeout;
     this.fillProbe = { label, startedAt: Date.now() };
     const field = this.fieldByLabelOrPlaceholder(label);
     if (purpose === "assert") {
       // An assertion's budget: with no session timeout inside Playwright
       // Test that is expect.timeout, not the (often unlimited) action
       // timeout; toHaveValue then gets what is left of a session timeout.
-      await expect(field.first()).toBeAttached({ timeout: this.timeout });
+      await expect(field.first()).toBeAttached({ timeout });
     } else {
-      await field.first().waitFor({ state: "attached", timeout: this.timeout });
+      await field.first().waitFor({ state: "attached", timeout });
     }
     // Several matches: fill() would fail on strict mode, and which field the
     // value was meant for is unknown, so say so now (the value stays hidden,
@@ -666,27 +677,27 @@ export class PlaywrightDriver
     );
   }
 
-  async selectOption(label: string, option: string): Promise<void> {
+  async selectOption(label: string, option: string, opts?: StepOptions): Promise<void> {
     const select = this.labelled(label);
-    await select.selectOption({ label: option }, { timeout: this.timeout });
+    await select.selectOption({ label: option }, { timeout: this.budget(opts) });
     this.lastFormLocator = this.scope.locator("form", { has: select });
   }
 
-  async check(label: string): Promise<void> {
+  async check(label: string, opts?: StepOptions): Promise<void> {
     const checkbox = this.labelled(label);
-    await checkbox.check({ timeout: this.timeout });
+    await checkbox.check({ timeout: this.budget(opts) });
     this.lastFormLocator = this.scope.locator("form", { has: checkbox });
   }
 
-  async uncheck(label: string): Promise<void> {
+  async uncheck(label: string, opts?: StepOptions): Promise<void> {
     const checkbox = this.labelled(label);
-    await checkbox.uncheck({ timeout: this.timeout });
+    await checkbox.uncheck({ timeout: this.budget(opts) });
     this.lastFormLocator = this.scope.locator("form", { has: checkbox });
   }
 
-  async choose(label: string): Promise<void> {
+  async choose(label: string, opts?: StepOptions): Promise<void> {
     const radio = this.scope.getByRole("radio", { name: label, ...EXACT });
-    await radio.check({ timeout: this.timeout });
+    await radio.check({ timeout: this.budget(opts) });
     this.lastFormLocator = this.scope.locator("form", { has: radio });
   }
 
@@ -724,7 +735,7 @@ export class PlaywrightDriver
     }
   }
 
-  async submit(): Promise<void> {
+  async submit(opts?: StepOptions): Promise<void> {
     if (!this.lastFormLocator) {
       throw new Error(
         "submit() called but no form was previously interacted with. " +
@@ -737,7 +748,7 @@ export class PlaywrightDriver
     );
     if ((await submitBtn.count()) > 0) {
       await this.acting(() =>
-        submitBtn.first().click(this.navigatingActionOptions()),
+        submitBtn.first().click(this.navigatingActionOptions(opts)),
       );
       return;
     }
@@ -747,7 +758,7 @@ export class PlaywrightDriver
     });
     if ((await byRole.count()) > 0) {
       await this.acting(() =>
-        byRole.first().click(this.navigatingActionOptions()),
+        byRole.first().click(this.navigatingActionOptions(opts)),
       );
     } else {
       // Last resort: press Enter on the last form field
@@ -755,14 +766,14 @@ export class PlaywrightDriver
         .locator("input, textarea, select")
         .last();
       await this.acting(() =>
-        lastField.press("Enter", this.navigatingActionOptions()),
+        lastField.press("Enter", this.navigatingActionOptions(opts)),
       );
     }
   }
 
-  async attachFile(label: string, path: string): Promise<void> {
+  async attachFile(label: string, path: string, opts?: StepOptions): Promise<void> {
     const input = this.labelled(label);
-    await input.setInputFiles(path, { timeout: this.timeout });
+    await input.setInputFiles(path, { timeout: this.budget(opts) });
     this.lastFormLocator = this.scope.locator("form", { has: input });
   }
 
@@ -771,12 +782,12 @@ export class PlaywrightDriver
     await this.attachFile(label, path);
   }
 
-  async pressKey(key: string): Promise<void> {
+  async pressKey(key: string, opts?: StepOptions): Promise<void> {
     await this.acting(() => this.page.keyboard.press(key));
   }
 
-  async hover(text: string): Promise<void> {
-    await this.scope.getByText(text, EXACT).hover({ timeout: this.timeout });
+  async hover(text: string, opts?: StepOptions): Promise<void> {
+    await this.scope.getByText(text, EXACT).hover({ timeout: this.budget(opts) });
   }
 
   async dropFile(selector: string, path: string): Promise<void> {
@@ -828,9 +839,9 @@ export class PlaywrightDriver
     await expect(locator).toHaveCount(0, { timeout: opts?.timeout ?? this.timeout });
   }
 
-  async assertText(text: string): Promise<void> {
+  async assertText(text: string, opts?: StepOptions): Promise<void> {
     await expect(this.scope.getByText(text).first()).toBeVisible({
-      timeout: this.timeout,
+      timeout: this.budget(opts),
     });
   }
 
@@ -843,9 +854,9 @@ export class PlaywrightDriver
     });
   }
 
-  async refuteText(text: string): Promise<void> {
+  async refuteText(text: string, opts?: StepOptions): Promise<void> {
     await expect(this.scope.getByText(text)).toHaveCount(0, {
-      timeout: this.timeout,
+      timeout: this.budget(opts),
     });
   }
 
@@ -963,33 +974,33 @@ export class PlaywrightDriver
       .toBeNull();
   }
 
-  async assertValue(label: string, value: string): Promise<void> {
+  async assertValue(label: string, value: string, opts?: StepOptions): Promise<void> {
     await expect(this.fieldByLabelOrPlaceholder(label)).toHaveValue(value, {
-      timeout: this.timeoutAfterProbe(label),
+      timeout: this.timeoutAfterProbe(label, opts),
     });
   }
 
-  async assertChecked(label: string): Promise<void> {
-    await expect(this.labelled(label)).toBeChecked({ timeout: this.timeout });
+  async assertChecked(label: string, opts?: StepOptions): Promise<void> {
+    await expect(this.labelled(label)).toBeChecked({ timeout: this.budget(opts) });
   }
 
-  async refuteChecked(label: string): Promise<void> {
+  async refuteChecked(label: string, opts?: StepOptions): Promise<void> {
     await expect(this.labelled(label)).not.toBeChecked({
-      timeout: this.timeout,
+      timeout: this.budget(opts),
     });
   }
 
-  async assertSelected(label: string, optionLabel: string): Promise<void> {
+  async assertSelected(label: string, optionLabel: string, opts?: StepOptions): Promise<void> {
     const select = this.labelled(label);
     await expect(select.locator("option:checked")).toHaveText(optionLabel, {
-      timeout: this.timeout,
+      timeout: this.budget(opts),
     });
   }
 
-  async assertOptions(label: string, optionLabels: string[]): Promise<void> {
+  async assertOptions(label: string, optionLabels: string[], opts?: StepOptions): Promise<void> {
     const select = this.labelled(label);
     await expect(select.locator("option")).toHaveText(optionLabels, {
-      timeout: this.timeout,
+      timeout: this.budget(opts),
     });
   }
 
@@ -1005,16 +1016,16 @@ export class PlaywrightDriver
           const url = new URL(this.page.url());
           return query === null ? url.pathname : url.pathname + url.search;
         },
-        { message: `assertPath('${path}')`, timeout: this.timeout },
+        { message: `assertPath('${path}')`, timeout: this.budget(opts) },
       )
       .toBe(query === null ? path : path + query);
   }
 
-  async refutePath(path: string): Promise<void> {
+  async refutePath(path: string, opts?: StepOptions): Promise<void> {
     await expect
       .poll(() => new URL(this.page.url()).pathname, {
         message: `refutePath('${path}')`,
-        timeout: this.timeout,
+        timeout: this.budget(opts),
       })
       .not.toBe(path);
   }

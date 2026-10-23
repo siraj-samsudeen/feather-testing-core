@@ -616,6 +616,27 @@ for (const driver of drivers) {
       });
     }, TEST_TIMEOUT);
 
+    it("#3 a step's own timeout beats the session's, for assertions and actions", async () => {
+      await withApp(async (h) => {
+        type Chain = (s: ReturnType<Harness["session"]>) => { run(): Promise<void> };
+        const chains: Chain[] = [
+          (s) => s.assertText("Nope", { timeout: 200 }),
+          (s) => s.refuteText("About", { timeout: 200 }),
+          (s) => s.clickButton("No such button", { timeout: 200 }),
+          (s) => s.clickLink("No such link", { timeout: 200 }),
+          (s) => s.fillIn("No such field", "x", { timeout: 200 }),
+          (s) => s.assertValue("No such field", "x", { timeout: 200 }),
+          (s) => s.check("No such box", { timeout: 200 }),
+          (s) => s.refutePath("/about", { timeout: 200 }),
+        ];
+        for (const chain of chains) {
+          const started = Date.now();
+          await failure(chain(h.session({ timeout: 10_000 }).visit("/about")));
+          expect(Date.now() - started).toBeLessThan(3000);
+        }
+      });
+    }, 60_000);
+
     it("#56 step() and raw() run inside the chain", async () => {
       await withApp(async (h) => {
         const seen: string[] = [];

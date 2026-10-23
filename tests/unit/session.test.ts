@@ -15,7 +15,10 @@ function createMockDriver(overrides?: Partial<TestDriver>): {
 
   const handler = (name: string) => {
     return (...args: unknown[]) => {
-      calls.push(`${name}(${args.map((a) => JSON.stringify(a)).join(", ")})`);
+      // Options a step did not set arrive as trailing undefined: leave them out.
+      const given = [...args];
+      while (given.length > 0 && given[given.length - 1] === undefined) given.pop();
+      calls.push(`${name}(${given.map((a) => JSON.stringify(a)).join(", ")})`);
       return Promise.resolve();
     };
   };
@@ -242,22 +245,22 @@ describe("Session", () => {
 
       expect(driver.visit).toHaveBeenCalledWith("/path");
       expect(driver.reload).toHaveBeenCalledWith();
-      expect(driver.click).toHaveBeenCalledWith("some text");
-      expect(driver.clickLink).toHaveBeenCalledWith("my link");
-      expect(driver.clickButton).toHaveBeenCalledWith("my button");
-      expect(driver.fillIn).toHaveBeenCalledWith("Email", "a@b.com");
-      expect(driver.selectOption).toHaveBeenCalledWith("Color", "Red");
-      expect(driver.check).toHaveBeenCalledWith("Newsletter");
-      expect(driver.uncheck).toHaveBeenCalledWith("Ads");
-      expect(driver.choose).toHaveBeenCalledWith("Plan A");
+      expect(driver.click).toHaveBeenCalledWith("some text", undefined);
+      expect(driver.clickLink).toHaveBeenCalledWith("my link", undefined);
+      expect(driver.clickButton).toHaveBeenCalledWith("my button", undefined);
+      expect(driver.fillIn).toHaveBeenCalledWith("Email", "a@b.com", undefined);
+      expect(driver.selectOption).toHaveBeenCalledWith("Color", "Red", undefined);
+      expect(driver.check).toHaveBeenCalledWith("Newsletter", undefined);
+      expect(driver.uncheck).toHaveBeenCalledWith("Ads", undefined);
+      expect(driver.choose).toHaveBeenCalledWith("Plan A", undefined);
       expect(driver.submit).toHaveBeenCalled();
       expect(driver.upload).toHaveBeenCalledWith("Avatar", "avatar.png");
       expect(driver.dropFile).toHaveBeenCalledWith("#zone", "doc.pdf");
-      expect(driver.assertText).toHaveBeenCalledWith("Hello");
+      expect(driver.assertText).toHaveBeenCalledWith("Hello", undefined);
       expect(driver.assertExactText).toHaveBeenCalledWith("Exact total", {
         timeout: 250,
       });
-      expect(driver.refuteText).toHaveBeenCalledWith("Goodbye");
+      expect(driver.refuteText).toHaveBeenCalledWith("Goodbye", undefined);
       expect(driver.assertAttribute).toHaveBeenCalledWith(
         "data-state",
         "ready",
@@ -287,14 +290,15 @@ describe("Session", () => {
         timeout: 250,
         tolerance: 2,
       });
-      expect(driver.assertValue).toHaveBeenCalledWith("Email", "a@b.com");
-      expect(driver.assertChecked).toHaveBeenCalledWith("Newsletter");
-      expect(driver.refuteChecked).toHaveBeenCalledWith("Ads");
-      expect(driver.assertSelected).toHaveBeenCalledWith("Color", "Red");
-      expect(driver.assertOptions).toHaveBeenCalledWith("Color", [
-        "Red",
-        "Blue",
-      ]);
+      expect(driver.assertValue).toHaveBeenCalledWith("Email", "a@b.com", undefined);
+      expect(driver.assertChecked).toHaveBeenCalledWith("Newsletter", undefined);
+      expect(driver.refuteChecked).toHaveBeenCalledWith("Ads", undefined);
+      expect(driver.assertSelected).toHaveBeenCalledWith("Color", "Red", undefined);
+      expect(driver.assertOptions).toHaveBeenCalledWith(
+        "Color",
+        ["Red", "Blue"],
+        undefined,
+      );
       expect(driver.assertHas).toHaveBeenCalledWith("div.card", {
         text: "hi",
         count: 2,
@@ -303,7 +307,7 @@ describe("Session", () => {
       expect(driver.assertPath).toHaveBeenCalledWith("/done", {
         queryParams: { id: "1" },
       });
-      expect(driver.refutePath).toHaveBeenCalledWith("/login");
+      expect(driver.refutePath).toHaveBeenCalledWith("/login", undefined);
       expect(driver.debug).toHaveBeenCalled();
     });
   });
@@ -641,7 +645,7 @@ describe("Session", () => {
       const { driver, calls } = createMockDriver();
       await new Session(driver).attachFile("Avatar", "photo.png");
 
-      expect(driver.attachFile).toHaveBeenCalledWith("Avatar", "photo.png");
+      expect(driver.attachFile).toHaveBeenCalledWith("Avatar", "photo.png", undefined);
       expect(calls).toEqual(['attachFile("Avatar", "photo.png")']);
     });
 
@@ -990,7 +994,7 @@ describe("secrets in failure reports", () => {
 
     expect(calls).toEqual([
       `fillIn("Password", "${FAKE_SECRET}")`,
-      `fillIn("Recovery phrase", "${FAKE_SECRET}")`,
+      `fillIn("Recovery phrase", "${FAKE_SECRET}", {"sensitive":true})`,
     ]);
   });
 
