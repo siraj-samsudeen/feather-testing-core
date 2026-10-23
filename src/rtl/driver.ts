@@ -10,6 +10,7 @@ import type {
   AssertHasOptions,
   AssertionOptions,
   DownloadOptions,
+  FieldState,
   TestDriver,
   UntilOptions,
   UntilPredicate,
@@ -157,6 +158,29 @@ export class RTLDriver implements TestDriver<RTLStepContext, RTLQueries> {
   async fieldIsPassword(label: string): Promise<boolean> {
     const field = await this.findField(label);
     return field instanceof HTMLInputElement && field.type === "password";
+  }
+
+  /**
+   * The field fillIn() and assertValue() target, read as it is now: the
+   * queryAll* queries never wait. Null unless exactly one field matches.
+   */
+  async fieldState(label: string): Promise<FieldState | null> {
+    let matches = this.container.queryAllByLabelText(label);
+    if (matches.length === 0) matches = this.container.queryAllByPlaceholderText(label);
+    if (matches.length !== 1) return null;
+    const el = matches[0]!;
+    const input = el instanceof HTMLInputElement ? el : null;
+    return {
+      value: "value" in el ? String((el as HTMLInputElement).value) : (el.textContent ?? ""),
+      disabled: el.matches(":disabled"),
+      readOnly: el.hasAttribute("readonly"),
+      visible: isShown(el),
+      editable:
+        el instanceof HTMLTextAreaElement ||
+        (input !== null && !NOT_TYPEABLE_INPUT_TYPES.has(input.type)) ||
+        el.isContentEditable,
+      kind: input ? `an <input type="${input.type}">` : `a <${el.tagName.toLowerCase()}>`,
+    };
   }
 
   async lastFilledFieldIsPassword(): Promise<boolean> {
@@ -598,4 +622,27 @@ export function toKeyboardSyntax(key: string): string {
       .map((m) => `{/${m}}`)
       .join("")
   );
+}
+
+/** Input types fillIn() cannot type into (the other adapters' list too). */
+const NOT_TYPEABLE_INPUT_TYPES = new Set([
+  "checkbox",
+  "radio",
+  "file",
+  "submit",
+  "reset",
+  "button",
+  "image",
+  "hidden",
+]);
+
+/** Not hidden by an attribute or by display/visibility, on it or an ancestor. */
+function isShown(element: HTMLElement): boolean {
+  for (let el: HTMLElement | null = element; el; el = el.parentElement) {
+    if (el.hidden) return false;
+    const style = el.ownerDocument.defaultView?.getComputedStyle(el);
+    if (style?.display === "none") return false;
+    if (el === element && style?.visibility === "hidden") return false;
+  }
+  return true;
 }

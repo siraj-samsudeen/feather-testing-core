@@ -859,15 +859,16 @@ The driver checks the field before the step starts. So the hidden form is used e
 - the label or placeholder looked for;
 - whether the field is secret;
 - "no field labelled 'X'", or "2 fields match 'X'" with a hint to scope with `within()`;
-- a suggestion to run `debug()` to see the page.
+- a suggestion to run `debug()` to see the page;
+- for a field that is not secret, its state as the driver reads it: `assertValue` says "expected 'Ada', found 'Bob'", and `fillIn` says whether the field is disabled, read-only, not visible, or not a text field (`it is an <input type="checkbox">, which cannot be typed into`).
 
-Richer diagnostics for secret fields are tracked in issue #16.
+A secret field never gets its value or state in the message. Richer diagnostics for secret fields are tracked in issue #16.
 
 The RTL and request adapters' `debug()` print password inputs' values as `'••••••'`.
 
 Limits: see [Known limitations](#known-limitations). Secret values can still appear in other steps' error output, such as a Testing Library DOM dump or an error the app throws. Playwright's own trace and HTML report record every action with its arguments. Treat traces and reports from runs that type real credentials as secret.
 
-A custom `TestDriver` takes part in the password rule by implementing the optional `fieldIsPassword(label)` (asked before the step; it may wait for the field, and throws if it never appears) and `lastFilledFieldIsPassword()` (asked after a `fillIn`, at once).
+A custom `TestDriver` takes part in the password rule by implementing the optional `fieldIsPassword(label)` (asked before the step; it may wait for the field, and throws if it never appears) and `lastFilledFieldIsPassword()` (asked after a `fillIn`, at once). It gives the facts above for fields that are not secret by implementing the optional `fieldState(label)`: the field's value, whether it is disabled, read-only, visible and editable, and its kind, read at once, or `null` when not exactly one field matches.
 
 ## RTL Adapter Limitations
 

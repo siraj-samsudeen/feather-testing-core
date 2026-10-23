@@ -1682,3 +1682,58 @@ describe("missing and ambiguous fields never forward a DOM dump", () => {
     }
   });
 });
+
+describe("RTLDriver — why fillIn/assertValue failed on a field that is not secret", () => {
+  function FieldStates() {
+    return (
+      <form>
+        <label htmlFor="name">Name</label>
+        <input id="name" defaultValue="Ada" />
+        <label htmlFor="off">Off</label>
+        <input id="off" defaultValue="x" disabled />
+        <label htmlFor="ro">Kept</label>
+        <input id="ro" defaultValue="kept" readOnly />
+        <label htmlFor="agree">Agree</label>
+        <input id="agree" type="checkbox" />
+        <label htmlFor="code">Login code</label>
+        <input id="code" type="password" defaultValue="fake-secret-value-123" />
+      </form>
+    );
+  }
+
+  async function failure(chain: PromiseLike<void>): Promise<StepError> {
+    const error = await chain.then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(error).toBeInstanceOf(StepError);
+    return error as StepError;
+  }
+
+  it("assertValue says what it found", async () => {
+    render(<FieldStates />);
+    const error = await failure(createSession({ timeout: 200 }).assertValue("Name", "Bob"));
+    expect(error.message).toContain(
+      "assertValue('Name', 'Bob') failed on the field labelled 'Name': expected 'Bob', found 'Ada'.",
+    );
+  });
+
+  for (const [label, fact] of [
+    ["Off", "it is disabled."],
+    ["Kept", "it is read-only."],
+    ["Agree", `it is an <input type="checkbox">, which cannot be typed into.`],
+  ] as const) {
+    it(`fillIn says the field's state (${label})`, async () => {
+      render(<FieldStates />);
+      const error = await failure(createSession({ timeout: 200 }).fillIn(label, "y"));
+      expect(error.message).toContain(`fillIn('${label}', 'y') failed on the field labelled '${label}': ${fact}`);
+    });
+  }
+
+  it("a secret field still gets no value in its error", async () => {
+    render(<FieldStates />);
+    const error = await failure(createSession({ timeout: 200 }).assertValue("Login code", "wrong"));
+    expect(error.message).toContain("(a secret field)");
+    expect(error.message).not.toContain("fake-secret-value-123");
+  });
+});

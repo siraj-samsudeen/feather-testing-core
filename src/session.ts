@@ -3,6 +3,7 @@ import type {
   AssertPathOptions,
   AssertionOptions,
   DownloadOptions,
+  FieldState,
   FillInOptions,
   LayoutAssertionOptions,
   QueuedStep,
@@ -60,6 +61,40 @@ function ownFactsError(stepName: string, label: string, secretField: boolean): E
       "The driver's message is not shown for fillIn and assertValue: it can quote a field's " +
       "value or a dump of the page. Run debug() to see the page.",
   );
+}
+
+/**
+ * Why fillIn or assertValue failed on a field that is not secret, from the
+ * field's state as the driver read it (facts, not its message): the value
+ * found for assertValue; for fillIn, whether the field is disabled,
+ * read-only, hidden or not a text field.
+ */
+function fieldFactsError(
+  verb: "fillIn" | "assertValue",
+  stepName: string,
+  label: string,
+  expected: string,
+  state: FieldState,
+): Error {
+  let facts: string;
+  if (verb === "assertValue") {
+    facts =
+      state.value === expected
+        ? `: expected '${expected}', which it holds only now, after the step's wait ran out.`
+        : `: expected '${expected}', found '${state.value}'.`;
+  } else {
+    const problems = [
+      state.disabled && "disabled",
+      state.readOnly && "read-only",
+      !state.visible && "not visible",
+      !state.editable && `${state.kind}, which cannot be typed into`,
+    ].filter((p): p is string => Boolean(p));
+    facts =
+      problems.length > 0
+        ? `: it is ${problems.length > 1 ? `${problems.slice(0, -1).join(", ")} and ${problems.at(-1)}` : problems[0]}.`
+        : ` (${state.kind}: enabled, editable and visible). It may not accept that value.`;
+  }
+  return new Error(`${stepName} failed on the field labelled '${label}'${facts} Run debug() to see the page.`);
 }
 
 function unrunView(step: QueuedStep): QueuedStep {
@@ -268,7 +303,7 @@ export class Session<TContext = unknown, TNative = unknown>
    * key-syntax errors), and replacing the known value cannot catch those.
    */
   private fieldValueStep(spec: {
-    verb: string;
+    verb: "fillIn" | "assertValue";
     label: string;
     value: string;
     knownSecret: boolean;
@@ -341,7 +376,9 @@ export class Session<TContext = unknown, TNative = unknown>
           if (askAfterRun && (await this.lastFilledFieldIsPassword())) {
             hide();
           }
-          throw ownFactsError(step.name, label, secretField);
+          throw secretField
+            ? ownFactsError(step.name, label, true)
+            : await this.fieldFailure(verb, step.name, label, value);
         }
         if (askAfterRun && (await this.lastFilledFieldIsPassword())) {
           hide();
@@ -354,6 +391,28 @@ export class Session<TContext = unknown, TNative = unknown>
     }
     this.steps.push(step);
     return this;
+  }
+
+  /**
+   * The error for a fillIn/assertValue that failed on a field that is not
+   * secret: the field's state when the driver can read it, else the plain
+   * own-facts error.
+   */
+  private async fieldFailure(
+    verb: "fillIn" | "assertValue",
+    stepName: string,
+    label: string,
+    expected: string,
+  ): Promise<Error> {
+    let state: FieldState | null = null;
+    try {
+      state = (await this.driver.fieldState?.(label)) ?? null;
+    } catch {
+      state = null;
+    }
+    return state
+      ? fieldFactsError(verb, stepName, label, expected, state)
+      : ownFactsError(stepName, label, false);
   }
 
   /** Ask the driver whether the field just filled is a password field. */

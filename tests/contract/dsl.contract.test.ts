@@ -71,6 +71,13 @@ const pages: Pages = {
       <label for="code">Login code</label><input id="code" type="password">
       <input type="password" placeholder="Password"><input type="password" placeholder="Password">
     </form>`,
+  "/field-states": `<form>
+      <label for="off">Off</label><input id="off" value="x" disabled>
+      <label for="ro">Kept</label><input id="ro" value="kept" readonly>
+      <label for="agree">Agree</label><input id="agree" type="checkbox">
+      <label for="age">Age</label><input id="age" type="number">
+      <div style="display: none"><label for="gone">Gone</label><input id="gone"></div>
+    </form>`,
   "/list": `<ul><li class="item">One</li><li class="item">Two</li></ul>`,
   "/first-hidden": `<p class="msg" hidden>Old notice</p><p class="msg">New notice</p>`,
   "/dialog": `<p>Behind the dialog</p>
@@ -735,6 +742,41 @@ for (const driver of drivers) {
         await chain;
       });
     }, TEST_TIMEOUT);
+
+    it("#12 assertValue on a field that is not secret says what it found, in the session's own words", async () => {
+      await withApp(async (h) => {
+        const error = await failure(h.session(FAST).visit("/state").assertValue("Name", "Bob"));
+        expect(error.message).toContain(
+          "assertValue('Name', 'Bob') failed on the field labelled 'Name': expected 'Bob', found 'Ada'.",
+        );
+      });
+    }, TEST_TIMEOUT);
+
+    for (const [label, value, fact] of [
+      ["Off", "y", "it is disabled."],
+      ["Kept", "y", "it is read-only."],
+      ["Agree", "y", `it is an <input type="checkbox">, which cannot be typed into.`],
+      ["Age", "abc", `(an <input type="number">: enabled, editable and visible)`],
+    ] as const) {
+      it(`#12 a fillIn that fails on a field that is not secret says the field's state (${label})`, async () => {
+        await withApp(async (h) => {
+          const error = await failure(h.session(FAST).visit("/field-states").fillIn(label, value));
+          expect(error.message).toContain(`fillIn('${label}', '${value}') failed on the field labelled '${label}'`);
+          expect(error.message).toContain(fact);
+        });
+      }, TEST_TIMEOUT);
+    }
+
+    // Only a browser lays the page out: the request adapter has no CSS, so
+    // a field hidden by a style is still "visible" to it, and fillIn works.
+    if (driver.name === "playwright") {
+      it("#12 a fillIn on a field hidden by CSS says it is not visible", async () => {
+        await withApp(async (h) => {
+          const error = await failure(h.session(FAST).visit("/field-states").fillIn("Gone", "y"));
+          expect(error.message).toContain("fillIn('Gone', 'y') failed on the field labelled 'Gone': it is not visible.");
+        });
+      }, TEST_TIMEOUT);
+    }
 
     it("#12 a secret fillIn that fails names the field and step, never the driver's message", async () => {
       await withApp(async (h) => {

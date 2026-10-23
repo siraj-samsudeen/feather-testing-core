@@ -7,6 +7,7 @@ import type {
   AssertPathOptions,
   AssertionOptions,
   DownloadOptions,
+  FieldState,
   LayoutAssertionOptions,
   TestDriver,
   SessionCookie,
@@ -118,6 +119,18 @@ export function pageDefaultNavigationTimeout(page: Page): number | undefined {
  * test checks). 1.51: locator.filter({ visible: true }) in assertHas.
  */
 export const MIN_PLAYWRIGHT_VERSION = "1.51.0";
+
+/** Input types fillIn() cannot type into (the request adapter's list too). */
+const NOT_TYPEABLE_INPUT_TYPES = [
+  "checkbox",
+  "radio",
+  "file",
+  "submit",
+  "reset",
+  "button",
+  "image",
+  "hidden",
+];
 
 /** Playwright's documented default navigation timeout. */
 const PLAYWRIGHT_DEFAULT_NAVIGATION_TIMEOUT = 30_000;
@@ -758,6 +771,36 @@ export class PlaywrightDriver
           element instanceof HTMLInputElement && element.type === "password",
       ),
     );
+  }
+
+  /**
+   * The field fillIn() and assertValue() target, read as it is now: count,
+   * evaluateAll() and isVisible() never wait. Null unless exactly one
+   * field matches.
+   */
+  async fieldState(label: string): Promise<FieldState | null> {
+    const field = this.fieldByLabelOrPlaceholder(label);
+    if ((await field.count()) !== 1) return null;
+    const [facts] = await field.evaluateAll(
+      (elements, notTypeable) =>
+        elements.map((el) => {
+          const input = el instanceof HTMLInputElement ? el : null;
+          const tag = el.tagName.toLowerCase();
+          return {
+            value: "value" in el ? String((el as HTMLInputElement).value) : (el.textContent ?? ""),
+            disabled: el.matches(":disabled"),
+            readOnly: el.hasAttribute("readonly"),
+            editable:
+              el instanceof HTMLTextAreaElement ||
+              (input !== null && !notTypeable.includes(input.type)) ||
+              (el as HTMLElement).isContentEditable,
+            kind: input ? `an <input type="${input.type}">` : `a <${tag}>`,
+          };
+        }),
+      NOT_TYPEABLE_INPUT_TYPES,
+    );
+    if (!facts) return null;
+    return { ...facts, visible: await field.isVisible() };
   }
 
   /**

@@ -152,6 +152,19 @@ export type UntilPredicate<TContext> = (
  * TNative is the adapter's own driving handle, handed to raw() callbacks:
  * Playwright's `Page`, RTL's scoped query object.
  */
+/** What {@link TestDriver.fieldState} reports about a field. */
+export interface FieldState {
+  /** Its current value. Shown only for a field that is not secret. */
+  value: string;
+  disabled: boolean;
+  readOnly: boolean;
+  visible: boolean;
+  /** Whether text can be typed into it: a textarea, a text-like input, or contenteditable. */
+  editable: boolean;
+  /** What it is: 'an <input type="number">', 'a <select>'. */
+  kind: string;
+}
+
 export interface TestDriver<TContext = unknown, TNative = unknown> {
   visit(path: string): Promise<void>;
   reload(): Promise<void>;
@@ -182,6 +195,14 @@ export interface TestDriver<TContext = unknown, TNative = unknown> {
     /** The step's own timeout, when it set one. */
     timeout?: number,
   ): Promise<boolean>;
+  /**
+   * Optional: the state of the field fillIn() or assertValue() targets, read
+   * at once without waiting, or null when not exactly one field matches.
+   * Asked after one of those steps failed on a field that is not secret, so
+   * the session can say why in its own words (it never forwards a driver's
+   * message for them).
+   */
+  fieldState?(label: string): Promise<FieldState | null>;
   selectOption(label: string, option: string, opts?: StepOptions): Promise<void>;
   check(label: string, opts?: StepOptions): Promise<void>;
   uncheck(label: string, opts?: StepOptions): Promise<void>;

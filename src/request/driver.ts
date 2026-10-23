@@ -7,6 +7,7 @@ import type {
   AssertPathOptions,
   AssertionOptions,
   DownloadOptions,
+  FieldState,
   LayoutAssertionOptions,
   TestDriver,
   UntilOptions,
@@ -590,6 +591,28 @@ export class RequestDriver
     return (
       this.lastFilledField !== null && isInput(this.lastFilledField, "password")
     );
+  }
+
+  /** The field fillIn() and assertValue() look up, read as it is now. */
+  async fieldState(label: string): Promise<FieldState | null> {
+    let field: Element;
+    try {
+      field = this.findField(label, `fieldState('${label}')`);
+    } catch {
+      return null;
+    }
+    return {
+      value: (field as HTMLInputElement).value ?? "",
+      disabled: isDisabled(field),
+      readOnly: field.hasAttribute("readonly"),
+      // findField() keeps only rendered fields; with no layout, that is all
+      // "visible" can mean here.
+      visible: isRendered(field),
+      editable:
+        field.tagName === "TEXTAREA" ||
+        (field.tagName === "INPUT" && !NOT_TYPEABLE.has(inputType(field))),
+      kind: describeTag(field),
+    };
   }
 
   async selectOption(label: string, option: string): Promise<void> {
