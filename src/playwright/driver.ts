@@ -197,9 +197,9 @@ export class PlaywrightDriver
                       "to take it from. Pass baseUrl to createSession, or give the cookie a domain.",
                   );
                 }
-                return path === undefined
-                  ? { ...rest, url: `${origin.origin}/` }
-                  : { ...rest, domain: origin.hostname, path };
+                // domain + path, not url: a url makes Playwright take
+                // `secure` from its scheme, overriding the cookie's own.
+                return { ...rest, domain: origin.hostname, path: path ?? "/" };
               }),
             );
           })();

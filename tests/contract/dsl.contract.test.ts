@@ -697,6 +697,15 @@ for (const driver of drivers) {
       });
     }, TEST_TIMEOUT);
 
+    it("cookies: a secure cookie keeps secure, and is sent to localhost over http, on both", async () => {
+      await withApp(async (h) => {
+        await h
+          .session({ cookies: [{ name: "s", value: "1", secure: true }] })
+          .visit("/echo")
+          .within("#cookie", (s) => s.assertExactText("s=1"));
+      });
+    }, TEST_TIMEOUT);
+
     it("#56 step() and raw() run inside the chain", async () => {
       await withApp(async (h) => {
         const seen: string[] = [];

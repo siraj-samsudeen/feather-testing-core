@@ -2155,3 +2155,14 @@ test.describe("a refused submit is only a submit attempt's refusal", () => {
       .assertText("Searched");
   });
 });
+
+test.describe("cookies option", () => {
+  test("a secure cookie stays secure on an http baseUrl (seeded by domain and path)", async ({ page }) => {
+    await createSession(page, {
+      baseUrl: "http://testapp.local",
+      cookies: [{ name: "s", value: "1", secure: true }],
+    }).visit("/");
+    const [cookie] = await page.context().cookies();
+    expect(cookie).toMatchObject({ name: "s", domain: "testapp.local", path: "/", secure: true });
+  });
+});
