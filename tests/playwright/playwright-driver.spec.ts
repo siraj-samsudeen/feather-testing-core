@@ -2110,6 +2110,25 @@ test.describe("asking whether the Playwright runner is active", () => {
   });
 });
 
+test.describe("fillIn on a missing field", () => {
+  test("fails within the same budget as assertValue (the assertion budget inside the runner)", async ({
+    page,
+  }) => {
+    test.setTimeout(20_000);
+    const started = Date.now();
+    const error = await new Session(new PlaywrightDriver(page))
+      .visit("/form")
+      .fillIn("No such field", "x")
+      .then(
+        () => null,
+        (e: unknown) => e,
+      );
+    expect(error).toBeInstanceOf(StepError);
+    expect((error as StepError).message).toContain("no field labelled 'No such field'");
+    expect(Date.now() - started).toBeLessThan(10_000);
+  });
+});
+
 test.describe("assertValue on a missing field", () => {
   test("fails within the assertion budget, not the (unlimited) action timeout", async ({
     page,

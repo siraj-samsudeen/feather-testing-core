@@ -779,14 +779,12 @@ export class PlaywrightDriver
     const timeout = stepTimeout ?? this.timeout;
     this.fillProbe = { label, startedAt: Date.now() };
     const field = this.fieldByLabelOrPlaceholder(label);
-    if (purpose === "assert") {
-      // An assertion's budget: with no session timeout inside Playwright
-      // Test that is expect.timeout, not the (often unlimited) action
-      // timeout; toHaveValue then gets what is left of a session timeout.
-      await expect(field.first()).toBeAttached({ timeout });
-    } else {
-      await field.first().waitFor({ state: "attached", timeout });
-    }
+    // The same wait for fillIn and assertValue: an assertion's budget — the
+    // step's or session's timeout, else (inside Playwright Test) expect's,
+    // not the often-unlimited action timeout. The step then gets what is
+    // left of a set timeout. `purpose` no longer changes the wait.
+    void purpose;
+    await expect(field.first()).toBeAttached({ timeout });
     // Several matches: fill() would fail on strict mode, and which field the
     // value was meant for is unknown, so say so now (the value stays hidden,
     // as in the request adapter).
