@@ -391,7 +391,13 @@ export class PlaywrightDriver
   }
 
   async visit(path: string): Promise<void> {
-    await this.page.goto(path, { timeout: this.options.navigationTimeout });
+    // With baseUrl, paths resolve as in the request adapter; without it,
+    // Playwright resolves them against the browser context's baseURL.
+    const url =
+      this.options.baseUrl === undefined
+        ? path
+        : new URL(path, this.options.baseUrl).href;
+    await this.page.goto(url, { timeout: this.options.navigationTimeout });
   }
 
   async reload(): Promise<void> {
@@ -787,19 +793,20 @@ export class PlaywrightDriver
   }
 
   async assertPath(path: string, opts?: AssertPathOptions): Promise<void> {
-    if (opts?.queryParams) {
-      const params = new URLSearchParams(opts.queryParams).toString();
-      await expect(this.page).toHaveURL(`${path}?${params}`, {
-        timeout: this.timeout,
-      });
-    } else {
-      await expect
-        .poll(() => new URL(this.page.url()).pathname, {
-          message: `assertPath('${path}')`,
-          timeout: this.timeout,
-        })
-        .toBe(path);
-    }
+    // Path and query of the current URL, whatever its origin — as the request
+    // adapter compares them, and independent of the context's baseURL.
+    const query = opts?.queryParams
+      ? `?${new URLSearchParams(opts.queryParams).toString()}`
+      : null;
+    await expect
+      .poll(
+        () => {
+          const url = new URL(this.page.url());
+          return query === null ? url.pathname : url.pathname + url.search;
+        },
+        { message: `assertPath('${path}')`, timeout: this.timeout },
+      )
+      .toBe(query === null ? path : path + query);
   }
 
   async refutePath(path: string): Promise<void> {

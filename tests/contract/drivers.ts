@@ -48,7 +48,10 @@ export const requestDriver: ContractDriver = {
     return {
       app,
       session: (options) =>
-        createRequestSession(app.handle, options) as Session<unknown, unknown>,
+        createRequestSession(app.handle, {
+          baseUrl: "http://localhost",
+          ...options,
+        }) as Session<unknown, unknown>,
       close: async () => {},
     };
   },
@@ -109,12 +112,17 @@ export const playwrightDriver: ContractDriver = {
     if (!browser) throw new Error("contract: the browser did not launch");
     const app = createFixtureApp(pages);
     const server = await serve(app.handle);
-    const context = await browser.newContext({ baseURL: server.url });
+    // No baseURL on the context: visit() paths resolve through the session's
+    // baseUrl option, the same option the request driver takes.
+    const context = await browser.newContext();
     const page = await context.newPage();
     return {
       app,
       session: (options) =>
-        createPlaywrightSession(page, options) as Session<unknown, unknown>,
+        createPlaywrightSession(page, {
+          baseUrl: server.url,
+          ...options,
+        }) as Session<unknown, unknown>,
       close: async () => {
         await context.close();
         await server.close();
