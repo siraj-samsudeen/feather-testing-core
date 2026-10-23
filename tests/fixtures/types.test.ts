@@ -22,6 +22,10 @@ const test = defineTest<{ greeting: string; handler: Handler; shout: string }>(r
   },
 });
 
+const optional = defineTest<{ maybeHandler: Handler | undefined }>(runner, {
+  maybeHandler: undefined,
+});
+
 describe("fixture API types", () => {
   it("accept values, fixture functions, [fn, options] and value(x) in .with()", () => {
     test.with({ greeting: "hello" })("a value", async ({ greeting }) => void greeting.length);
@@ -43,7 +47,14 @@ describe("fixture API types", () => {
     // @ts-expect-error -- likewise for a number
     test.with({ greeting: [42, { value: true }] });
     test.with({ handler: [(_r: Request) => new Response("ok"), { value: true }] });
+    // @ts-expect-error -- a string fixture cannot be [fn, { value: true }]: that would make the function its value
+    test.with({ greeting: [async ({}, use) => use("x"), { value: true }] });
+    // [fn, { scope }] keeps its contextual typing (no implicit any)
+    test.with({ greeting: [async ({ shout }, use) => use(shout.toLowerCase()), { scope: "test" }] });
+    // An optional function fixture takes [fn, { value: true }] too.
+    optional.with({ maybeHandler: [(_r: Request) => new Response("ok"), { value: true }] });
     expect(registered).toEqual(["a value", "a fixture fn", "[fn, options]", "value(fn)"]);
+    expect(typeof optional).toBe("function");
   });
 
   it("type a test body's fixtures", () => {

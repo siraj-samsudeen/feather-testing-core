@@ -64,11 +64,15 @@ export type FixtureDef<T, F> =
   | T
   | FixtureFn<T, F>
   | FixtureValue<T>
-  | [FixtureFn<T, F>, FixtureOptions]
-  // [fn, { value: true }] only when the fixture's type is a function (others:
-  // value(x), or just the value) — at runtime only a function-first pair is
+  // A fixture function with options; { value: true } is not allowed here.
+  | [FixtureFn<T, F>, FixtureOptions & { value?: false }]
+  // [fn, { value: true }]: a function used as the value, only when the
+  // fixture's type includes a function (Handler | undefined too). Others use
+  // value(x), or just the value — at runtime only a function-first pair is
   // unwrapped. Conditional, so it adds nothing for other fixtures.
-  | ([T] extends [(...args: never[]) => unknown] ? [T, FixtureOptions & { value: true }] : never);
+  | (Extract<T, (...args: never[]) => unknown> extends never
+      ? never
+      : [Extract<T, (...args: never[]) => unknown>, FixtureOptions & { value: true }]);
 
 export type FixtureDefs<T, F> = { [K in keyof T]: FixtureDef<T[K], F> };
 
