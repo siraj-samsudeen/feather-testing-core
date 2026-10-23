@@ -79,10 +79,13 @@ function fieldFactsError(
 ): Error {
   let facts: string;
   if (verb === "assertValue") {
+    // The expected value is not repeated (it may have been typed into a
+    // field that was secret when the step ran); the value found was read
+    // in the same read that found the field not secret.
     facts =
       state.value === expected
-        ? `: expected '${expected}', which it holds only now, after the step's wait ran out.`
-        : `: expected '${expected}', found '${state.value}'.`;
+        ? ": it holds the expected value only now, after the step's wait ran out."
+        : `: found '${state.value}'.`;
   } else {
     const problems = [
       state.disabled && "disabled",
@@ -327,24 +330,26 @@ export class Session<TContext = unknown, TNative = unknown>
     askAfterRun: boolean;
   }): this {
     const { verb, label, value, knownSecret, timeout, run, askAfterRun } = spec;
-    const nameShowingValue = `${verb}('${label}', '${value}')`;
-    // An empty value has nothing to hide: it is always shown as ''.
+    // The value is never in the step's name, on any path: started events and
+    // wrapStep titles go out before the action, and the field can become a
+    // password field after any check (its type changes, another field takes
+    // its place); Playwright's fill() and toHaveValue() resolve the field
+    // themselves, so no later check can be sure it read the element used.
+    // An empty value has nothing to hide: it is shown as ''.
     const nameHidingValue =
-      value === "" ? nameShowingValue : `${verb}('${label}', '${HIDDEN_VALUE}')`;
+      value === "" ? `${verb}('${label}', '')` : `${verb}('${label}', '${HIDDEN_VALUE}')`;
 
-    // Two things: whether the field is secret (then the driver's message
-    // is withheld, whatever the value — an empty expected value does not
-    // stop assertValue's message quoting the secret found), and whether the
-    // name needs masking (not for an empty value, shown as '').
+    // Whether the field is secret: then the error is the withheld form
+    // (an empty expected value does not stop the driver quoting the secret
+    // found), and fieldState() is not asked.
     let secretField = false;
     let fieldNotFound: Error | undefined;
     const hide = () => {
       secretField = true;
-      step.name = nameHidingValue;
     };
 
     const step: QueuedStep = {
-      name: nameShowingValue,
+      name: nameHidingValue,
       nameHidingValue,
       index: this.stepIndex++,
       prepare: async () => {

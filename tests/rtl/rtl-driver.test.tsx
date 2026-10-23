@@ -1289,11 +1289,11 @@ describe("RTLDriver — secrets in failure reports", () => {
     );
   });
 
-  it("keeps showing ordinary values", async () => {
+  it("redacts ordinary values too", async () => {
     const error = await signInFailure();
 
     expect(error.message).toContain(
-      "[ok] fillIn('Email', 'someone@example.com')",
+      "[ok] fillIn('Email', '••••••')",
     );
   });
 
@@ -1373,8 +1373,8 @@ describe("onStep and password fields (no secret-looking label)", () => {
     const { events, onStep } = record();
     await createSession({ onStep }).fillIn("Login code", FAKE);
     expect(events).toEqual([
-      `started fillIn('Login code', '${HIDE}')`,
-      `passed fillIn('Login code', '${HIDE}')`,
+      `started fillIn('Login code', '••••••')`,
+      `passed fillIn('Login code', '••••••')`,
     ]);
   });
 
@@ -1396,8 +1396,8 @@ describe("onStep and password fields (no secret-looking label)", () => {
     expect(error).toBeInstanceOf(StepError);
     expect(error!.message).not.toContain(FAKE);
     expect(events).toEqual([
-      `started fillIn('Login code', '${HIDE}')`,
-      `failed fillIn('Login code', '${HIDE}')`,
+      `started fillIn('Login code', '••••••')`,
+      `failed fillIn('Login code', '••••••')`,
     ]);
   });
 
@@ -1714,7 +1714,7 @@ describe("RTLDriver — why fillIn/assertValue failed on a field that is not sec
     render(<FieldStates />);
     const error = await failure(createSession({ timeout: 200 }).assertValue("Name", "Bob"));
     expect(error.message).toContain(
-      "assertValue('Name', 'Bob') failed on the field labelled 'Name': expected 'Bob', found 'Ada'.",
+      "assertValue('Name', '••••••') failed on the field labelled 'Name': found 'Ada'.",
     );
   });
 
@@ -1726,7 +1726,7 @@ describe("RTLDriver — why fillIn/assertValue failed on a field that is not sec
     it(`fillIn says the field's state (${label})`, async () => {
       render(<FieldStates />);
       const error = await failure(createSession({ timeout: 200 }).fillIn(label, "y"));
-      expect(error.message).toContain(`fillIn('${label}', 'y') failed on the field labelled '${label}': ${fact}`);
+      expect(error.message).toContain(`fillIn('${label}', '••••••') failed on the field labelled '${label}': ${fact}`);
     });
   }
 
@@ -1800,7 +1800,55 @@ describe("RTLDriver — a field that turns secret, and an overridden findField",
     const { Session } = await import("../../src/session.js");
     const session = new Session(new ByTestId(undefined, undefined, 400), recorder(events));
     const text = await failure(session.assertValue("Code", "wrong"), events);
-    expect(text).toContain("expected 'wrong', found 'plain'.");
+    expect(text).toContain("found 'plain'.");
     expect(text).not.toContain(SECRET);
   });
+});
+
+describe("RTLDriver — a field that turns password after the pre-check", () => {
+  const CREDENTIAL = "credential-123";
+
+  for (const [verb, outcome] of [
+    ["fillIn", "passes"],
+    ["assertValue", "passes"],
+    ["assertValue", "fails"],
+  ] as const) {
+    it(`${verb} that ${outcome} never shows the credential`, async () => {
+      render(
+        <form>
+          <label htmlFor="c">Code</label>
+          <input id="c" defaultValue={CREDENTIAL} />
+        </form>,
+      );
+      const events: string[] = [];
+      let flippedBeforeAction = false;
+      const session = createSession({
+        timeout: 300,
+        onStep: (e) => {
+          events.push(`${e.status} ${e.name} ${e.error ? (e.error as Error).message : ""}`);
+          if (e.status === "started" && e.name.startsWith(verb)) {
+            // After the pre-check, before the action: a microtask flips it.
+            queueMicrotask(() => {
+              (document.getElementById("c") as HTMLInputElement).type = "password";
+              flippedBeforeAction = true;
+            });
+          }
+        },
+      });
+      const error = await session
+        [verb]("Code", outcome === "passes" ? CREDENTIAL : `${CREDENTIAL}-other`)
+        .step("then stop, to print the chain", async () => {
+          throw new Error("stop");
+        })
+        .then(
+          () => null,
+          (e: unknown) => e as StepError,
+        );
+      // (user-event's typing resets the type afterwards, so check the flip ran.)
+      expect(flippedBeforeAction).toBe(true);
+      expect(error).toBeInstanceOf(StepError);
+      const text = [error!.message, String((error!.cause as Error)?.message), ...events].join("\n");
+      expect(text).not.toContain(CREDENTIAL);
+    });
+  }
 });

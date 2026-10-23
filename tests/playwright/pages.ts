@@ -323,6 +323,11 @@ export const pages: Record<string, string> = {
   </script>
 </body></html>`,
 
+  "/turns-password": `<!DOCTYPE html>
+<html><body><form>
+  <label for="code">Code</label><input id="code" value="credential-123">
+</form></body></html>`,
+
   "/closing": `<!DOCTYPE html>
 <html><body>
   <!-- A synchronous request blocks the page until the test closes it, so

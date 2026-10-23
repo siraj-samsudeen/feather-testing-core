@@ -399,7 +399,7 @@ describe("Session", () => {
       } catch (e) {
         const msg = (e as StepError).message;
         expect(msg).toContain("[ok] visit('/')");
-        expect(msg).toContain("[FAILED] fillIn('Name', 'x')");
+        expect(msg).toContain("[FAILED] fillIn('Name', '••••••')");
         expect(msg).toContain("[skipped] clickButton('Go')");
         expect(msg).toContain("[skipped] assertText('Done')");
       }
@@ -802,7 +802,7 @@ describe("Session", () => {
         expect(msg).toContain("Step 4 of 4 failed");
         expect(msg).toContain("    [ok] visit('/')");
         expect(msg).toContain("    [ok] clickButton('Go')");
-        expect(msg).toContain("    [ok] fillIn('Name', 'x')");
+        expect(msg).toContain("    [ok] fillIn('Name', '••••••')");
         expect(msg).toContain(">>> [FAILED] assertText('Done')");
       }
     });
@@ -824,7 +824,7 @@ describe("Session", () => {
         const msg = (e as StepError).message;
         expect(msg).toContain("Step 2 of 3 failed");
         expect(msg).toContain("    [ok] visit('/')");
-        expect(msg).toContain(">>> [FAILED] fillIn('Name', 'x')");
+        expect(msg).toContain(">>> [FAILED] fillIn('Name', '••••••')");
         expect(msg).toContain("    [skipped] clickButton('Go')");
       }
     });
@@ -914,13 +914,16 @@ describe("secrets in failure reports", () => {
   it.each(["Email", "Shipping address", "Pincode", "Footprint"])(
     "does not treat the label %s as secret",
     async (label) => {
-      const session = new Session(driverFailingAtAssertPath());
+      const { driver } = createMockDriver({
+        fillIn: vi.fn(async () => {
+          throw new Error("cannot fill");
+        }),
+      });
 
-      const error = await failureOf(
-        session.fillIn(label, "ordinary value").assertPath("/home"),
-      );
+      const error = await failureOf(new Session(driver).fillIn(label, "ordinary value"));
 
-      expect(error.message).toContain(`fillIn('${label}', 'ordinary value')`);
+      expect(error.message).toContain(`fillIn('${label}', '••••••') failed on the field labelled '${label}'.`);
+      expect(error.message).not.toContain("(a secret field)");
     },
   );
 
@@ -998,7 +1001,7 @@ describe("secrets in failure reports", () => {
     ]);
   });
 
-  it("keeps showing ordinary values, which help debugging", async () => {
+  it("redacts ordinary values too: a field can turn secret after any check", async () => {
     const driver = driverFailingAtAssertPath({
       lastFilledFieldIsPassword: vi.fn(async () => false),
     });
@@ -1009,7 +1012,7 @@ describe("secrets in failure reports", () => {
     );
 
     expect(error.message).toContain(
-      "[ok] fillIn('Email', 'someone@example.com')",
+      "[ok] fillIn('Email', '••••••')",
     );
   });
 
@@ -1028,7 +1031,7 @@ describe("secrets in failure reports", () => {
       .fillIn("Recovery phrase", FAKE_SECRET, { sensitive: true });
 
     expect(titles).toEqual([
-      "fillIn('Email', 'someone@example.com')",
+      "fillIn('Email', '••••••')",
       `fillIn('Password', '${HIDDEN}')`,
       `fillIn('Recovery phrase', '${HIDDEN}')`,
     ]);
@@ -1073,7 +1076,7 @@ describe("secrets in step names before a step starts", () => {
     ]);
   });
 
-  it("hands wrapStep the step so a name hidden while running is seen at the end", async () => {
+  it("hands wrapStep a name that is redacted from the start, even for a field found secret only after the fill", async () => {
     const { driver, names } = recordingDriver({
       lastFilledFieldIsPassword: vi.fn(async () => true),
     });
@@ -1081,7 +1084,7 @@ describe("secrets in step names before a step starts", () => {
     await new Session(driver).fillIn("Login code", FAKE_SECRET);
 
     expect(names).toEqual([
-      `start fillIn('Login code', '${FAKE_SECRET}')`,
+      `start fillIn('Login code', '••••••')`,
       `end fillIn('Login code', '${HIDDEN}')`,
     ]);
   });
@@ -1109,7 +1112,7 @@ describe("secrets in step names before a step starts", () => {
     expect(fillIn).not.toHaveBeenCalled();
   });
 
-  it("shows an ordinary value", async () => {
+  it("redacts an ordinary value too, from start to end", async () => {
     const { driver, names } = recordingDriver({
       fieldIsPassword: vi.fn(async () => false),
     });
@@ -1117,8 +1120,8 @@ describe("secrets in step names before a step starts", () => {
     await new Session(driver).fillIn("Email", "someone@example.com");
 
     expect(names).toEqual([
-      "start fillIn('Email', 'someone@example.com')",
-      "end fillIn('Email', 'someone@example.com')",
+      "start fillIn('Email', '••••••')",
+      "end fillIn('Email', '••••••')",
     ]);
   });
 });
@@ -1275,6 +1278,49 @@ describe("fieldState() after a failed fillIn/assertValue", () => {
     expect(error.message).toContain("failed on the field labelled 'Code'.");
     expect(text).not.toContain(SECRET);
   });
+});
+
+describe("a field that turns secret after the pre-check", () => {
+  const CREDENTIAL = "credential-123";
+
+  for (const verb of ["fillIn", "assertValue"] as const) {
+    for (const outcome of ["passes", "fails"] as const) {
+      it(`${verb} that ${outcome}: the credential reaches no event, wrapStep title, chain, message or cause`, async () => {
+        const { driver } = createMockDriver({
+          [verb]: vi.fn(async () => {
+            if (outcome === "fails") throw new Error(`mismatch on ${CREDENTIAL}`);
+          }),
+        });
+        // Not a password field when asked; the page makes it one right after.
+        driver.fieldIsPassword = vi.fn(async () => false);
+        const seen: string[] = [];
+        driver.wrapStep = vi.fn(async (name: string, fn: () => Promise<void>, step?: { readonly name: string }) => {
+          seen.push(`wrap start ${name}`);
+          try {
+            await fn();
+          } finally {
+            seen.push(`wrap end ${step?.name ?? name}`);
+          }
+        });
+        const error = await new Session(driver, {
+          onStep: (e) => void seen.push(`${e.status} ${e.name} ${e.error ? (e.error as Error).message : ""}`),
+        })
+          [verb]("Code", CREDENTIAL)
+          .step("next", async () => {
+            throw new Error("stop, to print the chain");
+          })
+          .run()
+          .then(
+            () => null,
+            (e: unknown) => e as StepError,
+          );
+        expect(error).toBeInstanceOf(StepError);
+        seen.push(error!.message, String((error!.cause as Error)?.message), String(error!.stack));
+        expect(seen.join("\n")).not.toContain(CREDENTIAL);
+        expect(seen).toContain(`started ${verb}('Code', '••••••') `);
+      });
+    }
+  }
 });
 
 describe("fieldIsPassword()", () => {

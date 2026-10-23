@@ -1011,7 +1011,7 @@ test.describe("Session with PlaywrightDriver", () => {
     } catch (e) {
       const msg = (e as StepError).message;
       expect(msg).toContain("[ok] visit('/form')");
-      expect(msg).toContain("[ok] fillIn('Name', 'Alice')");
+      expect(msg).toContain("[ok] fillIn('Name', '••••••')");
       expect(msg).toContain(">>> [FAILED] assertText('Nonexistent text')");
     }
   });
@@ -1273,11 +1273,11 @@ test.describe("secrets in failure reports", () => {
     );
   });
 
-  test("keeps showing ordinary values", async ({ page }) => {
+  test("redacts ordinary values too", async ({ page }) => {
     const error = await signInFailure(new PlaywrightDriver(page));
 
     expect(error.message).toContain(
-      "[ok] fillIn('Email', 'someone@example.com')",
+      "[ok] fillIn('Email', '••••••')",
     );
   });
 
@@ -1287,7 +1287,7 @@ test.describe("secrets in failure reports", () => {
     const driver = new TitleRecordingDriver(page);
     await signInFailure(driver);
 
-    expect(driver.titles).toContain("fillIn('Email', 'someone@example.com')");
+    expect(driver.titles).toContain("fillIn('Email', '••••••')");
     expect(driver.titles).toContain(`fillIn('Password', '${HIDDEN}')`);
     expect(driver.titles).toContain(`fillIn('Recovery phrase', '${HIDDEN}')`);
     // A password field with an ordinary label is found by its type before
@@ -1302,6 +1302,46 @@ test.describe("secrets in failure reports", () => {
     const onStep = (event: StepEvent) =>
       events.push(`${event.status} ${event.name}`);
     return { events, onStep };
+  }
+
+  for (const [verb, outcome] of [
+    ["fillIn", "passes"],
+    ["assertValue", "passes"],
+    ["assertValue", "fails"],
+  ] as const) {
+    test(`a field that turns password after the pre-check: ${verb} that ${outcome} never shows the credential`, async ({
+      page,
+    }) => {
+      const CREDENTIAL = "credential-123";
+      const events: string[] = [];
+      let flipped: Promise<unknown> = Promise.resolve();
+      const onStep = (e: StepEvent) => {
+        events.push(`${e.status} ${e.name} ${e.error ? (e.error as Error).message : ""}`);
+        // After the pre-check, before the action: sent ahead of the action's
+        // own commands, so the page has flipped when the action runs.
+        if (e.status === "started" && e.name.startsWith(verb)) {
+          flipped = page.evaluate(() => {
+            (document.getElementById("code") as HTMLInputElement).type = "password";
+          });
+        }
+      };
+      const value = outcome === "passes" ? CREDENTIAL : `${CREDENTIAL}-other`;
+      const error = await createSession(page, { onStep, timeout: 500 })
+        .visit("/turns-password")
+        [verb]("Code", value)
+        .step("then stop, to print the chain", async () => {
+          throw new Error("stop");
+        })
+        .then(
+          () => null,
+          (e: unknown) => e as StepError,
+        );
+      await flipped;
+      expect(await page.locator("#code").getAttribute("type")).toBe("password");
+      expect(error).toBeInstanceOf(StepError);
+      const text = [error!.message, String((error!.cause as Error)?.message), ...events].join("\n");
+      expect(text).not.toContain(CREDENTIAL);
+    });
   }
 
   test("onStep never sees a value typed into a password field: started and passed", async ({
@@ -1367,14 +1407,14 @@ test.describe("secrets in failure reports", () => {
     expect(Date.now() - started).toBeLessThan(900 + 1500);
   });
 
-  test("onStep shows ordinary values", async ({ page }) => {
+  test("onStep redacts ordinary values too", async ({ page }) => {
     const { events, onStep } = recordSteps();
     await createSession(page, { onStep })
       .visit("/sign-in")
       .fillIn("Email", "someone@example.com");
 
     expect(events).toContain(
-      "passed fillIn('Email', 'someone@example.com')",
+      "passed fillIn('Email', '••••••')",
     );
   });
 

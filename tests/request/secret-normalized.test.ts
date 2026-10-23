@@ -38,3 +38,32 @@ describe("a secret fillIn that fails", () => {
     expect(error!.message).toContain("debug()");
   });
 });
+
+describe("fillIn/assertValue step names", () => {
+  it("never carry the value, even for a field that is not secret: started, passed, failed, chain", async () => {
+    const CREDENTIAL = "credential-123";
+    const app = createFixtureApp({
+      "/code": `<form><label for="c">Code</label><input id="c"><label for="n">Name</label><input id="n" value="Ada"></form>`,
+    });
+    const events: string[] = [];
+    const error = await createSession(app.handle, {
+      onStep: (e) => void events.push(`${e.status} ${e.name} ${e.error ? (e.error as Error).message : ""}`),
+    })
+      .visit("/code")
+      .fillIn("Code", CREDENTIAL)
+      .assertValue("Code", CREDENTIAL)
+      // Fails on another field, whose own value ('Ada') the message may show.
+      .assertValue("Name", CREDENTIAL)
+      .run()
+      .then(
+        () => null,
+        (e: unknown) => e as StepError,
+      );
+    expect(error).toBeInstanceOf(StepError);
+    expect(events).toContain("started fillIn('Code', '••••••') ");
+    expect(events).toContain("passed assertValue('Code', '••••••') ");
+    const text = [error!.message, String((error!.cause as Error)?.message), ...events].join("\n");
+    expect(error!.message).toContain("found 'Ada'.");
+    expect(text).not.toContain(CREDENTIAL);
+  });
+});

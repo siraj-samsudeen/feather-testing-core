@@ -755,7 +755,7 @@ for (const driver of drivers) {
       await withApp(async (h) => {
         const error = await failure(h.session(FAST).visit("/state").assertValue("Name", "Bob"));
         expect(error.message).toContain(
-          "assertValue('Name', 'Bob') failed on the field labelled 'Name': expected 'Bob', found 'Ada'.",
+          "assertValue('Name', '••••••') failed on the field labelled 'Name': found 'Ada'.",
         );
       });
     }, TEST_TIMEOUT);
@@ -769,7 +769,7 @@ for (const driver of drivers) {
       it(`#12 a fillIn that fails on a field that is not secret says the field's state (${label})`, async () => {
         await withApp(async (h) => {
           const error = await failure(h.session(FAST).visit("/field-states").fillIn(label, value));
-          expect(error.message).toContain(`fillIn('${label}', '${value}') failed on the field labelled '${label}'`);
+          expect(error.message).toContain(`fillIn('${label}', '••••••') failed on the field labelled '${label}'`);
           expect(error.message).toContain(fact);
         });
       }, TEST_TIMEOUT);
@@ -805,7 +805,7 @@ for (const driver of drivers) {
       it("#12 a fillIn on a field hidden by CSS says it is not visible", async () => {
         await withApp(async (h) => {
           const error = await failure(h.session(FAST).visit("/field-states").fillIn("Gone", "y"));
-          expect(error.message).toContain("fillIn('Gone', 'y') failed on the field labelled 'Gone': it is not visible.");
+          expect(error.message).toContain("fillIn('Gone', '••••••') failed on the field labelled 'Gone': it is not visible.");
         });
       }, TEST_TIMEOUT);
     }

@@ -311,7 +311,7 @@ test("a failing chain names the failed step", async () => {
 | `cookies` | none | Cookies the session starts with, e.g. a signed-in user's session cookie: `[{ name, value, domain?, path?, expires?, httpOnly?, secure?, sameSite? }]` (`expires` in seconds). Without `domain` a cookie is set for `baseUrl`'s host; `path` defaults to `/`; `secure` is kept as given. Added to the browser context before the first step, by domain and path (a domain without a leading dot is that host only, in both adapters). Both send a `secure` cookie over https, and to `localhost`/`127.0.0.1` over http, as Chromium does. The app's own cookies behave as usual afterwards. |
 | (verb) `addCookies(cookies)` | — | Add cookies later in the chain (same shape as `cookies`), e.g. sign in after the first request. The step is named by the cookies' names only. Both adapters. |
 | (method) `await session.addCookiesNow(cookies)` | — | Add cookies now, not as a step: in effect for every step that runs afterwards, including steps already queued. Use it when the cookies must take effect at a known moment outside the chain (signing a user in across several clients at once). `addCookies` is a step in the chain: it takes effect when the chain reaches it. Both adapters, and `within()` scoped sessions. |
-| `onStep` | none | Called with `{ name, status: "started" \| "passed" \| "failed", error? }` for each step — a stand-in for `test.step()`, e.g. to log progress. A value typed into a password or secret-looking field shows as `••••••` in every event. |
+| `onStep` | none | Called with `{ name, status: "started" \| "passed" \| "failed", error? }` for each step — a stand-in for `test.step()`, e.g. to log progress. The value of a `fillIn` or `assertValue` shows as `••••••` in every event. |
 
 **Timeouts.** The 4000 ms session default sits below bun's 5000 ms per-test default, so a failing assertion or action reports its chain (`>>> [FAILED] assertText('Nope')`) instead of a bare "test timed out". Keep the session `timeout` below bun's limit. Page loads keep Playwright's longer navigation timeout, so a dev server that is slow to answer its first request is not cut short. `timeout: 0` (or `navigationTimeout: 0`) removes the limit, leaving only bun's per-test limit, so a failure then shows as "test timed out" without the chain.
 
@@ -469,7 +469,7 @@ await session.clickButton("Save").assertText("Saved", { timeout: 10_000 });
 | `click(text)` | Find any element by text and click it |
 | `clickLink(text)` | Click `<a>` by accessible name |
 | `clickButton(text)` | Click `<button>` by accessible name |
-| `fillIn(label, value, opts?)` | Fill input by label or placeholder. Secret values show as `'••••••'` in reports; `{ sensitive: true }` hides any other value (see [Secrets in failure reports](#secrets-in-failure-reports)) |
+| `fillIn(label, value, opts?)` | Fill input by label or placeholder. The value shows as `'••••••'` in reports; `{ sensitive: true }` also marks the field secret in error messages (see [Secrets in failure reports](#secrets-in-failure-reports)) |
 | `selectOption(label, option)` | Select dropdown option by label |
 | `check(label)` / `uncheck(label)` | Toggle checkbox by label |
 | `choose(label)` | Select radio button by label |
@@ -833,7 +833,7 @@ Cause: locator.click: getByRole('button', { name: 'Sign up' }) resolved to 0 ele
 Chain:
     [ok] visit('/')
     [ok] assertText('Hello, Anonymous!')
-    [ok] fillIn('Email', 'e2e@example.com')
+    [ok] fillIn('Email', '••••••')
 >>> [FAILED] clickButton('Sign up')
     [skipped] fillIn('Password', '••••••')
     [skipped] assertText('Hello! You are signed in.')
@@ -845,7 +845,9 @@ With the Playwright adapter, each queued step is also wrapped in `test.step()`, 
 
 ### Secrets in failure reports
 
-The chain prints the value each `fillIn` typed and each `assertValue` expected, because an ordinary value helps you debug. A secret value is shown as `'••••••'` instead — always six dots, so its length is hidden too. An empty value is always shown as `''`. A value counts as secret when:
+The value a `fillIn` types or an `assertValue` expects is never printed: it shows as `'••••••'` in the chain, `Failed at:`, `onStep` events and Playwright `test.step()` titles — always six dots, so its length is hidden too. An empty value is shown as `''`. A field can become a password field after any check made before the step (its type changes, or another field takes its place), and the step's name is out (a `started` event, a `test.step()` title) before the action runs, so no value is shown, secret or not. The real value is still typed.
+
+A field counts as secret — its error is the withheld form below, with no value or state — when:
 
 | Rule | Example |
 |------|---------|
@@ -853,7 +855,7 @@ The chain prints the value each `fillIn` typed and each `assertValue` expected, 
 | You mark it sensitive | `fillIn('Recovery phrase', phrase, { sensitive: true })` |
 | The field is a password field (`type="password"`), whatever its label | `fillIn('Login code', code)` |
 
-The driver checks the field before the step starts. So the hidden form is used everywhere the step's name appears: the chain, `Failed at:`, `onStep` events and Playwright `test.step()` titles. Skipped steps and steps a `within()` callback left unrun are always shown with their values hidden. The real value is still typed; only what is printed changes.
+The driver checks the field before the step starts, after a `fillIn`, and again on the field it reads for a failure message.
 
 `fillIn` and `assertValue` never forward a driver's message, on any path and whether or not the field is secret. A driver's message can quote a field's value in a form that exact hiding misses (trimmed, lower-cased, quoted in part), or dump the whole page. Their errors are built from the session's own facts:
 - the step;
@@ -861,9 +863,9 @@ The driver checks the field before the step starts. So the hidden form is used e
 - whether the field is secret;
 - "no field labelled 'X'", or "2 fields match 'X'" with a hint to scope with `within()`;
 - a suggestion to run `debug()` to see the page;
-- for a field that is not secret, its state as the driver reads it: `assertValue` says "expected 'Ada', found 'Bob'", and `fillIn` says whether the field is disabled, read-only, not visible, or not a text field (`it is an <input type="checkbox">, which cannot be typed into`).
+- for a field that is not secret, its state as the driver reads it: `assertValue` says "found 'Bob'" (read in the same read that found the field not secret; the expected value is not repeated), and `fillIn` says whether the field is disabled, read-only, not visible, or not a text field (`it is an <input type="checkbox">, which cannot be typed into`).
 
-A secret field never gets its value or state in the message. Whether it is secret is checked again on the exact field read for the message: a field that became a password field while the step waited (its type changed, or a password field took its place) is reported as secret, and the step's value is hidden. Richer diagnostics for secret fields are tracked in issue #16.
+A secret field never gets its value or state in the message. Whether it is secret is checked again on the exact field read for the message: a field that became a password field while the step waited (its type changed, or a password field took its place) is reported as secret. Richer diagnostics for secret fields are tracked in issue #16.
 
 The RTL and request adapters' `debug()` print password inputs' values as `'••••••'`.
 
@@ -1102,6 +1104,7 @@ Deliberate exceptions stay possible and stay visible: an `eslint-disable-next-li
 0.7.0 is in beta. Install it with `npm install feather-testing-core@0.7.0-beta.1`; see [Known limitations](#known-limitations) first.
 
 - **Breaking (Playwright adapter):** a submit the browser refuses because a field is invalid (an empty `required` field above all) now fails the step: `form not sent: 'Title' is required`. It used to pass silently. Where the refusal is the point of the spec, use the new `assertSubmitBlocked(label)`.
+- **Changed (all adapters):** `fillIn` and `assertValue` no longer print their value in the chain, `Failed at:`, `onStep` events or `test.step()` titles: it shows as `'••••••'` (`''` when empty), secret or not. A field can turn secret after any check, and the step's name goes out before the action. Tests or tooling that match on `fillIn('Email', 'a@b.com')` in output need the redacted form. See [Secrets in failure reports](#secrets-in-failure-reports).
 - New: every waiting verb takes `{ timeout }` (step > session > adapter default); `createSession({ timeout })` on the RTL adapter.
 - **More lenient (Playwright adapter):** `assertHas(selector)` passes when any matching element is visible; it used to need the first match to be visible. `count` and `refuteHas` still count every match, visible or not.
 - **Breaking (Playwright adapter):** `within(selector)` must match exactly one element, as in the request adapter. A selector matching none or several now fails the `within()` step, naming the count. Fix: narrow the selector (an id, a class, a data attribute), or use `:first-of-type` if the first one is really meant.
