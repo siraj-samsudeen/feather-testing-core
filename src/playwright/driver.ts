@@ -78,6 +78,9 @@ export const NAVIGATION_START_WINDOW_MS = 500;
  */
 export const REPLACED_NAVIGATION_WINDOW_MS = 250;
 
+/** Makes each new-page wait's stop token unique. */
+let waitCounter = 0;
+
 /** Playwright's documented default navigation timeout. */
 const PLAYWRIGHT_DEFAULT_NAVIGATION_TIMEOUT = 30_000;
 
@@ -96,6 +99,8 @@ function insidePlaywrightRunner(): boolean {
 
 type MarkedWindow = {
   __featherDocumentBeforeAction?: boolean;
+  /** The token of a new-page wait that was settled from outside. */
+  __featherStopWait?: string;
   __featherLeaving?: boolean;
   __featherListening?: boolean;
 };
@@ -359,17 +364,40 @@ export class PlaywrightDriver
       // visit() waits for (page.goto's default), so a step after a submit
       // sees the page in the same state as a step after a visit, including
       // anything load handlers render.
+      // The poll runs in the page until it is true, so when the navigation
+      // ends without a new page it is told to stop: its token is set on the
+      // window, and the predicate then returns at once.
+      const token = `wait-${++waitCounter}`;
       const newDocument = this.page.waitForFunction(
-        () =>
-          !(window as MarkedWindow).__featherDocumentBeforeAction &&
-          document.readyState === "complete",
-        undefined,
+        (stopToken) =>
+          (window as MarkedWindow).__featherStopWait === stopToken ||
+          (!(window as MarkedWindow).__featherDocumentBeforeAction &&
+            document.readyState === "complete"),
+        token,
         { timeout },
       );
-      // The losing branch must not surface as an unhandled rejection.
-      newDocument.catch(() => {});
+      // Release the handle the poll resolves with; a rejection (timeout,
+      // page closed) is reported by the race below or not at all.
+      newDocument.then(
+        (handle) => handle.dispose(),
+        () => undefined,
+      );
+      let ended = false;
       try {
-        await Promise.race([newDocument, navigationEnded]);
+        await Promise.race([
+          newDocument,
+          navigationEnded.then(() => {
+            ended = true;
+          }),
+        ]);
+        if (ended) {
+          await this.page
+            .evaluate((stopToken) => {
+              (window as MarkedWindow).__featherStopWait = stopToken;
+            }, token)
+            // The page is gone or navigating: its poll went with it.
+            .catch(() => undefined);
+        }
       } catch (error) {
         throw new Error(
           `the page started to navigate, but no new page finished loading` +

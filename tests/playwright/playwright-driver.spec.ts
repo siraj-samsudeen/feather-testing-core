@@ -1778,6 +1778,43 @@ test.describe("when the wait for a new page ends", () => {
     });
   });
 
+  test("a wait that ends without a new page stops polling the page", async ({
+    page,
+  }) => {
+    await withApp(page, { post: "download" }, async (url) => {
+      const driver = new PlaywrightDriver(page, page, { navigationTimeout: 0 });
+      await driver.visit(`${url}/todos`);
+      // Count how often anything reads the adapter's page marker: the wait
+      // for a new page polls it until that wait is settled.
+      await page.evaluate(() => {
+        const w = window as unknown as Record<string, unknown>;
+        let value: unknown;
+        w.__reads = 0;
+        Object.defineProperty(w, "__featherDocumentBeforeAction", {
+          configurable: true,
+          get() {
+            (w.__reads as number)++;
+            return value;
+          },
+          set(v) {
+            value = v;
+          },
+        });
+      });
+      await driver.fillIn("What needs to be done?", "Buy milk");
+      // The download ends the wait; with no navigation timeout, a poll left
+      // behind would run until the page closed.
+      await driver.pressKey("Enter");
+      const reads = () => page.evaluate(() => (window as unknown as { __reads: number }).__reads);
+      // eslint-disable-next-line feather-testing/no-wait-for-timeout -- lets the stop signal reach the poll; there is no event to wait for
+      await page.waitForTimeout(300);
+      const settled = await reads();
+      // eslint-disable-next-line feather-testing/no-wait-for-timeout -- the check is that nothing happens during this window
+      await page.waitForTimeout(500);
+      expect(await reads()).toBe(settled);
+    });
+  });
+
   test("method=\"dialog\" does not wait for a navigation", async ({ page }) => {
     await withApp(page, {}, async (url) => {
       const driver = new PlaywrightDriver(page, page, { timeout: 5000 });
