@@ -732,14 +732,13 @@ for (const driver of drivers) {
       });
     }, TEST_TIMEOUT);
 
-    it("#12 a secret fillIn that fails says why (the driver's first line), without the value", async () => {
+    it("#12 a secret fillIn that fails names the field and step, never the driver's message", async () => {
       await withApp(async (h) => {
         const error = await failure(h.session(FAST).visit("/locked").fillIn("Password", FAKE_SECRET));
         expect(error.message).toContain(`[FAILED] fillIn('Password', '${HIDDEN}')`);
-        expect(error.message).toMatch(/failed on a secret field: \S/);
+        expect(error.message).toContain("failed on a secret field (the field labelled 'Password')");
         expect(error.message).not.toContain(FAKE_SECRET);
         expect(String((error.cause as Error).message)).not.toContain(FAKE_SECRET);
-        if (driver.name === "request") expect(error.message).toContain("disabled");
       });
     }, TEST_TIMEOUT);
 

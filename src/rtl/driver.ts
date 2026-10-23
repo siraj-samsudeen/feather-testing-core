@@ -144,16 +144,7 @@ export class RTLDriver implements TestDriver<RTLStepContext, RTLQueries> {
     await this.user.clear(input);
     // user.type() reads { and [ as key syntax ({Enter}, [ShiftLeft]); a
     // value is text, so they are doubled to type them literally.
-    if (value) {
-      try {
-        await this.user.type(input, value.replace(/[{[]/g, "$&$&"));
-      } catch (error) {
-        // user-event's key-syntax errors quote fragments of the value, which
-        // hiding the whole value cannot catch: the session withholds them.
-        if (error instanceof Error) (error as { secretUnsafe?: boolean }).secretUnsafe = true;
-        throw error;
-      }
-    }
+    if (value) await this.user.type(input, value.replace(/[{[]/g, "$&$&"));
     this.lastFormElement = input.closest("form");
   }
 

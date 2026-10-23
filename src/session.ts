@@ -47,25 +47,14 @@ function describe(expected: string | RegExp): string {
  * What a failed step on a secret field reports instead of the driver's
  * error, which can contain the value or part of it.
  */
-function withheldError(stepName: string, error: unknown, value: string, verb: string): Error {
-  // fillIn: the driver's first line, with the typed value hidden, says why
-  // (disabled, not found, timed out). Withheld entirely when the driver
-  // marks its error unsafe (RTL's key-syntax errors quote fragments) and
-  // for assertValue, whose driver messages can quote the value found.
-  const unsafe =
-    verb !== "fillIn" ||
-    (error instanceof Error && (error as { secretUnsafe?: boolean }).secretUnsafe === true);
-  if (!unsafe) {
-    const hidden = hideValueInError(error, value);
-    const firstLine = (hidden instanceof Error ? hidden.message : String(hidden)).split("\n")[0]!.trim();
-    if (firstLine !== "" && (value === "" || !firstLine.includes(value))) {
-      return new Error(`${stepName} failed on a secret field: ${firstLine}`);
-    }
-  }
+function withheldError(stepName: string, label: string): Error {
+  // The driver's message is never shown for a secret step, not even its
+  // first line: it can carry the value in a form exact-string hiding misses
+  // (trimmed, lower-cased, cut). Richer secret diagnostics: issue #16.
   return new Error(
-    `${stepName} failed on a secret field. The driver's message is not shown, ` +
-      "because it can contain the field's value. Re-run the step on a " +
-      "non-secret field, or with debug(), to see why.",
+    `${stepName} failed on a secret field (the field labelled '${label}'). The driver's ` +
+      "message is not shown, because it can contain the field's value. Re-run the step " +
+      "on a non-secret field, or with debug(), to see why.",
   );
 }
 
@@ -330,7 +319,7 @@ export class Session<TContext = unknown, TNative = unknown>
             hide();
           }
           if (hidden) {
-            throw withheldError(nameHidingValue, error, value, verb);
+            throw withheldError(nameHidingValue, label);
           }
           throw error;
         }

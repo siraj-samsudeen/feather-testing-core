@@ -105,7 +105,7 @@ Core provides its own fixtures through `defineCoreTest(runner)`: `browser` (file
 - **Nothing of ours in the app's page.** The Playwright adapter keeps its page state under one Symbol-keyed store. It patches no prototypes and installs five listeners on `window` that only record. A refused submit is recognised from the `invalid` events of a submit attempt seen through `click` and `keydown`; a page script's own `requestSubmit()` is not watched.
 - **Public navigation defaults first.** Without `navigationTimeout`, `visit()` and `reload()` pass no timeout, so Playwright's default applies. Only the post-submit wait reads the page default from a private field. A test pins that field's shape, so a rename fails CI instead of silently becoming 30 s.
 - **One teardown hook where it is needed.** Only tests that use a file-scoped fixture register a hook, and only once per suite when the runner names the suite (`currentSuite`, e.g. Vitest's `getCurrentSuite`).
-- **A failing secret `fillIn` says why.** It keeps the driver's first line, with the value hidden. The message stays withheld for `assertValue`, whose messages can quote the value found (Codex round 4), and for errors a driver marks unsafe (RTL key syntax).
+- **A failing secret step withholds the driver's message entirely** (reverted from showing its first line, after Codex round 13): a normalized copy of the value, such as a trimmed email, escapes exact hiding. The error names the step and field label and suggests `debug()`. Richer secret diagnostics belong to issue #16.
 - **One field wait.** `fillIn` and `assertValue` wait for their field the same way, within an assertion budget.
 - **Fixture details.**
   - `.with()` refuses unknown names and treats functions like a definition does.

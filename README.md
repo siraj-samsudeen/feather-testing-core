@@ -850,9 +850,7 @@ The chain prints the value each `fillIn` typed and each `assertValue` expected, 
 
 The driver checks the field before the step starts. So the hidden form is used everywhere the step's name appears: the chain, `Failed at:`, `onStep` events and Playwright `test.step()` titles. Skipped steps and steps a `within()` callback left unrun are always shown with their values hidden. The real value is still typed; only what is printed changes.
 
-When a `fillIn` on a secret field fails, the error keeps the first line of the driver's message (why: disabled, not found, timed out), with the value hidden. The whole message is withheld when it could hold the value:
-- `assertValue`, whose message can quote the value found;
-- Testing Library's key-syntax errors, which quote fragments.
+When a step on a secret field fails, the driver's message is withheld entirely: it can carry the value in a form that exact hiding misses (trimmed, lower-cased, quoted in part). The error names the step and the field's label and suggests `debug()`. A missing field is still reported as "no field labelled …", since that message never holds the value. Richer diagnostics are tracked in issue #16.
 
 The RTL and request adapters' `debug()` print password inputs' values as `'••••••'`.
 
