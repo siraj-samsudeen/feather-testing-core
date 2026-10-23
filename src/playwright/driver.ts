@@ -717,7 +717,11 @@ export class PlaywrightDriver
         timeout: opts?.timeout ?? this.timeout,
       });
     } else {
-      await expect(locator.first()).toBeVisible({ timeout: opts?.timeout ?? this.timeout });
+      // Any visible match will do (a hidden first match does not fail it),
+      // as in the request adapter; count and refuteHas still count all.
+      await expect(locator.filter({ visible: true }).first()).toBeVisible({
+        timeout: opts?.timeout ?? this.timeout,
+      });
     }
   }
 

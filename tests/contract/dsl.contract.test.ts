@@ -50,6 +50,7 @@ const pages: Pages = {
       <button>Send</button>
     </form>`,
   "/list": `<ul><li class="item">One</li><li class="item">Two</li></ul>`,
+  "/first-hidden": `<p class="msg" hidden>Old notice</p><p class="msg">New notice</p>`,
   "/dialog": `<p>Behind the dialog</p>
     <dialog open><form method="dialog"><p>Are you sure?</p><button>Close</button></form></dialog>`,
 };
@@ -550,6 +551,19 @@ for (const driver of drivers) {
       await withApp(async (h) => {
         const error = await failure(h.session(FAST).visit("/list").within("table", (s) => s.assertText("One")));
         expect(error.message).toContain("matched 0 elements");
+      });
+    }, TEST_TIMEOUT);
+
+    it("#38 assertHas passes when any match is visible, not only the first", async () => {
+      await withApp(async (h) => {
+        await h
+          .session()
+          .visit("/first-hidden")
+          .assertHas(".msg")
+          .assertHas(".msg", { text: "New" })
+          .assertHas(".msg", { count: 2 });
+        const error = await failure(h.session(FAST).visit("/first-hidden").assertHas(".msg", { text: "Old" }));
+        expect(error.message).toContain("[FAILED] assertHas('.msg', text: 'Old')");
       });
     }, TEST_TIMEOUT);
 
