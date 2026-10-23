@@ -123,6 +123,14 @@ Core provides its own fixtures through `defineCoreTest(runner)`: `browser` (file
 
 **Decision:** Add a public `discard()` that drops queued steps that have not started and returns how many were dropped. A running chain is untouched. It works on every adapter's sessions and on scoped sessions. It is additive.
 
+### Playwright peer range widened to `>=1.40.0`
+
+**Decided by:** the author.
+
+**Decision:** The optional `playwright` peer is `>=1.40.0` again. No API the adapter uses needs 1.64, and it is tested on 1.64.1 (see "Tested with" in the README). This reverses the earlier `>=1.64.0` floor.
+
+**Caveat found while making the change, for the author:** `assertHas(selector)` uses `locator.filter({ visible: true })` (D4), which Playwright added in 1.51. Below 1.51 that call is an error. The options are to raise the floor to `>=1.51.0`, or to replace the call with one 1.40 has.
+
 ## Deferred
 
 ### B2 (rest). A per-driver Session type that rejects unsupported verbs at compile time

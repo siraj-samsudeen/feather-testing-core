@@ -205,7 +205,7 @@ test("full auth lifecycle", async ({ session }) => {
 
 ### Using with bun test
 
-The Playwright adapter does not need the Playwright Test runner. Launch a browser with the `playwright` library, hand `createSession` a raw `Page`, and run the test with `bun test` (or any other runner). Only `playwright` has to be installed (`>=1.64.0`); `@playwright/test` is not needed.
+The Playwright adapter does not need the Playwright Test runner. Launch a browser with the `playwright` library, hand `createSession` a raw `Page`, and run the test with `bun test` (or any other runner). Only `playwright` has to be installed (`>=1.40.0`); `@playwright/test` is not needed.
 
 Tested with Playwright 1.64.1, Bun 1.4.2, Node 24.12.0 and vitest 4.0.18.
 
@@ -1096,9 +1096,8 @@ Deliberate exceptions stay possible and stay visible: an `eslint-disable-next-li
 - New: every waiting verb takes `{ timeout }` (step > session > adapter default); `createSession({ timeout })` on the RTL adapter.
 - **More lenient (Playwright adapter):** `assertHas(selector)` passes when any matching element is visible; it used to need the first match to be visible. `count` and `refuteHas` still count every match, visible or not.
 - **Breaking (Playwright adapter):** `within(selector)` must match exactly one element, as in the request adapter. A selector matching none or several now fails the `within()` step, naming the count. Fix: narrow the selector (an id, a class, a data attribute), or use `:first-of-type` if the first one is really meant.
-- The optional peer dependency is now `playwright` (`>=1.64.0`, the version tested) instead of `@playwright/test` (`>=1.40.0`). `@playwright/test` installs `playwright`, so Playwright Test users on 1.64 or later change nothing; library users no longer need `@playwright/test`.
+- The optional peer dependency is now `playwright` (`>=1.40.0`, the same floor as before) instead of `@playwright/test`. `@playwright/test` installs `playwright`, so Playwright Test users change nothing; library users no longer need `@playwright/test`.
 - Without the `navigationTimeout` option, `visit()` and `reload()` simply use Playwright's own default (`setDefaultNavigationTimeout`, or the runner's `navigationTimeout`). Only the wait for the new page after a submit has no Playwright call to inherit it from: it reads the page's default from a private Playwright field (there is no public getter). The test suite pins that field, so a Playwright rename fails CI instead of silently becoming 30 s. Set `navigationTimeout` explicitly to avoid relying on it.
-- Projects on Playwright below 1.64 get a peer-dependency warning, or an install error with strict npm (`strict-peer-deps`) or pnpm (`strict-peer-dependencies`) settings, until they upgrade Playwright.
 - pnpm with `auto-install-peers=false`, and Yarn Plug'n'Play: add `playwright` to your own `devDependencies`, so the adapter can resolve `playwright/test`.
 - `submit()`, `click()`, `clickLink()`, `clickButton()` and `pressKey()` wait for the new page after starting a navigation of this page.
 - Outside the Playwright Test runner, assertions and actions default to a 4000 ms budget (`createSession(page, { timeout })` to change it). Inside the runner the configured Playwright timeouts apply, as before. Page loads (`visit()`, `reload()`, the page after a submit) keep Playwright's navigation timeout (30 s), as in 0.6; change it with `navigationTimeout`.
