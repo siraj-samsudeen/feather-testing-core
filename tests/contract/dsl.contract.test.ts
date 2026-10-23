@@ -477,6 +477,24 @@ for (const driver of drivers) {
       });
     }, TEST_TIMEOUT);
 
+    it("#12 a password fill skipped after an earlier failure stays hidden", async () => {
+      await withApp(async (h) => {
+        const failed: string[] = [];
+        const error = await failure(
+          h
+            .session({
+              ...FAST,
+              onStep: (e) => e.status === "failed" && failed.push(String((e.error as Error)?.message)),
+            })
+            .visit("/codes")
+            .within("form", (s) => s.assertText("Nope").fillIn("Login code", FAKE_SECRET)),
+        );
+        expect(error.message).toContain(`[skipped] fillIn('Login code', '${HIDDEN}')`);
+        expect(error.message).not.toContain(FAKE_SECRET);
+        expect(failed.join("\n")).not.toContain(FAKE_SECRET);
+      });
+    }, TEST_TIMEOUT);
+
     it("#56 step() and raw() run inside the chain", async () => {
       await withApp(async (h) => {
         const seen: string[] = [];

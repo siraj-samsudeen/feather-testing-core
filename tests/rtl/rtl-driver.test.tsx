@@ -1447,3 +1447,32 @@ describe("a fillIn queued but never run", () => {
     expect(String((failed[0] as Error).message)).not.toContain(SECRET);
   });
 });
+
+describe("a password fill skipped after an earlier failure", () => {
+  afterEach(cleanup);
+
+  it("keeps the value out of the chain and the failed onStep events", async () => {
+    const SECRET = "fake-secret-value-123";
+    render(
+      <form>
+        <label htmlFor="code">Login code</label>
+        <input id="code" type="password" />
+      </form>,
+    );
+    const failed: string[] = [];
+    const error = await createSession({
+      onStep: (e) => {
+        if (e.status === "failed") failed.push(String((e.error as Error).message));
+      },
+    })
+      .within("form", (s) => s.assertText("Nope").fillIn("Login code", SECRET))
+      .run()
+      .then(
+        () => null,
+        (e: unknown) => e as StepError,
+      );
+    expect(error).toBeInstanceOf(StepError);
+    expect(error!.message).not.toContain(SECRET);
+    expect(failed.join("\n")).not.toContain(SECRET);
+  });
+});

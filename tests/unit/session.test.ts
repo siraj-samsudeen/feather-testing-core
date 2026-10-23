@@ -1118,3 +1118,51 @@ describe("secrets in step names before a step starts", () => {
     ]);
   });
 });
+
+describe("steps that never ran keep typed values hidden", () => {
+  const SECRET = "fake-secret-value-123";
+  const HIDDEN = "••••••";
+
+  it("hides a skipped fillIn's value in the chain", async () => {
+    const { driver } = createMockDriver({
+      visit: vi.fn(async () => {
+        throw new Error("server down");
+      }),
+    });
+    const error = await new Session(driver)
+      .visit("/")
+      .fillIn("Credential", SECRET)
+      .run()
+      .then(
+        () => null,
+        (e: unknown) => e as StepError,
+      );
+    expect(error).toBeInstanceOf(StepError);
+    expect(error!.message).toContain(`[skipped] fillIn('Credential', '${HIDDEN}')`);
+    expect(error!.message).not.toContain(SECRET);
+  });
+
+  it("hides it in the parent's failed onStep event when the chain is inside within()", async () => {
+    const mock = createMockDriver({
+      assertText: vi.fn(async () => {
+        throw new Error("not there");
+      }),
+    });
+    mock.driver.within = vi.fn(async () => mock.driver);
+    const failed: string[] = [];
+    const error = await new Session(mock.driver, {
+      onStep: (e) => {
+        if (e.status === "failed") failed.push(String((e.error as Error).message));
+      },
+    })
+      .within("form", (s) => s.assertText("Nope").fillIn("Credential", SECRET))
+      .run()
+      .then(
+        () => null,
+        (e: unknown) => e as StepError,
+      );
+    expect(error!.message).not.toContain(SECRET);
+    expect(failed.length).toBeGreaterThan(0);
+    expect(failed.join("\n")).not.toContain(SECRET);
+  });
+});

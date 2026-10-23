@@ -34,6 +34,19 @@ function describe(expected: string | RegExp): string {
   return typeof expected === "string" ? expected : String(expected);
 }
 
+/**
+ * How a step that never ran is reported (skipped in a failed chain, or left
+ * unrun by a within()/assertDownload() callback): its name with any typed
+ * value hidden. It never reached prepare(), which is what checks whether a
+ * value went into a password field. Index is kept, so the chain still marks
+ * it as skipped.
+ */
+function unrunView(step: QueuedStep): QueuedStep {
+  return step.nameHidingValue === undefined
+    ? step
+    : { ...step, name: step.nameHidingValue };
+}
+
 export class Session<TContext = unknown, TNative = unknown>
   implements PromiseLike<void>
 {
@@ -115,7 +128,14 @@ export class Session<TContext = unknown, TNative = unknown>
         // visible even when the user broke the chain across multiple awaits.
         throw new StepError(
           step,
-          [...this.executedSteps, ...steps.slice(i)],
+          [
+            ...this.executedSteps,
+            step,
+            // Skipped steps never ran prepare(), so whether a typed value
+            // was a password was never checked: report them with every
+            // typed value hidden.
+            ...steps.slice(i + 1).map((skipped) => unrunView(skipped)),
+          ],
           error,
         );
       }
@@ -131,9 +151,7 @@ export class Session<TContext = unknown, TNative = unknown>
     if (this.steps.length === 0) return;
     // These steps never ran, so whether a typed value was a password was
     // never checked: hide every typed value.
-    const names = this.steps
-      .map((step) => step.nameHidingValue ?? step.name)
-      .join(", ");
+    const names = this.steps.map((step) => unrunView(step).name).join(", ");
     const count = this.steps.length;
     this.steps = [];
     throw new Error(
