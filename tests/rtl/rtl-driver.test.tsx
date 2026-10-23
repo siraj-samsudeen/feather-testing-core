@@ -1348,3 +1348,71 @@ describe("createSession({ onStep })", () => {
     ]);
   });
 });
+
+describe("onStep and password fields (no secret-looking label)", () => {
+  afterEach(cleanup);
+  const FAKE = "fake-secret-value-123";
+  const HIDE = "••••••";
+
+  function record() {
+    const events: string[] = [];
+    return {
+      events,
+      onStep: (event: { status: string; name: string }) =>
+        events.push(`${event.status} ${event.name}`),
+    };
+  }
+
+  it("hides the value in started and passed", async () => {
+    render(
+      <form>
+        <label htmlFor="code">Login code</label>
+        <input id="code" type="password" />
+      </form>,
+    );
+    const { events, onStep } = record();
+    await createSession({ onStep }).fillIn("Login code", FAKE);
+    expect(events).toEqual([
+      `started fillIn('Login code', '${HIDE}')`,
+      `passed fillIn('Login code', '${HIDE}')`,
+    ]);
+  });
+
+  it("hides the value in started and failed", async () => {
+    render(
+      <form>
+        <label htmlFor="code">Login code</label>
+        <input id="code" type="password" disabled />
+      </form>,
+    );
+    const { events, onStep } = record();
+    const error = await createSession({ onStep })
+      .fillIn("Login code", FAKE)
+      .run()
+      .then(
+        () => null,
+        (e: unknown) => e as StepError,
+      );
+    expect(error).toBeInstanceOf(StepError);
+    expect(error!.message).not.toContain(FAKE);
+    expect(events).toEqual([
+      `started fillIn('Login code', '${HIDE}')`,
+      `failed fillIn('Login code', '${HIDE}')`,
+    ]);
+  });
+
+  it("hides the value when the field never appears", async () => {
+    render(<p>No form here</p>);
+    const { events, onStep } = record();
+    const error = await createSession({ onStep })
+      .fillIn("Login code", FAKE)
+      .run()
+      .then(
+        () => null,
+        (e: unknown) => e as StepError,
+      );
+    expect(error).toBeInstanceOf(StepError);
+    expect(error!.message).not.toContain(FAKE);
+    expect(events.join("\n")).not.toContain(FAKE);
+  });
+});

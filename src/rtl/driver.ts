@@ -145,6 +145,17 @@ export class RTLDriver implements TestDriver<RTLStepContext, RTLQueries> {
     this.lastFormElement = input.closest("form");
   }
 
+  /**
+   * Asked before fillIn's step starts, so a password field's value never
+   * reaches a step name or onStep event. Waits for the field as fillIn()
+   * does; a field that never appears throws, and the session then hides
+   * the value and fails the step with that error.
+   */
+  async fillTargetIsPassword(label: string): Promise<boolean> {
+    const field = await this.findField(label);
+    return field instanceof HTMLInputElement && field.type === "password";
+  }
+
   async lastFilledFieldIsPassword(): Promise<boolean> {
     return (
       this.lastFilledField instanceof HTMLInputElement &&
