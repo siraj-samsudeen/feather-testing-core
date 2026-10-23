@@ -40,10 +40,14 @@ export class StepError extends Error {
  * could not run and this message says why and what to do instead.
  */
 export class BrowserOnlyVerbError extends Error {
-  constructor(verb: string, alternative: string) {
+  /**
+   * `environment` is what the adapter runs on instead of a browser, as the
+   * message names it; it defaults to the RTL adapter's.
+   */
+  constructor(verb: string, alternative: string, environment = "JSDOM") {
     super(
       `feather-testing-core: ${verb} is a browser-only verb — this adapter runs ` +
-        `in JSDOM, which has no browser to do it. ${alternative}`,
+        `in ${environment}, which has no browser to do it. ${alternative}`,
     );
     this.name = "BrowserOnlyVerbError";
   }

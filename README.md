@@ -6,7 +6,7 @@ Part of the [Feather Framework](https://github.com/siraj-samsudeen/feather-frame
 
 ## The Core Idea
 
-This DSL defines a universal vocabulary — `fillIn`, `clickButton`, `assertText`, and more — that can be backed by **any** test framework. Playwright and React Testing Library are just the first two adapters. You write your tests once in a fluent, chainable style; the adapter handles the framework-specific details.
+This DSL defines a universal vocabulary — `fillIn`, `clickButton`, `assertText`, and more — that can be backed by **any** test framework. Playwright, React Testing Library, and plain HTTP requests are the first three adapters. You write your tests once in a fluent, chainable style; the adapter handles the framework-specific details.
 
 ### Before / After — Playwright E2E
 
@@ -66,9 +66,47 @@ test("form submission", async () => {
 });
 ```
 
+### Before / After — Server-rendered app, no browser
+
+**Before (`app.handle` + linkedom by hand):**
+```ts
+test("adds a todo", async () => {
+  const home = parseHTML(await (await app.handle(new Request("http://localhost/"))).text());
+  const form = home.document.querySelector("form.new-todo")!;
+  const response = await app.handle(
+    new Request(new URL(form.getAttribute("action")!, "http://localhost"), {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ title: "Read the guide on routing" }),
+    }),
+  );
+  expect(response.status).toBe(303);
+  const location = response.headers.get("location")!;
+  const after = parseHTML(await (await app.handle(new Request(new URL(location, "http://localhost")))).text());
+  expect(after.document.querySelector("ul.todo-list")!.children.length).toBe(1);
+  expect(after.document.body.textContent).toContain("Read the guide on routing");
+});
+```
+
+**After:**
+```ts
+import { createSession } from "feather-testing-core/request";
+
+test("adds a todo", async () => {
+  await createSession(app.handle)          // any (Request) => Promise<Response>
+    .visit("/")
+    .fillIn("What needs to be done?", "Read the guide on routing")
+    .clickButton("Add")                    // POSTs the form, follows the 303, parses the new page
+    .assertText("Read the guide on routing")
+    .assertPath("/");
+});
+```
+
+The "before" never looked at the form's fields, its method, or whether the label a user reads is the one on the input; the "after" does all three, the way the browser would. See [Request adapter](#request-adapter).
+
 ### Same DSL, Any Backend
 
-Notice both examples use the **exact same methods** — `fillIn`, `clickButton`, `assertText`. The DSL is framework-agnostic. Playwright and React Testing Library are just the first two adapters. You can implement the `TestDriver` interface for any testing library and get the same fluent syntax.
+Notice every example uses the **exact same methods** — `fillIn`, `clickButton`, `assertText`. The DSL is framework-agnostic. Playwright, React Testing Library, and HTTP requests are just the first three adapters. You can implement the `TestDriver` interface for any testing library and get the same fluent syntax.
 
 Inspired by [Phoenix Test](https://hexdocs.pm/phoenix_test/PhoenixTest.html) — Elixir's pipe-chain testing DSL.
 
@@ -88,6 +126,9 @@ npm install @playwright/test
 
 # For React Testing Library integration tests
 npm install @testing-library/react @testing-library/user-event
+
+# For the request adapter (server-rendered apps, no browser)
+npm install happy-dom
 ```
 
 ## Usage
@@ -130,6 +171,8 @@ test("full auth lifecycle", async ({ session }) => {
 });
 ```
 
+The Playwright adapter also works with Playwright used as a library, outside `@playwright/test`'s runner — for instance inside `bun test`, with `createSession(page)` on a `page` from `playwright`'s `chromium.launch()`. Mind the timeouts there: Playwright's 5 s assertion wait equals `bun test`'s default 5 s per-test timeout, so a failing assertion surfaces as "Unhandled error between tests" instead of a clean failure. Raise the runner's budget (`bun test --timeout 15000`) or lower the DSL's (`expect` timeout / per-verb `timeout` options) so the assertion fails first.
+
 ### React Testing Library
 
 ```ts
@@ -147,6 +190,25 @@ test("form submission", async () => {
 });
 ```
 
+### Request adapter (no browser)
+
+```ts
+import { createSession } from "feather-testing-core/request";
+import { app } from "../src/app"; // an Elysia app
+
+test("signs in", async () => {
+  await createSession(app.handle)
+    .visit("/login")
+    .fillIn("Email", "ada@example.com")
+    .fillIn("Password", "hunter2")
+    .clickButton("Sign in")
+    .assertPath("/dashboard")
+    .assertText("Signed in as ada@example.com");
+});
+```
+
+See [Request adapter](#request-adapter) for what it does and does not do.
+
 ## API
 
 Every method returns `this` for chaining. A single `await` at the start of the chain executes all steps sequentially.
@@ -155,10 +217,10 @@ Every method returns `this` for chaining. A single `await` at the start of the c
 
 | Method | Description |
 |--------|-------------|
-| `visit(path)` | Navigate to URL (Playwright only) |
-| `reload()` | Reload the current document while preserving its full URL and browser state (Playwright only) |
+| `visit(path)` | Navigate to URL (Playwright, request) |
+| `reload()` | Reload the current document while preserving its full URL and browser state (Playwright, request) |
 
-`reload()` waits for the browser's load event, like Playwright's native reload. Inside `within()`, it still reloads the whole page; the existing scope is a locator recipe rather than a retained element handle, so subsequent scoped steps resolve against the new document. RTL throws `BrowserOnlyVerbError` because JSDOM has no document-navigation lifecycle.
+`reload()` waits for the browser's load event, like Playwright's native reload. Inside `within()`, it still reloads the whole page; the existing scope is a locator recipe rather than a retained element handle, so subsequent scoped steps resolve against the new document. RTL throws `BrowserOnlyVerbError` because JSDOM has no document-navigation lifecycle. The request adapter re-sends the request that produced the current page, a POST included, as a browser's reload resubmits.
 
 ### Interactions
 
@@ -236,9 +298,9 @@ In Playwright, `dropFile` reads the real file and dispatches a `drop` event with
 | `assertChecked(label)` / `refuteChecked(label)` | Assert a checkbox is checked / not checked |
 | `assertSelected(label, optionLabel)` | Assert the select's currently selected option |
 | `assertOptions(label, [labels])` | Assert a select offers exactly these options, in order |
-| `assertHas(selector, opts?)` / `refuteHas(...)` | Assert element exists (Playwright only, see options below) |
-| `assertPath(path, opts?)` / `refutePath(path)` | Assert URL path (Playwright only, see options below) |
-| `assertDownload(filename, trigger, opts?)` | Assert `trigger` starts a download with this filename (Playwright only) |
+| `assertHas(selector, opts?)` / `refuteHas(...)` | Assert element exists (Playwright, request; see options below) |
+| `assertPath(path, opts?)` / `refutePath(path)` | Assert URL path (Playwright, request; see options below) |
+| `assertDownload(filename, trigger, opts?)` | Assert `trigger` starts a download with this filename (Playwright, request) |
 
 #### Form-state assertions
 
@@ -391,7 +453,7 @@ await session
   .assertText("Download ready");
 ```
 
-The predicate receives the adapter context — `{ page, scope }` for Playwright, `{ user, container }` for RTL — and may be sync or async. `opts` takes `{ timeout, interval }` in ms; omit them to inherit the adapter's own budget (Playwright's `expect.poll`, RTL's `waitFor`).
+The predicate receives the adapter context — `{ page, scope }` for Playwright, `{ user, container }` for RTL, `{ page, scope, fetch }` for the request adapter — and may be sync or async. `opts` takes `{ timeout, interval }` in ms; omit them to inherit the adapter's own budget (Playwright's `expect.poll`, RTL's `waitFor`).
 
 When the budget runs out, the chain trace says what you were waiting for:
 
@@ -419,7 +481,7 @@ await session
 
 ### Escape hatches: `step(name, fn)` and `raw(label, fn)`
 
-When you need something the DSL doesn't cover, queue a named custom step instead of abandoning the chain. The callback receives the adapter's context — `{ page, scope }` for Playwright, `{ user, container }` for RTL — and the name shows up in `StepError` output like any built-in step:
+When you need something the DSL doesn't cover, queue a named custom step instead of abandoning the chain. The callback receives the adapter's context — `{ page, scope }` for Playwright, `{ user, container }` for RTL, `{ page, scope, fetch }` for the request adapter — and the name shows up in `StepError` output like any built-in step:
 
 ```ts
 await session
@@ -430,7 +492,7 @@ await session
   .assertText("Done (1)");
 ```
 
-`raw(label, fn)` goes one level lower: it hands over the driver itself — Playwright's `page`, RTL's scoped query object — with no context wrapper. Use it when you want the native API and nothing else:
+`raw(label, fn)` goes one level lower: it hands over the driver itself — Playwright's `page`, RTL's scoped query object, the request adapter's current page (`{ document, response, url, body }`) — with no context wrapper. Use it when you want the native API and nothing else:
 
 ```ts
 await session
@@ -454,7 +516,7 @@ That is the whole point of having them: an untraced raw tail ends the trace at t
 
 | Method | Description |
 |--------|-------------|
-| `debug()` | Playwright: saves a full-page screenshot to `debug-{timestamp}.png` in the CWD. RTL: calls `screen.debug()` to log the current DOM to the console. |
+| `debug()` | Playwright: saves a full-page screenshot to `debug-{timestamp}.png` in the CWD. RTL: calls `screen.debug()` to log the current DOM to the console. Request: logs the current request, URL and status, and the scope's HTML, with password values hidden. |
 
 ## How It Works
 
@@ -586,6 +648,101 @@ class WrapperLabelDriver extends RTLDriver {
 
 The third constructor argument is a per-lookup timeout in ms; omit it to keep RTL's own default.
 
+## Request adapter
+
+`feather-testing-core/request` drives a server-rendered app through its request handler, with no browser — the equivalent of [Phoenix Test](https://hexdocs.pm/phoenix_test/PhoenixTest.html)'s static driver. Links are followed and forms submitted the way a browser does without JavaScript, every response is parsed, and the same chain that drives Playwright runs in-process in milliseconds. Coverage and mutation testing see the server code cheaply; keep the browser for behaviour that needs JavaScript.
+
+### The handler contract
+
+```ts
+createSession(handler, { baseUrl? })
+```
+
+- `handler` is any `(request: Request) => Response | Promise<Response>`: Elysia's `app.handle`, Hono's `app.fetch`, or `fetch` itself pointed at a running server. Pass a function that keeps its `this` (both of those are already bound). The adapter has no framework dependency.
+- `baseUrl` is what `visit()` paths resolve against — an origin, optionally with a base path (`"http://localhost/app/"`). It defaults to `http://localhost`. Every request carries a full URL on that origin.
+- Each request is sent with `redirect: "manual"`; the adapter follows redirects itself.
+
+### What it does, as a browser would
+
+| Behaviour | How |
+|-----------|-----|
+| Form submission | Per the HTML spec: `method` and `action` (relative to the page or its `<base href>`; missing or empty means the current URL), the submitter's `formaction` / `formmethod` / `formenctype`, successful controls only (named, not disabled, not in a disabled `<fieldset>` outside its first `<legend>`, not in a `<datalist>`), in tree order, including controls outside the form with `form="id"`. Defaults come from the markup; checkboxes and radios send `value` or `"on"` when checked; `<select>` sends every selected option (multiple too); `<textarea>` newlines go out as CRLF; `_charset_` hidden inputs send `UTF-8`; only the clicked submit button's `name`/`value` is sent |
+| Encodings | `application/x-www-form-urlencoded`, `multipart/form-data` (files from `attachFile`, with name and a type from the extension; an empty file input sends an empty, nameless file), and `text/plain`. A GET form replaces the action's query string. `method="dialog"` throws |
+| Validation | A form with an empty `required` control is not sent — the step fails saying which — unless the form has `novalidate` or the submitter `formnovalidate`. Other constraints (`pattern`, `min`, `type="email"`, …) are not checked: the server's validation is what a request test is for |
+| Buttons | A submit button submits its form, a reset button restores the defaults. A link styled as a button (`<a role="button" href>`) is followed. A `type="button"` button, any other `role="button"` element, or a button outside any form does nothing without JavaScript, so it throws `BrowserOnlyVerbError` |
+| `submit()` / `pressKey("Enter")` | `submit()` uses the same order as the Playwright adapter (explicit `type="submit"`, a button named like "submit", then Enter). Enter is [implicit submission](https://html.spec.whatwg.org/multipage/form-control-infrastructure.html#implicit-submission): the form's first submit button, or with none, the form itself when it has at most one text field. In a `<textarea>` Enter types a newline |
+| Links | `clickLink` follows `href` (resolved against `<base href>`); a link to the same page with a `#fragment` only changes the URL. `click(text)` follows a link, presses a button, or activates a label's control (toggling a checkbox, picking a radio), whichever the text belongs to |
+| Redirects | 301/302 turn a POST into a GET, 303 turns anything but HEAD into a GET, 307/308 resend the method and body. At most 20 hops |
+| Cookies | Kept across requests and redirect hops: host-only and `Domain` cookies, `Path`, `Max-Age` / `Expires` (including deletion), `Secure` (sent over https and to localhost). No public-suffix list |
+| Headers | `Accept: text/html,…`, `Cookie`, and `Origin` on every non-GET request, as browsers send for CSRF checks |
+| Responses | Any status is shown as a page (a 422 validation page, a 404). A non-HTML body is shown as text, as a browser shows JSON. A `Content-Disposition: attachment` response, or any response to an `<a download>` link, is a download: the session stays on its page and `assertDownload` sees the suggested filename |
+| Current URL | Tracked through redirects for `assertPath` / `refutePath` / `reload` |
+
+Addressing follows the other adapters: interactions match a label, placeholder, or accessible name **exactly** (whitespace-normalized, case-sensitive), and more than one match is an error naming the count — scope with `within()`. Labels are `<label for>`, a wrapping `<label>` (which labels only its first labelable descendant), `aria-labelledby`, and `aria-label`, then the placeholder. A wrapping label is named without the text of controls nested in it (`<select>`, `<textarea>`, `<button>`, `<output>`, `<meter>`, `<progress>`), as Testing Library names it; Playwright keeps that text, so on Playwright `<label>Plan <select>…</select></label>` is called "Plan Free Pro" — give such a label `for` when one spec must run on both. `fillIn` refuses a value the field cannot hold (`"abc"` in a number input, a malformed date) instead of letting it be sent empty, as Playwright's `fill()` does. Text assertions match a case-insensitive substring of the rendered text, like Playwright's `getByText`. "Rendered" is judged from markup alone: `<head>`, `<script>`, `<style>`, `<template>`, `<noscript>`, `hidden` subtrees and hidden inputs are not page text; there is no CSS, so `display: none` is not seen. `assertHas` needs a rendered match (any of them; Playwright checks only the first); its `count`, and `refuteHas`, count every match, as Playwright's `toHaveCount` does. A `within()` scope is a selector recipe, re-resolved against the current page at every step, so it keeps working after a navigation inside it. It must match exactly one element, which is stricter than Playwright's `within()` (that only requires the selector to match something): scope with a selector that names one container. Focus is part of the session, so `pressKey("Enter")` after a `fillIn` inside `within()` submits that field's form, as in a browser.
+
+### Waiting
+
+Responses arrive complete, so no verb waits or retries: each looks at the current page once, and the `timeout` options assertions accept are ignored. `until(description, fn, opts)` still polls, because the server's state can change: between checks, a page that came from a GET is fetched again; a page that came from a POST is not re-sent, and the predicate is just evaluated again (it can call the context's `fetch` itself). The budget defaults to 5000 ms and the interval to 100 ms.
+
+The step and `until` context is `{ page, scope, fetch }`: the current page as `raw()` gets it, the scope element, and a `fetch(url, init?)` that sends a request with the session's cookies without navigating, as the page's own script would. Unlike a browser's `fetch`, it does not follow redirects: a 3xx comes back as it is, so you can assert on it.
+
+### Cleaning up
+
+Each page is parsed in its own happy-dom window, closed when the next page replaces it. The last one is closed when the session is garbage-collected, so dropping a session is enough; call `await driver.close()` on a `RequestDriver` you hold to release it at once.
+
+### The parser: happy-dom
+
+Pages are parsed with [happy-dom](https://github.com/capricorn86/happy-dom), an optional peer dependency like the other adapters' frameworks. JavaScript, stylesheets, iframes and navigation are all switched off; it is only a parser and a DOM. It was chosen over linkedom after checking what the verbs need:
+
+| Needed for | happy-dom | linkedom |
+|-----------|-----------|----------|
+| Label → control (`label.control`, `input.labels`) | yes | no |
+| A field's live value apart from its `value` attribute | yes | no (setting `value` rewrites the attribute) |
+| `checked`, `selectedOptions`, a select's default selection | yes | no |
+| `form` owner, `form="id"` association | yes | no |
+| `closest`, CSS selectors, `:scope` | yes | yes |
+
+linkedom would have meant reimplementing form-control state by hand; happy-dom has it, works under Bun and Node, and is what Bun's own docs use for DOM tests. The adapter types the document as the standard DOM `Document`, so nothing in your tests depends on the parser.
+
+### Browser-only verbs
+
+These throw `BrowserOnlyVerbError`, which the chain reports as the failed step, with a hint naming what to do instead:
+
+| Verb | Why | Instead |
+|------|-----|---------|
+| `hover(text)` | Hover only changes a page through CSS or JavaScript | A Playwright spec |
+| `dropFile(selector, path)` | A drop zone is JavaScript | `attachFile` on its file input, or a Playwright spec |
+| `pressKey(key)`, any key but `Enter` | Only Enter does anything without JavaScript | `fillIn` for text; a Playwright spec for key handling |
+| `assertComputedStyle(...)` | No stylesheets are applied | Assert the class or attribute that selects the style, or a Playwright spec |
+| `assertNoHorizontalOverflow` / `assertHorizontalOverflow` / `assertHorizontallyContained` / `scrollToHorizontalEnd` | Nothing is laid out | A Playwright spec |
+| `clickButton` / `click` on a `type="button"` button, a `role="button"` element that is not a link, or a button outside any form | It does nothing without JavaScript | A Playwright spec |
+| `clickLink` on a `javascript:` URL, `click` on text that is no link, button or label | Same | A Playwright spec |
+
+Every other verb is implemented, `assertDownload` included (see Responses above).
+
+### Extending the request adapter
+
+`RequestDriver` is meant to be subclassed the same way as `RTLDriver`. `findField(label, verb)` is the single label-addressed lookup every labelled verb goes through; `scoped(selectors)` is the factory `within()` uses; `browser` (the shared tab: current page, cookies, focus, attached files, downloads), `scopeSelectors`, `lastForm` and `lastFilledField` are the state the verbs share.
+
+```ts
+class WrapperLabelDriver extends RequestDriver {
+  protected override findField(label: string, verb: string): Element {
+    for (const l of this.queryRoot().querySelectorAll(".field > .label")) {
+      if (l.textContent?.trim() !== label) continue;
+      const control = l.parentElement?.querySelector("input, textarea, select");
+      if (control) return control;
+    }
+    return super.findField(label, verb);
+  }
+
+  protected override scoped(selectors: readonly string[]) {
+    return new WrapperLabelDriver(this.browser, {}, selectors);
+  }
+}
+
+const session = new Session(new WrapperLabelDriver(app.handle));
+```
+
 ## Exports
 
 ```ts
@@ -603,15 +760,19 @@ import { test, createSession, expect } from "feather-testing-core/playwright";
 // RTL adapter
 import { createSession } from "feather-testing-core/rtl";
 
+// Request adapter (no browser)
+import { createSession, RequestDriver } from "feather-testing-core/request";
+
 // ESLint plugin (see below)
 import featherTesting from "feather-testing-core/eslint-plugin";
 ```
 
-Both adapter subpaths also re-export `Session` and `StepError`, so you can import everything from a single path:
+Every adapter subpath also re-exports `Session` and `StepError`, so you can import everything from a single path:
 
 ```ts
 import { test, Session, StepError } from "feather-testing-core/playwright";
 import { createSession, Session, StepError } from "feather-testing-core/rtl";
+import { createSession, Session, StepError } from "feather-testing-core/request";
 ```
 
 ## Lint plugin
@@ -670,7 +831,7 @@ Version 0.5.0 extends the required `TestDriver` interface. Custom drivers must i
 - `assertHorizontallyContained(selector, opts?)`
 - `scrollToHorizontalEnd(opts?)`
 
-Implement capabilities the adapter can prove, but do not fake browser behavior or silently no-op. For operations the environment cannot support—commonly reload, computed CSS, layout geometry, and scrolling in non-browser adapters—reject with `BrowserOnlyVerbError`, naming the verb and directing the caller to a browser-backed spec. The built-in RTL adapter follows this pattern for JSDOM limitations.
+Implement capabilities the adapter can prove, but do not fake browser behavior or silently no-op. For operations the environment cannot support—commonly reload, computed CSS, layout geometry, and scrolling in non-browser adapters—reject with `BrowserOnlyVerbError`, naming the verb and directing the caller to a browser-backed spec. The built-in RTL adapter follows this pattern for JSDOM limitations, and the request adapter for what needs a browser; `new BrowserOnlyVerbError(verb, alternative, environment?)` takes an optional third argument naming what your adapter runs on instead (default `"JSDOM"`).
 
 ## Releasing
 

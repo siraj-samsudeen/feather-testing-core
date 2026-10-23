@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { StepError } from "../../src/errors.js";
+import { BrowserOnlyVerbError, StepError } from "../../src/errors.js";
 import type { QueuedStep } from "../../src/types.js";
 
 function makeStep(index: number, name: string): QueuedStep {
@@ -127,5 +127,21 @@ describe("StepError", () => {
     expect(error.name).toBe("StepError");
     expect(error).toBeInstanceOf(Error);
     expect(error).toBeInstanceOf(StepError);
+  });
+});
+
+describe("BrowserOnlyVerbError", () => {
+  it("names the verb, where the adapter runs (JSDOM by default), and the alternative", () => {
+    const error = new BrowserOnlyVerbError("hover()", "Use Playwright.");
+    expect(error.name).toBe("BrowserOnlyVerbError");
+    expect(error.message).toBe(
+      "feather-testing-core: hover() is a browser-only verb — this adapter runs " +
+        "in JSDOM, which has no browser to do it. Use Playwright.",
+    );
+  });
+
+  it("takes the environment an adapter runs on instead of a browser", () => {
+    const error = new BrowserOnlyVerbError("hover()", "Use Playwright.", "plain HTTP requests");
+    expect(error.message).toContain("this adapter runs in plain HTTP requests, which has no browser");
   });
 });

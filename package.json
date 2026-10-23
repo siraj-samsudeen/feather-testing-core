@@ -1,7 +1,7 @@
 {
   "name": "feather-testing-core",
-  "version": "0.6.0",
-  "description": "Phoenix Test-inspired fluent testing DSL for Playwright and React Testing Library",
+  "version": "0.7.0",
+  "description": "Phoenix Test-inspired fluent testing DSL for Playwright, React Testing Library, and browserless HTTP requests",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -11,6 +11,8 @@
     "testing",
     "playwright",
     "react-testing-library",
+    "happy-dom",
+    "server-rendered",
     "fluent",
     "dsl",
     "e2e",
@@ -33,6 +35,11 @@
       "import": "./dist/rtl/index.js",
       "default": "./dist/rtl/index.js"
     },
+    "./request": {
+      "types": "./dist/request/index.d.ts",
+      "import": "./dist/request/index.js",
+      "default": "./dist/request/index.js"
+    },
     "./eslint-plugin": {
       "types": "./dist/eslint-plugin/index.d.ts",
       "import": "./dist/eslint-plugin/index.js",
@@ -45,7 +52,8 @@
   "peerDependencies": {
     "@playwright/test": ">=1.40.0",
     "@testing-library/react": ">=14.0.0",
-    "@testing-library/user-event": ">=14.0.0"
+    "@testing-library/user-event": ">=14.0.0",
+    "happy-dom": ">=20.0.0"
   },
   "peerDependenciesMeta": {
     "@playwright/test": {
@@ -55,6 +63,9 @@
       "optional": true
     },
     "@testing-library/user-event": {
+      "optional": true
+    },
+    "happy-dom": {
       "optional": true
     }
   },
@@ -75,6 +86,7 @@
     "@types/react-dom": "^19.2.3",
     "@typescript-eslint/parser": "^8.68.0",
     "eslint": "^9.39.5",
+    "happy-dom": "~20.14.6",
     "jsdom": "^28.1.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
