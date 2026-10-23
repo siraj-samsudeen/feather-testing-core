@@ -157,10 +157,22 @@ export class Session<TContext = unknown, TNative = unknown>
   /**
    * Drop the steps queued on this session that have not started, and say
    * how many. A chain already running is not touched: it took its steps
-   * when it started. Works the same on a within() scoped session.
+   * when it started. Works the same on a within() scoped session, which
+   * has its own step counter: discarding there renumbers only its steps.
    */
   discard(): number {
     const dropped = this.steps.length;
+    // Rewinding is right only when the queued steps hold the last numbers
+    // given out, in order: steps are numbered as they are queued, and a
+    // running chain takes its (earlier) steps off the queue when it starts.
+    const first = this.stepIndex - dropped;
+    if (this.steps.some((step, i) => step.index !== first + i)) {
+      throw new Error(
+        `feather-testing-core: discard() found queued steps numbered ` +
+          `${this.steps.map((s) => s.index).join(", ")}, but the last numbers given out were ` +
+          `${this.steps.map((_, i) => first + i).join(", ")}. This is a bug in feather-testing-core.`,
+      );
+    }
     this.steps = [];
     // The dropped steps were the last numbered; the next ones reuse their
     // numbers, so a failure still reads "Step 1 of 1", not "Step 3 of 1".

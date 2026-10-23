@@ -1273,6 +1273,43 @@ describe("discard()", () => {
     expect(calls).toEqual([]);
   });
 
+  it("refuses to rewind when the dropped steps are not the last numbered", () => {
+    const { driver } = createMockDriver();
+    const session = new Session(driver);
+    session.visit("/").clickButton("Go");
+    // Only reachable by breaking the session's own bookkeeping.
+    (session as unknown as { stepIndex: number }).stepIndex = 7;
+    expect(() => session.discard()).toThrow(
+      "feather-testing-core: discard() found queued steps numbered 0, 1, but the last numbers given out were 5, 6",
+    );
+  });
+
+  it("on a within() scoped session, rewinds only that session's own counter", async () => {
+    const { driver } = createMockDriver({
+      assertText: vi.fn(async () => {
+        throw new Error("not there");
+      }),
+    });
+    driver.within = vi.fn(async () => driver);
+    const error = await new Session(driver)
+      .visit("/")
+      .within("form", (s) => {
+        s.fillIn("Name", "x").clickButton("Go");
+        s.discard();
+        return s.assertText("Done");
+      })
+      .run()
+      .then(
+        () => null,
+        (e: unknown) => e as StepError,
+      );
+    // The outer chain: visit, then within (step 2 of 2).
+    expect(error!.message).toContain("Step 2 of 2 failed");
+    // The scoped chain: its own numbering, from 1 again after the discard.
+    const inner = String((error!.cause as Error).message);
+    expect(inner).toContain("Step 1 of 1 failed");
+  });
+
   it("numbers the steps of the next chain from where the discarded ones began", async () => {
     const { driver } = createMockDriver({
       assertText: vi.fn(async () => {
