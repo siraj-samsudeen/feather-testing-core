@@ -55,7 +55,8 @@ async function withFixtures(
 export const test = Object.assign(
   (name: string, body: (fixtures: Fixtures) => Promise<void>) => {
     const use = currentUse;
-    bunTest(name, () => withFixtures(use, body));
+    // Explicit: Bun 1.4.2 ignores bunfig's [test] timeout.
+    bunTest(name, () => withFixtures(use, body), 20_000);
   },
   {
     describe(name: string, fn: () => void) {
@@ -69,7 +70,7 @@ export const test = Object.assign(
         }
       });
     },
-    /** bun:test's per-test limit comes from bunfig.toml; nothing to do. */
+    /** Each test above already gets an explicit 20 s limit; nothing to do. */
     setTimeout(_ms: number) {},
     use(options: UseOptions) {
       currentUse = { ...currentUse, ...options };

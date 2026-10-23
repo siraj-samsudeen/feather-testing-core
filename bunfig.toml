@@ -3,5 +3,6 @@
 [test]
 # A DOM (happy-dom) for the React Testing Library tests.
 preload = ["./tests/bun-setup.ts"]
-# Browser tests launch Chromium; bun's default of 5000 ms per test is too tight.
-timeout = 20000
+# The per-test timeout is NOT set here: Bun 1.4.2 ignores [test] timeout in
+# bunfig.toml (checked: a 7 s test still timed out at 5000 ms). The test:bun
+# script passes --timeout 20000 instead; slow tests also set their own.

@@ -209,13 +209,13 @@ The Playwright adapter does not need the Playwright Test runner. Launch a browse
 
 Tested with Playwright 1.64.1, Bun 1.4.2, Node 24.12.0 and vitest 4.0.18.
 
-Browser tests spend time launching Chromium and loading pages, so first raise bun's per-test limit (5000 ms by default):
+Browser tests spend time launching Chromium and loading pages, so first raise bun's per-test limit (5000 ms by default) on the command line:
 
-```toml
-# bunfig.toml
-[test]
-timeout = 20000
+```sh
+bun test --timeout 20000
 ```
+
+Bun 1.4.2 ignores `timeout` under `[test]` in `bunfig.toml`; a test that sleeps 7 s still times out at 5000 ms with it, and passes with `--timeout 20000`. Put the flag in your `package.json` script (`"test": "bun test --timeout 20000"`), or pass a timeout to each test (`test(name, fn, 20_000)`). The fixtures engine passes one for you.
 
 ```ts
 // todos.test.ts
