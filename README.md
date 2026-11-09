@@ -1133,16 +1133,17 @@ Deliberate exceptions stay possible and stay visible: an `eslint-disable-next-li
 
 - Secret values can still appear in other verbs' errors (e.g. Testing Library DOM dumps with input `value` attributes, app-thrown errors) and in Playwright's own trace and HTML report — see [What is protected](#secrets-in-failure-reports) and [issue #16](https://github.com/siraj-samsudeen/feather-testing-core/issues/16). Don't use real credentials in tests.
 
-## Upgrading to 0.7.0 (beta: 0.7.0-beta.1)
+## Upgrading to 0.8.0
 
-0.7.0 is in beta. Install it with `npm install feather-testing-core@0.7.0-beta.1`; see [Known limitations](#known-limitations) first.
-
-- **Breaking (Playwright adapter):** a submit the browser refuses because a field is invalid (an empty `required` field above all) now fails the step: `form not sent: 'Title' is required`. It used to pass silently. Where the refusal is the point of the spec, use the new `assertSubmitBlocked(label)`.
-- **Changed (all adapters):** `fillIn` and `assertValue` no longer print their value in the chain, `Failed at:`, `onStep` events or `test.step()` titles: it shows as `'••••••'` (`''` when empty), secret or not. A field can turn secret after any check, and the step's name goes out before the action. Tests or tooling that match on `fillIn('Email', 'a@b.com')` in output need the redacted form. See [Secrets in failure reports](#secrets-in-failure-reports).
 - New: every waiting verb takes `{ timeout }` (step > session > adapter default); `createSession({ timeout })` on the RTL adapter, where a step's own `{ timeout }` is now honoured on every verb (it used to be ignored) and `0` means no limit.
 - **Breaking (RTL adapter):** `within(selector)` must match exactly one element, as in the other adapters. It waits for the selector to match, then fails naming the count when none or several do (it used to take the first match, and say "element not found" at once). The scope is the selector, looked up again at every step, not the element found first. Fix: narrow the selector. Subclasses whose `scoped(element)` returns an `RTLDriver` keep working; code that kept `root` as the scope element should call `rootElement()` instead.
 - New (all adapters): refutes are "eventually absent": they wait for what they refute to go, and fail after the budget naming what is still present (`refuteText('X'): still present after 1000 ms, in 1 element: …`). The request adapter still checks once; its `refuteText` message now says "still present" too. `within(selector, fn, { timeout })` takes a budget for its wait.
 - New (RTL adapter): `within()` on an open shadow host reaches the host's shadow tree and keeps its slotted children; `scopeRoots()` and the `ScopeRoot` type let a subclass do the same.
+
+## Upgrading to 0.7.0
+
+- **Breaking (Playwright adapter):** a submit the browser refuses because a field is invalid (an empty `required` field above all) now fails the step: `form not sent: 'Title' is required`. It used to pass silently. Where the refusal is the point of the spec, use the new `assertSubmitBlocked(label)`.
+- **Changed (all adapters):** `fillIn` and `assertValue` no longer print their value in the chain, `Failed at:`, `onStep` events or `test.step()` titles: it shows as `'••••••'` (`''` when empty), secret or not. A field can turn secret after any check, and the step's name goes out before the action. Tests or tooling that match on `fillIn('Email', 'a@b.com')` in output need the redacted form. See [Secrets in failure reports](#secrets-in-failure-reports).
 - **More lenient (Playwright adapter):** `assertHas(selector)` passes when any matching element is visible; it used to need the first match to be visible. `count` and `refuteHas` still count every match, visible or not.
 - **Breaking (Playwright adapter):** `within(selector)` must match exactly one element, as in the request adapter. A selector matching none or several now fails the `within()` step, naming the count. Fix: narrow the selector (an id, a class, a data attribute), or use `:first-of-type` if the first one is really meant.
 - The optional peer dependency is now `playwright` (`>=1.51.0`) instead of `@playwright/test` (`>=1.40.0`). 1.51 is the lowest that works: `assertHas` uses `locator.filter({ visible: true })`. `@playwright/test` installs `playwright`, so Playwright Test users on 1.51 or later change nothing; library users no longer need `@playwright/test`. Projects below 1.51 get a peer-dependency warning (or an install error with strict npm/pnpm settings) until they upgrade.
