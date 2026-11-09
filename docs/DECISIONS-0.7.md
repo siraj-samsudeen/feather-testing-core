@@ -12,7 +12,7 @@ These are the design decisions taken for 0.7.0. Each has a short entry with its 
 
 **Why:** A scope that matches several containers is almost always a mistake. Under it, every step inside is ambiguous, and in Playwright it fails later and further from the cause. The request adapter already worked this way, so making Playwright match removes a difference a shared spec would trip over.
 
-**Cost:** This breaks 0.6 Playwright specs whose scope matched several elements. The upgrade note gives the fix: narrow the selector, or use `:first-of-type` if the first one is really meant. The RTL adapter keeps "the first match", noted in the parity doc (accepted).
+**Cost:** This breaks 0.6 Playwright specs whose scope matched several elements. The upgrade note gives the fix: narrow the selector, or use `:first-of-type` if the first one is really meant. The RTL adapter kept "the first match" at first; D5 brings it under this rule too.
 
 ### D2. An empty required field fails the submit loudly; `assertSubmitBlocked(label)` covers the deliberate case
 
@@ -143,6 +143,22 @@ The earlier history:
 **Decided by:** the author.
 
 **Decision:** The Playwright session options `navigationStartWindow` and `replacedNavigationWindow` are now `navigationStartTimeout` and `replacedNavigationTimeout`, with the same defaults (500 ms and 250 ms). The exported defaults are now `NAVIGATION_START_TIMEOUT_MS` and `REPLACED_NAVIGATION_TIMEOUT_MS`. There are no aliases, since 0.7 is an unreleased beta. `feather-testing-elysia` does not use them.
+
+### D5. Refutes are "eventually absent"; `within()` waits, then needs exactly one
+
+**Adapters:** all three; the request adapter keeps checking once.
+
+**Decision:**
+
+- Every refute verb (`refuteText`, `refuteHas`, `refuteAttribute`, `refuteChecked`, `refutePath`) retries until what it refutes is absent, and passes the moment it is. After the budget it fails, naming what is still present. It takes `{ timeout }` like the assertions. The budget is the step's timeout, then the session's, then the adapter default: 4000 ms in Playwright (outside its runner) and request, Testing Library's 1000 ms in RTL. RTL polls every 50 ms; the request adapter's `until` every 100 ms.
+- `within(selector, fn, opts?)` waits until the selector matches, then requires exactly one match (D1), on every adapter. RTL keeps the selector, not the element, and looks it up again at every step, as Playwright's locator does. The request adapter resolves it at once and at every step, with no wait.
+- RTL: `within()` on an open shadow host scopes to the host's light subtree plus its shadow tree, so slotted children still match. Page-level text does not reach into shadow trees in RTL, while Playwright's does (parity row #58).
+- RTL honours a step's own `{ timeout }` on every verb; it used to ignore it.
+- No generic retry wrapper in `Session`: each driver retries in its own terms, and `tests/contract/waiting.ts` holds every driver to the same semantics.
+
+**Why:** A refute that checks once passes or fails on timing: a spinner that is about to leave fails it, and a message that is about to appear passes it. RTL's "first match, kept" scope was the last place `within()` differed between adapters, and a kept element goes stale when React re-renders the scope.
+
+**Cost:** Breaking for RTL: a `within()` selector that matches several elements now fails, naming the count (narrow it), and a missing one fails after the budget with the shared wording instead of "element not found". The RTL and request `refuteText` messages changed.
 
 ## Deferred
 
