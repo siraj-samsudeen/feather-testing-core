@@ -776,15 +776,20 @@ export class Session<TContext = unknown, TNative = unknown>
    * An async callback that queues steps without awaiting them type-checks,
    * so a scoped chain with steps left over fails the within() step, naming
    * them, instead of passing without running them.
+   *
+   * The selector must match exactly one element. Drivers that wait wait for
+   * it to match (within `opts.timeout`, else the session's), then require
+   * one; steps inside look it up again each time.
    */
   within(
     selector: string,
     fn: (
       scoped: Session<TContext, TNative>,
     ) => Session<TContext, TNative> | PromiseLike<unknown>,
+    opts?: StepOptions,
   ): this {
     return this.enqueue(`within('${selector}')`, async () => {
-      const scopedDriver = await this.driver.within(selector);
+      const scopedDriver = await this.driver.within(selector, opts);
       const scopedSession = new Session(scopedDriver, this.options);
       await fn(scopedSession);
       scopedSession.requireNothingLeft(`within('${selector}')`);

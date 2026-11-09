@@ -526,7 +526,7 @@ In Playwright, `dropFile` reads the real file and dispatches a `drop` event with
 
 | Method | Description |
 |--------|-------------|
-| `assertText(text)` / `refuteText(text)` | Assert text is visible / not visible |
+| `assertText(text, opts?)` / `refuteText(text, opts?)` | Assert text is visible / not visible (a refute is "eventually absent": see below) |
 | `assertExactText(text, opts?)` | Assert the current scope's complete text equals `text` |
 | `assertAttribute(name, value?, opts?)` | Assert the current scope has an attribute, optionally with an exact value |
 | `refuteAttribute(name, opts?)` | Assert the current scope does not have an attribute |
@@ -616,6 +616,16 @@ The overflow assertions compare `scrollWidth` with `clientWidth`; they measure c
 
 `scrollToHorizontalEnd()` separately proves scrollability: it detects LTR/RTL direction, temporarily overrides smooth scrolling with an instant operation, and retries until the actual absolute offset reaches `scrollWidth - clientWidth`. A range of 1 px or less is rejected as no meaningful movement. Unscoped operations measure the document root; scoped operations measure that element. All four operations are Playwright-only and throw `BrowserOnlyVerbError` in RTL because JSDOM has no layout engine.
 
+#### Refutes are "eventually absent"
+
+Every refute verb (`refuteText`, `refuteHas`, `refuteAttribute`, `refuteChecked`, `refutePath`) waits for what it refutes to go away. It passes the moment it is absent, and after the budget fails naming what is still present:
+
+```
+Cause: refuteText('Saving draft'): still present after 1000 ms, in 1 element: <p> 'Saving draft'
+```
+
+Like the assertions, each takes `{ timeout }`; the budget is the step's timeout, then the session's, then the adapter's default (see [Waiting](#waiting-untildescription-fn)). This holds on the Playwright and RTL adapters. The request adapter checks once, because its pages never change on their own.
+
 #### Pair every refute with a positive assertion
 
 `refuteText` / `refuteHas` assert *absence* — and absence also holds when the page failed to render at all. A blank page passes `refuteHas(".delete-button")`. Always pair a refute with a positive assertion on the same region so the test proves the page actually rendered:
@@ -704,7 +714,15 @@ await session
   .assertText("Download ready");
 ```
 
-The predicate receives the adapter context — `{ page, scope }` for Playwright, `{ user, container }` for RTL, `{ page, scope, fetch }` for the request adapter — and may be sync or async. `opts` takes `{ timeout, interval }` in ms; omit them to inherit the adapter's own budget (Playwright's `expect.poll`, RTL's `waitFor`).
+The predicate receives the adapter context — `{ page, scope }` for Playwright, `{ user, container }` for RTL, `{ page, scope, fetch }` for the request adapter — and may be sync or async. `opts` takes `{ timeout, interval }` in ms; omit them to inherit the session's budget.
+
+**Budgets.** Everything that waits — assertions, refutes, actions finding their element, `within()` and `until()` — takes its budget from the step's own `{ timeout }`, else the session's `createSession(…, { timeout })`, else the adapter's default. `0` means no limit.
+
+| Adapter | Default budget | Polling |
+|---------|----------------|---------|
+| Playwright | 4000 ms outside the Playwright Test runner; the runner's own timeouts inside it | Playwright's own |
+| RTL | 1000 ms (Testing Library's `asyncUtilTimeout`) | every 50 ms, and on DOM changes |
+| request | 4000 ms, for `until` only: nothing else waits | `until` every 100 ms |
 
 When the budget runs out, the chain trace says what you were waiting for:
 
@@ -718,7 +736,7 @@ The description is required at the call site, before the chain runs — a blank 
 
 | Method | Description |
 |--------|-------------|
-| `within(selector, fn)` | Scope actions to a container element. The selector must match exactly one element; none or several fails the step, naming the count |
+| `within(selector, fn, opts?)` | Scope actions to a container element. Waits until the selector matches, then needs exactly one element; none (after the budget) or several fails the step, naming the count |
 
 ```ts
 // All actions inside the callback are scoped to the matched element
@@ -729,6 +747,10 @@ await session
   )
   .assertText("Dashboard"); // back to full-page scope after within()
 ```
+
+- **It waits.** On Playwright and RTL, `within()` waits for the selector to match, within `opts.timeout`, else the session's budget. Then exactly one element must match. The request adapter resolves it at once, with no wait.
+- **It is a selector, not an element.** Every step inside looks the selector up again, so a scope the app re-renders as a new element still works, and so does one that survives a navigation. This holds on every adapter.
+- **Shadow DOM.** On an element with an open shadow root, the scope is the host's light subtree plus its shadow tree, so text inside the shadow root and the host's slotted children both match. On Playwright this is the browser's own behaviour; on RTL `within()` adds the shadow tree. Page-level steps reach into open shadow roots on Playwright but not on RTL ([parity row #58](docs/ADAPTER_PARITY.md)): scope to the host with `within()` when one spec must run on both.
 
 ### Escape hatches: `step(name, fn)` and `raw(label, fn)`
 
@@ -889,6 +911,7 @@ The RTL adapter runs in JSDOM, which has no real browser. These methods are not 
 - `assertPath()` / `refutePath()` — no URL in JSDOM
 - `assertHas()` / `refuteHas()` — RTL discourages CSS selectors; use `assertText()` instead
 - `assertDownload()` — JSDOM has no download machinery; it throws `BrowserOnlyVerbError` naming the verb and pointing at a Playwright spec
+- Page-level steps do not see into shadow roots; `within('<host selector>', …)` does (see [Scoping](#scoping))
 
 The verbs JSDOM *can* honestly do, it does: `attachFile` synthesizes a `File` from the path's basename, `pressKey` translates to user-event's keyboard syntax, `hover` fires real pointer events, and `raw` hands over the scoped query object.
 
@@ -898,9 +921,12 @@ The verbs JSDOM *can* honestly do, it does: `attachFile` synthesizes a `File` fr
 
 | Member | Why you'd override it |
 |--------|----------------------|
-| `findField(label)` | The single label-addressed lookup. Every labelled verb — `fillIn`, `selectOption`, `check`, `uncheck`, `upload`, `assertValue`, `assertChecked`, `assertSelected`, `assertOptions` — goes through it, so one override retargets them all |
-| `scoped(element)` | Factory used by `within()`, so a scoped session keeps your driver's behaviour |
-| `user`, `root`, `container`, `lastFormElement`, `lastFilledField`, `timeout` | Shared state the built-in verbs read and write |
+| `findField(label, opts?)` | The single label-addressed lookup. Every labelled verb — `fillIn`, `selectOption`, `check`, `uncheck`, `upload`, `assertValue`, `assertChecked`, `assertSelected`, `assertOptions` — goes through it, so one override retargets them all. `opts.timeout` is the step's own budget, when it set one: pass `this.budget(opts)` to your waits |
+| `scoped(element)` | Factory used by `within()`, so a scoped session keeps your driver's behaviour. `within()` then gives the driver it returns the scope's selectors, so `rootElement()` looks the scope up again at every step |
+| `rootElement()` | The scope element, looked up now (throws, naming the count, when the scope no longer matches exactly one). Call it inside each wait rather than keeping the element |
+| `scopeRoots()` | The trees a step searches: `[rootElement()]`, plus its open `shadowRoot` when the scope is a shadow host (type `ScopeRoot = HTMLElement \| ShadowRoot`). Query each one to reach shadow text and slotted children |
+| `budget(opts?)` | A step's budget in ms: `opts.timeout`, else the session's `timeout`, else Testing Library's `asyncUtilTimeout` |
+| `user`, `root`, `container`, `lastFormElement`, `lastFilledField`, `timeout` | Shared state the built-in verbs read and write. `root` is where the scope is looked up from; `container` is Testing Library's queries on the scope as it is now |
 
 ```ts
 class WrapperLabelDriver extends RTLDriver {
@@ -958,7 +984,7 @@ Addressing follows the other adapters: interactions match a label, placeholder, 
 
 ### Waiting
 
-Responses arrive complete, so no verb waits or retries: each looks at the current page once, and the `timeout` options assertions accept are ignored. `until(description, fn, opts)` still polls, because the server's state can change: between checks, a page that came from a GET is fetched again; a page that came from a POST is not re-sent, and the predicate is just evaluated again (it can call the context's `fetch` itself). The budget is the session `timeout` (default 4000 ms, `0` for no limit) unless the call sets one, and the interval defaults to 100 ms.
+Responses arrive complete, so no verb waits or retries: each looks at the current page once (a refute included), and the `timeout` options assertions and `within()` accept are ignored. `within()` resolves its selector at once, and again at every step inside it. `until(description, fn, opts)` still polls, because the server's state can change: between checks, a page that came from a GET is fetched again; a page that came from a POST is not re-sent, and the predicate is just evaluated again (it can call the context's `fetch` itself). The budget is the session `timeout` (default 4000 ms, `0` for no limit) unless the call sets one, and the interval defaults to 100 ms.
 
 The step and `until` context is `{ page, scope, fetch }`: the current page as `raw()` gets it, the scope element, and a `fetch(url, init?)` that sends a request with the session's cookies without navigating, as the page's own script would. Unlike a browser's `fetch`, it does not follow redirects: a 3xx comes back as it is, so you can assert on it.
 
@@ -1113,7 +1139,10 @@ Deliberate exceptions stay possible and stay visible: an `eslint-disable-next-li
 
 - **Breaking (Playwright adapter):** a submit the browser refuses because a field is invalid (an empty `required` field above all) now fails the step: `form not sent: 'Title' is required`. It used to pass silently. Where the refusal is the point of the spec, use the new `assertSubmitBlocked(label)`.
 - **Changed (all adapters):** `fillIn` and `assertValue` no longer print their value in the chain, `Failed at:`, `onStep` events or `test.step()` titles: it shows as `'••••••'` (`''` when empty), secret or not. A field can turn secret after any check, and the step's name goes out before the action. Tests or tooling that match on `fillIn('Email', 'a@b.com')` in output need the redacted form. See [Secrets in failure reports](#secrets-in-failure-reports).
-- New: every waiting verb takes `{ timeout }` (step > session > adapter default); `createSession({ timeout })` on the RTL adapter.
+- New: every waiting verb takes `{ timeout }` (step > session > adapter default); `createSession({ timeout })` on the RTL adapter, where a step's own `{ timeout }` is now honoured on every verb (it used to be ignored) and `0` means no limit.
+- **Breaking (RTL adapter):** `within(selector)` must match exactly one element, as in the other adapters. It waits for the selector to match, then fails naming the count when none or several do (it used to take the first match, and say "element not found" at once). The scope is the selector, looked up again at every step, not the element found first. Fix: narrow the selector. Subclasses whose `scoped(element)` returns an `RTLDriver` keep working; code that kept `root` as the scope element should call `rootElement()` instead.
+- New (all adapters): refutes are "eventually absent": they wait for what they refute to go, and fail after the budget naming what is still present (`refuteText('X'): still present after 1000 ms, in 1 element: …`). The request adapter still checks once; its `refuteText` message now says "still present" too. `within(selector, fn, { timeout })` takes a budget for its wait.
+- New (RTL adapter): `within()` on an open shadow host reaches the host's shadow tree and keeps its slotted children; `scopeRoots()` and the `ScopeRoot` type let a subclass do the same.
 - **More lenient (Playwright adapter):** `assertHas(selector)` passes when any matching element is visible; it used to need the first match to be visible. `count` and `refuteHas` still count every match, visible or not.
 - **Breaking (Playwright adapter):** `within(selector)` must match exactly one element, as in the request adapter. A selector matching none or several now fails the `within()` step, naming the count. Fix: narrow the selector (an id, a class, a data attribute), or use `:first-of-type` if the first one is really meant.
 - The optional peer dependency is now `playwright` (`>=1.51.0`) instead of `@playwright/test` (`>=1.40.0`). 1.51 is the lowest that works: `assertHas` uses `locator.filter({ visible: true })`. `@playwright/test` installs `playwright`, so Playwright Test users on 1.51 or later change nothing; library users no longer need `@playwright/test`. Projects below 1.51 get a peer-dependency warning (or an install error with strict npm/pnpm settings) until they upgrade.

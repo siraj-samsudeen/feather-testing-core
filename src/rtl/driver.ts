@@ -1,5 +1,6 @@
 import {
   fireEvent,
+  getConfig,
   getDefaultNormalizer,
   screen,
   waitFor,
@@ -11,11 +12,13 @@ import type {
   AssertionOptions,
   DownloadOptions,
   FieldState,
+  StepOptions,
   TestDriver,
   UntilOptions,
   UntilPredicate,
 } from "../types.js";
 import { BrowserOnlyVerbError } from "../errors.js";
+import { withinCountMessage } from "../types.js";
 import { HIDDEN_VALUE } from "../secrets.js";
 
 /** The scoped query object raw() callbacks receive in the RTL adapter. */
@@ -27,6 +30,23 @@ export interface RTLStepContext {
   /** Current scope: `screen`, or a within()-scoped query container. */
   container: ReturnType<typeof rtlWithin> | typeof screen;
 }
+
+/**
+ * A tree a scoped step searches: the scope element itself, or the open
+ * shadow root of a scope element that is a shadow host.
+ */
+export type ScopeRoot = HTMLElement | ShadowRoot;
+
+/** A Testing Library lookup, as a single match and as every match. */
+interface Lookup {
+  /** The getBy* query: one element, or Testing Library's own error. */
+  get(queries: RTLQueries): HTMLElement;
+  /** The queryAllBy* query, for searching several trees at once. */
+  all(queries: RTLQueries): HTMLElement[];
+}
+
+/** A budget of 0 means no limit; waitFor needs a number. */
+const NO_LIMIT = 2 ** 31 - 1;
 
 type ValueElement =
   | HTMLInputElement
@@ -47,9 +67,14 @@ type ValueElement =
  */
 export class RTLDriver implements TestDriver<RTLStepContext, RTLQueries> {
   protected user: UserEvent;
-  /** The element every query and selector in this driver resolves against. */
+  /**
+   * The element this driver starts from: `document.body`, or the element
+   * passed to the constructor. Inside within() the scope is looked up from
+   * here again at every step (see {@link RTLDriver.rootElement}).
+   */
   protected root: HTMLElement;
-  protected container: ReturnType<typeof rtlWithin>;
+  /** The within() selectors, outermost first, resolved from `root` at each step. */
+  private scopeSelectors: string[] = [];
   protected lastFormElement: HTMLFormElement | null = null;
   /** The field the most recent fillIn() found; null if it found none. */
   protected lastFilledField: HTMLElement | null = null;
@@ -61,9 +86,9 @@ export class RTLDriver implements TestDriver<RTLStepContext, RTLQueries> {
   private stepField: { label: string; element: HTMLElement } | null = null;
 
   /** findField() for a fillIn/assertValue step, remembered for fieldState(). */
-  private async stepFieldFor(label: string): Promise<HTMLElement> {
+  private async stepFieldFor(label: string, opts?: StepOptions): Promise<HTMLElement> {
     this.stepField = null;
-    const element = await this.findField(label);
+    const element = await this.findField(label, opts);
     this.stepField = { label, element };
     return element;
   }
@@ -73,37 +98,116 @@ export class RTLDriver implements TestDriver<RTLStepContext, RTLQueries> {
   constructor(user?: UserEvent, container?: HTMLElement, timeout?: number) {
     this.user = user ?? userEvent.setup();
     this.root = container ?? document.body;
-    this.container = rtlWithin(this.root);
     this.timeout = timeout;
   }
 
+  /**
+   * The scope element, looked up now: `root`, or inside within() the one
+   * element its selectors match from `root` (each level through a shadow
+   * host's open shadow root too). Throws, naming the count, when a level no
+   * longer matches exactly one element.
+   */
   protected rootElement(): HTMLElement {
-    return this.root;
+    let element = this.root;
+    for (const selector of this.scopeSelectors) {
+      const matches = matchesIn(element, selector);
+      if (matches.length !== 1) {
+        throw new Error(withinCountMessage(selector, matches.length));
+      }
+      element = matches[0];
+    }
+    return element;
   }
 
-  /** Options forwarded to every async query and waitFor call. */
-  protected waitOpts(): { timeout?: number } {
-    return this.timeout === undefined ? {} : { timeout: this.timeout };
+  /**
+   * The trees a step searches: the scope element, plus its open shadow root
+   * when it is a shadow host, so its shadow text and its slotted (light)
+   * children are both in scope.
+   */
+  protected scopeRoots(): ScopeRoot[] {
+    const element = this.rootElement();
+    return element.shadowRoot ? [element, element.shadowRoot] : [element];
+  }
+
+  /** Testing Library's queries bound to the scope element, as it is now. */
+  protected get container(): RTLQueries {
+    return rtlWithin(this.rootElement());
+  }
+
+  /**
+   * A step's budget in ms: its own timeout, else the session's, else
+   * Testing Library's (asyncUtilTimeout, 1000 ms unless configured).
+   */
+  protected budget(opts?: StepOptions): number {
+    const timeout = opts?.timeout ?? this.timeout ?? getConfig().asyncUtilTimeout;
+    return timeout === 0 ? NO_LIMIT : timeout;
+  }
+
+  /** Options forwarded to every waitFor call: the step's budget. */
+  protected waitOpts(opts?: StepOptions): { timeout: number } {
+    return { timeout: this.budget(opts) };
+  }
+
+  /**
+   * Wait for exactly one element `lookup` finds in scope, looking the scope
+   * up again on every try. A scope with one tree gets Testing Library's own
+   * errors; a shadow host's two trees are searched together.
+   */
+  private async findOne(lookup: Lookup, opts?: StepOptions): Promise<HTMLElement> {
+    return waitFor(() => {
+      const roots = this.scopeRoots();
+      if (roots.length === 1) return lookup.get(queriesFor(roots[0]));
+      const found = [
+        ...new Set(roots.flatMap((root) => lookup.all(queriesFor(root)))),
+      ];
+      if (found.length === 1) return found[0];
+      if (found.length === 0) return lookup.get(queriesFor(roots[0]));
+      throw new Error(
+        `Found ${found.length} matching elements in the scope and its shadow root; ` +
+          "narrow the step with within(...).",
+      );
+    }, this.waitOpts(opts));
   }
 
   /**
    * The single label-addressed lookup: every labelled verb goes through it,
-   * so overriding this one method retargets them all.
+   * so overriding this one method retargets them all. `opts.timeout` is the
+   * step's own budget, when it set one.
    */
-  protected async findField(label: string): Promise<HTMLElement> {
-    try {
-      return await this.container.findByLabelText(
-        label,
-        undefined,
-        this.waitOpts(),
-      );
-    } catch {
-      return await this.container.findByPlaceholderText(
-        label,
-        undefined,
-        this.waitOpts(),
-      );
-    }
+  protected async findField(label: string, opts?: StepOptions): Promise<HTMLElement> {
+    return this.findOne(
+      {
+        get: (q) => {
+          try {
+            return q.getByLabelText(label);
+          } catch (byLabel) {
+            try {
+              return q.getByPlaceholderText(label);
+            } catch (byPlaceholder) {
+              // Several labelled fields is the fact worth reporting; else
+              // the placeholder's error, the last lookup tried.
+              throw /multiple elements/i.test(String(byLabel)) ? byLabel : byPlaceholder;
+            }
+          }
+        },
+        all: (q) => {
+          const labelled = q.queryAllByLabelText(label);
+          return labelled.length > 0 ? labelled : q.queryAllByPlaceholderText(label);
+        },
+      },
+      opts,
+    );
+  }
+
+  private byText(text: string): Lookup {
+    return { get: (q) => q.getByText(text), all: (q) => q.queryAllByText(text) };
+  }
+
+  private byRole(role: string, name: string): Lookup {
+    return {
+      get: (q) => q.getByRole(role, { name }),
+      all: (q) => q.queryAllByRole(role, { name }),
+    };
   }
 
   /** Subclasses override this so within() yields a driver of their own type. */
@@ -125,36 +229,21 @@ export class RTLDriver implements TestDriver<RTLStepContext, RTLQueries> {
     );
   }
 
-  async click(text: string): Promise<void> {
-    const element = await this.container.findByText(
-      text,
-      undefined,
-      this.waitOpts(),
-    );
-    await this.user.click(element);
+  async click(text: string, opts?: StepOptions): Promise<void> {
+    await this.user.click(await this.findOne(this.byText(text), opts));
   }
 
-  async clickLink(text: string): Promise<void> {
-    const link = await this.container.findByRole(
-      "link",
-      { name: text },
-      this.waitOpts(),
-    );
-    await this.user.click(link);
+  async clickLink(text: string, opts?: StepOptions): Promise<void> {
+    await this.user.click(await this.findOne(this.byRole("link", text), opts));
   }
 
-  async clickButton(text: string): Promise<void> {
-    const button = await this.container.findByRole(
-      "button",
-      { name: text },
-      this.waitOpts(),
-    );
-    await this.user.click(button);
+  async clickButton(text: string, opts?: StepOptions): Promise<void> {
+    await this.user.click(await this.findOne(this.byRole("button", text), opts));
   }
 
-  async fillIn(label: string, value: string): Promise<void> {
+  async fillIn(label: string, value: string, opts?: StepOptions): Promise<void> {
     this.lastFilledField = null;
-    const input = await this.stepFieldFor(label);
+    const input = await this.stepFieldFor(label, opts);
     this.lastFilledField = input;
     await this.user.clear(input);
     // user.type() reads { and [ as key syntax ({Enter}, [ShiftLeft]); a
@@ -169,8 +258,8 @@ export class RTLDriver implements TestDriver<RTLStepContext, RTLQueries> {
    * does; a field that never appears throws, and the session then hides
    * the value and fails the step with that error.
    */
-  async fieldIsPassword(label: string): Promise<boolean> {
-    const field = await this.findField(label);
+  async fieldIsPassword(label: string, timeout?: number): Promise<boolean> {
+    const field = await this.findField(label, { timeout });
     return field instanceof HTMLInputElement && field.type === "password";
   }
 
@@ -206,8 +295,8 @@ export class RTLDriver implements TestDriver<RTLStepContext, RTLQueries> {
     );
   }
 
-  async selectOption(label: string, option: string): Promise<void> {
-    const select = await this.findField(label);
+  async selectOption(label: string, option: string, opts?: StepOptions): Promise<void> {
+    const select = await this.findField(label, opts);
     const optionEl = Array.from(
       (select as HTMLSelectElement).querySelectorAll("option"),
     ).find((o) => o.textContent?.trim() === option);
@@ -220,28 +309,24 @@ export class RTLDriver implements TestDriver<RTLStepContext, RTLQueries> {
     this.lastFormElement = select.closest("form");
   }
 
-  async check(label: string): Promise<void> {
-    const checkbox = await this.findField(label);
+  async check(label: string, opts?: StepOptions): Promise<void> {
+    const checkbox = await this.findField(label, opts);
     if (!(checkbox as HTMLInputElement).checked) {
       await this.user.click(checkbox);
     }
     this.lastFormElement = checkbox.closest("form");
   }
 
-  async uncheck(label: string): Promise<void> {
-    const checkbox = await this.findField(label);
+  async uncheck(label: string, opts?: StepOptions): Promise<void> {
+    const checkbox = await this.findField(label, opts);
     if ((checkbox as HTMLInputElement).checked) {
       await this.user.click(checkbox);
     }
     this.lastFormElement = checkbox.closest("form");
   }
 
-  async choose(label: string): Promise<void> {
-    const radio = await this.container.findByRole(
-      "radio",
-      { name: label },
-      this.waitOpts(),
-    );
+  async choose(label: string, opts?: StepOptions): Promise<void> {
+    const radio = await this.findOne(this.byRole("radio", label), opts);
     await this.user.click(radio);
     this.lastFormElement = radio.closest("form");
   }
@@ -275,8 +360,8 @@ export class RTLDriver implements TestDriver<RTLStepContext, RTLQueries> {
     }
   }
 
-  async attachFile(label: string, path: string): Promise<void> {
-    const input = await this.findField(label);
+  async attachFile(label: string, path: string, opts?: StepOptions): Promise<void> {
+    const input = await this.findField(label, opts);
     // JSDOM has no filesystem access; synthesize a File from the basename.
     const name = path.split(/[\\/]/).pop() ?? path;
     const file = new File([""], name);
@@ -298,13 +383,8 @@ export class RTLDriver implements TestDriver<RTLStepContext, RTLQueries> {
     await this.user.keyboard(toKeyboardSyntax(key));
   }
 
-  async hover(text: string): Promise<void> {
-    const element = await this.container.findByText(
-      text,
-      undefined,
-      this.waitOpts(),
-    );
-    await this.user.hover(element);
+  async hover(text: string, opts?: StepOptions): Promise<void> {
+    await this.user.hover(await this.findOne(this.byText(text), opts));
   }
 
   async dropFile(selector: string, path: string): Promise<void> {
@@ -343,8 +423,8 @@ export class RTLDriver implements TestDriver<RTLStepContext, RTLQueries> {
     );
   }
 
-  async assertText(text: string): Promise<void> {
-    await this.container.findByText(text, undefined, this.waitOpts());
+  async assertText(text: string, opts?: StepOptions): Promise<void> {
+    await this.findOne(this.byText(text), opts);
   }
 
   async assertExactText(
@@ -362,19 +442,33 @@ export class RTLDriver implements TestDriver<RTLStepContext, RTLQueries> {
           );
         }
       },
-      opts?.timeout === undefined ? this.waitOpts() : { timeout: opts.timeout },
+      this.waitOpts(opts),
     );
   }
 
-  async refuteText(text: string): Promise<void> {
-    await waitFor(() => {
-      const el = this.container.queryByText(text);
-      if (el) {
-        throw new Error(
-          `Expected NOT to find text '${text}', but it was present.`,
+  /**
+   * Eventually absent: passes as soon as no element in scope shows the
+   * text; after the budget, fails naming the elements that still do.
+   */
+  async refuteText(text: string, opts?: StepOptions): Promise<void> {
+    const timeout = this.budget(opts);
+    await waitFor(
+      () => {
+        const present = this.scopeRoots().flatMap((root) =>
+          queriesFor(root).queryAllByText(text),
         );
-      }
-    }, this.waitOpts());
+        if (present.length > 0) {
+          throw new Error(
+            `refuteText('${text}'): still present after ${timeout} ms, in ` +
+              `${present.length} element${present.length === 1 ? "" : "s"}: ` +
+              present
+                .map((el) => `<${el.tagName.toLowerCase()}> '${(el.textContent ?? "").trim()}'`)
+                .join(", "),
+          );
+        }
+      },
+      { timeout, onTimeout: (error) => error },
+    );
   }
 
   async assertAttribute(
@@ -395,7 +489,7 @@ export class RTLDriver implements TestDriver<RTLStepContext, RTLQueries> {
           );
         }
       },
-      opts?.timeout === undefined ? this.waitOpts() : { timeout: opts.timeout },
+      this.waitOpts(opts),
     );
   }
 
@@ -412,7 +506,7 @@ export class RTLDriver implements TestDriver<RTLStepContext, RTLQueries> {
           );
         }
       },
-      opts?.timeout === undefined ? this.waitOpts() : { timeout: opts.timeout },
+      this.waitOpts(opts),
     );
   }
 
@@ -446,8 +540,8 @@ export class RTLDriver implements TestDriver<RTLStepContext, RTLQueries> {
     this.browserOnlyLayout("scrollToHorizontalEnd");
   }
 
-  async assertValue(label: string, value: string): Promise<void> {
-    const field = await this.stepFieldFor(label);
+  async assertValue(label: string, value: string, opts?: StepOptions): Promise<void> {
+    const field = await this.stepFieldFor(label, opts);
     await waitFor(() => {
       const actual = (field as ValueElement).value;
       if (actual !== value) {
@@ -455,33 +549,33 @@ export class RTLDriver implements TestDriver<RTLStepContext, RTLQueries> {
           `assertValue('${label}', '${value}'): expected value '${value}', but found '${actual}'.`,
         );
       }
-    }, this.waitOpts());
+    }, this.waitOpts(opts));
   }
 
-  async assertChecked(label: string): Promise<void> {
-    const checkbox = await this.findField(label);
+  async assertChecked(label: string, opts?: StepOptions): Promise<void> {
+    const checkbox = await this.findField(label, opts);
     await waitFor(() => {
       if (!(checkbox as HTMLInputElement).checked) {
         throw new Error(
           `assertChecked('${label}'): expected checkbox to be checked, but it was not.`,
         );
       }
-    }, this.waitOpts());
+    }, this.waitOpts(opts));
   }
 
-  async refuteChecked(label: string): Promise<void> {
-    const checkbox = await this.findField(label);
+  async refuteChecked(label: string, opts?: StepOptions): Promise<void> {
+    const checkbox = await this.findField(label, opts);
     await waitFor(() => {
       if ((checkbox as HTMLInputElement).checked) {
         throw new Error(
           `refuteChecked('${label}'): expected checkbox NOT to be checked, but it was.`,
         );
       }
-    }, this.waitOpts());
+    }, this.waitOpts(opts));
   }
 
-  async assertSelected(label: string, optionLabel: string): Promise<void> {
-    const select = (await this.findField(label)) as HTMLSelectElement;
+  async assertSelected(label: string, optionLabel: string, opts?: StepOptions): Promise<void> {
+    const select = (await this.findField(label, opts)) as HTMLSelectElement;
     await waitFor(() => {
       const selected = select.selectedOptions[0]?.textContent?.trim();
       if (selected !== optionLabel) {
@@ -489,11 +583,11 @@ export class RTLDriver implements TestDriver<RTLStepContext, RTLQueries> {
           `assertSelected('${label}', '${optionLabel}'): expected selected option '${optionLabel}', but found '${selected ?? "(none)"}'.`,
         );
       }
-    }, this.waitOpts());
+    }, this.waitOpts(opts));
   }
 
-  async assertOptions(label: string, optionLabels: string[]): Promise<void> {
-    const select = (await this.findField(label)) as HTMLSelectElement;
+  async assertOptions(label: string, optionLabels: string[], opts?: StepOptions): Promise<void> {
+    const select = (await this.findField(label, opts)) as HTMLSelectElement;
     await waitFor(() => {
       const actual = Array.from(select.querySelectorAll("option")).map(
         (o) => o.textContent?.trim() ?? "",
@@ -506,7 +600,7 @@ export class RTLDriver implements TestDriver<RTLStepContext, RTLQueries> {
           `assertOptions('${label}'): expected options [${optionLabels.join(", ")}], but found [${actual.join(", ")}].`,
         );
       }
-    }, this.waitOpts());
+    }, this.waitOpts(opts));
   }
 
   async assertPath(): Promise<void> {
@@ -549,8 +643,7 @@ export class RTLDriver implements TestDriver<RTLStepContext, RTLQueries> {
         }
       },
       {
-        ...this.waitOpts(),
-        ...(opts?.timeout === undefined ? {} : { timeout: opts.timeout }),
+        ...this.waitOpts(opts),
         ...(opts?.interval === undefined ? {} : { interval: opts.interval }),
       },
     );
@@ -573,12 +666,33 @@ export class RTLDriver implements TestDriver<RTLStepContext, RTLQueries> {
     return { user: this.user, container: this.container };
   }
 
+  /**
+   * Waits until `selector` matches in scope (through a shadow host's open
+   * shadow root too), then requires exactly one match. The scoped driver
+   * keeps the selector, not the element: every step inside looks it up
+   * again, so a scope React re-renders as a new element still works.
+   */
   async within(
     selector: string,
+    opts?: StepOptions,
   ): Promise<TestDriver<RTLStepContext, RTLQueries>> {
-    const element = this.rootElement().querySelector(selector);
-    if (!element) throw new Error(`within('${selector}'): element not found`);
-    return this.scoped(element as HTMLElement);
+    const matches = await waitFor(
+      () => {
+        const found = matchesIn(this.rootElement(), selector);
+        if (found.length === 0) throw new Error(withinCountMessage(selector, 0));
+        return found;
+      },
+      { ...this.waitOpts(opts), onTimeout: (error) => error },
+    );
+    if (matches.length !== 1) {
+      throw new Error(withinCountMessage(selector, matches.length));
+    }
+    const scoped = this.scoped(matches[0]);
+    if (scoped instanceof RTLDriver) {
+      scoped.root = this.root;
+      scoped.scopeSelectors = [...this.scopeSelectors, selector];
+    }
+    return scoped;
   }
 
   /**
@@ -595,6 +709,20 @@ export class RTLDriver implements TestDriver<RTLStepContext, RTLQueries> {
     }
     screen.debug(copy);
   }
+}
+
+/** Every element `selector` matches under `element`, and in its open shadow root. */
+function matchesIn(element: HTMLElement, selector: string): HTMLElement[] {
+  const light = Array.from(element.querySelectorAll<HTMLElement>(selector));
+  const shadow = element.shadowRoot
+    ? Array.from(element.shadowRoot.querySelectorAll<HTMLElement>(selector))
+    : [];
+  return [...light, ...shadow];
+}
+
+/** Testing Library's queries on one tree (a shadow root is a valid container). */
+function queriesFor(root: ScopeRoot): RTLQueries {
+  return rtlWithin(root as HTMLElement);
 }
 
 /** Playwright key names -> user-event keyboard syntax. */

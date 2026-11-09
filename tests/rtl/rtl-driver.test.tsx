@@ -948,9 +948,9 @@ describe("RTLDriver", () => {
 
     it("throws when text is present", async () => {
       render(<LinksApp />);
-      const driver = new RTLDriver();
+      const driver = new RTLDriver(undefined, undefined, 50);
       await expect(driver.refuteText("You are here")).rejects.toThrow(
-        "Expected NOT to find text 'You are here', but it was present.",
+        "refuteText('You are here'): still present after 50 ms",
       );
     });
 
@@ -989,10 +989,10 @@ describe("RTLDriver", () => {
 
     it("throws when selector matches nothing", async () => {
       render(<ScopedApp />);
-      const driver = new RTLDriver();
+      const driver = new RTLDriver(undefined, undefined, 50);
 
       await expect(driver.within(".nonexistent")).rejects.toThrow(
-        "within('.nonexistent'): element not found",
+        "within('.nonexistent'): the selector matched 0 elements",
       );
     });
   });
@@ -1586,6 +1586,16 @@ describe("createSession({ timeout })", () => {
   it("passes the session timeout to the driver (Testing Library's default is 1 s)", async () => {
     render(<Late />);
     await createSession({ timeout: 4000 }).assertText("Arrived");
+  });
+
+  it("a step's own timeout wins over the session's", async () => {
+    render(<Late />);
+    await createSession({ timeout: 100 }).assertText("Arrived", { timeout: 4000 });
+  });
+
+  it("a session timeout of 0 means no limit", async () => {
+    render(<Late />);
+    await createSession({ timeout: 0 }).assertText("Arrived");
   });
 });
 

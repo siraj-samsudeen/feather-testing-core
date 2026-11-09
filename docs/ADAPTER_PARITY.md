@@ -86,7 +86,7 @@ This matrix lists every public surface and behaviour, as of the `bun-port-stacke
 | 42 | `assertPath` / `refutePath`, including `queryParams` | same | |
 | 43 | `assertComputedStyle` and the layout verbs | n/a in R | No CSS and no layout. |
 | 44 | Hidden by CSS (`display: none`) counts as not rendered | n/a in R | R judges visibility from the markup only. |
-| 45 | Assertions retry until the timeout | differs (choice) | P retries. R checks once, because its pages never change on their own. n/a. |
+| 45 | Assertions retry until the timeout; refutes are "eventually absent" | differs (choice) | P retries: a refute passes the moment what it refutes is gone, and after the budget fails naming what is still present (D5). R checks once, because its pages never change on their own. n/a. Contract: `tests/contract/waiting.ts`. |
 
 ### Waiting
 
@@ -102,8 +102,9 @@ This matrix lists every public surface and behaviour, as of the `bun-port-stacke
 | # | Surface | Status | Notes |
 |---|---------|--------|-------|
 | 50 | `within()` is re-resolved at each step, so it keeps working after a navigation | same | |
-| 51 | What `within(selector)` may match | same (D1) | Exactly one element in both; none or several fails, naming the count. |
+| 51 | What `within(selector)` may match | same (D1) | Exactly one element in both; none or several fails, naming the count. P waits for a match first (its budget: the call's `{ timeout }`, then the session's); R resolves at once (D5). |
 | 52 | Session options carried into `within()` (timeout, onStep) | same | `Session` passes `onStep` to scoped sessions; R's scoped drivers keep the options. |
+| 58 | Page-level text includes the text of open shadow roots | differs (choice) | P's text locators pierce open shadow roots; RTL's page-level queries do not (Testing Library searches the light DOM). In both, `within()` on a shadow host reaches its shadow tree and its slotted children. R: n/a (no scripts, so no shadow roots). |
 
 ### Errors and lifecycle
 
@@ -117,25 +118,25 @@ This matrix lists every public surface and behaviour, as of the `bun-port-stacke
 
 ## Counts
 
-| Status | Before the parity fixes | After the parity fixes | After the 0.7 decisions |
-|--------|------------------------|------------------------|-------------------------|
-| same | 27 | 35 | 38 (#27, #38, #51 decided) |
-| differs (gap: closable) | 4 | 0 | 0 |
-| differs (decision needed) | 4 | 4 | 0 |
-| differs (decided / choice / upstream limitation) | 4 | 5 | 6 (#25 decided: D3) |
-| missing in R / missing in P | 5 | 0 | 0 |
-| n/a | 13 | 13 | 13 |
-| **total** | **57** | **57** | **57** |
+| Status | Before the parity fixes | After the parity fixes | After the 0.7 decisions | After D5 |
+|--------|------------------------|------------------------|-------------------------|----------|
+| same | 27 | 35 | 38 (#27, #38, #51 decided) | 38 |
+| differs (gap: closable) | 4 | 0 | 0 | 0 |
+| differs (decision needed) | 4 | 4 | 0 | 0 |
+| differs (decided / choice / upstream limitation) | 4 | 5 | 6 (#25 decided: D3) | 7 (#58 added) |
+| missing in R / missing in P | 5 | 0 | 0 | 0 |
+| n/a | 13 | 13 | 13 | 13 |
+| **total** | **57** | **57** | **57** | **58** |
 
 Also now shared: per-step `{ timeout }` on every waiting verb (B1; the request adapter accepts and ignores it) and `assertSubmitBlocked(label)` (D2).
 
 ## The RTL adapter (third driver)
 
-`feather-testing-core/rtl` drives rendered React components with Testing Library. It is not in the contract suite: that suite drives the pages of an HTTP app, and RTL has no pages. Against the matrix:
+`feather-testing-core/rtl` drives rendered React components with Testing Library. It is not in the main contract suite: that suite drives the pages of an HTTP app, and RTL has no pages. The waiting contract (`tests/contract/waiting.ts`: refutes, `within()`, shadow hosts, step timeouts) does run on it, over HTML rendered into `document.body`. Against the matrix:
 
 | Area | RTL |
 |------|-----|
-| Entry point | `createSession({ onStep?, timeout? })`: no native handle; it works on what is rendered in `document.body`. `timeout` is the budget of Testing Library's `findBy` waits (default 1000 ms); a step's own `{ timeout }` is accepted and ignored. |
+| Entry point | `createSession({ onStep?, timeout? })`: no native handle; it works on what is rendered in `document.body`. `timeout` is the budget of every wait (default Testing Library's 1000 ms, polled every 50 ms; `0` means no limit); a step's own `{ timeout }` wins over it. |
 | Secrets (#11–#13) | same: label rule, `sensitive`, password fields checked before the step starts (`fieldIsPassword`) and after a fill. |
 | `onStep`, `run()`, step names, `StepError` (#6, #8, #9, #53) | same (they live in `Session`). |
 | Navigation and pages (`visit`, `reload`, `assertPath`, `refutePath`; #15, #16, #42) | n/a: no pages. `visit`/`assertPath`/`refutePath` say so and what to use instead; `reload` throws `BrowserOnlyVerbError`. |
@@ -143,7 +144,8 @@ Also now shared: per-step `{ timeout }` on every waiting verb (B1; the request a
 | `assertSubmitBlocked` (#27) | `BrowserOnlyVerbError`: constraint validation on submit is not modelled. |
 | `assertHas` / `refuteHas` (#38, #39) | not available: Testing Library avoids CSS selectors; use `assertText` / `refuteText`. |
 | `hover`, `dropFile`, CSS and layout verbs (#31, #43) | `BrowserOnlyVerbError` (layout, CSS); `hover` is simulated by user-event. |
-| `within()` (#50, #51) | the first element matching the selector. |
+| `within()` (#50, #51) | same (D1, D5): waits for the selector to match, then needs exactly one; the selector is looked up again at every step. On an open shadow host it scopes to the host's light subtree plus its shadow tree (#58). |
+| Refutes (#45) | same as P: `refuteText`, `refuteAttribute`, `refuteChecked` are "eventually absent" and fail naming what is still present. |
 | `until`, `step`, `raw` (#46, #56) | same contract; context `{ user, container }`. |
 
 Every verb an adapter cannot run fails naming the adapter, the verb and what to use instead.

@@ -8,6 +8,7 @@ export {
   RTLDriver,
   type RTLQueries,
   type RTLStepContext,
+  type ScopeRoot,
 } from "./driver.js";
 export type {
   AssertHasOptions,
@@ -25,8 +26,8 @@ export type {
 
 /**
  * `onStep` works as in the other adapters. `timeout` is the budget of every
- * Testing Library `findBy` wait in the session (Testing Library's default
- * is 1000 ms). A step's own `{ timeout }` is accepted and ignored here.
+ * wait in the session (default: Testing Library's asyncUtilTimeout, 1000 ms;
+ * `0` means no limit). A step's own `{ timeout }` wins over it.
  */
 export function createSession(
   options?: Pick<SessionOptions, "onStep" | "timeout">,
