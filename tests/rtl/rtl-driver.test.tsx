@@ -1587,6 +1587,16 @@ describe("createSession({ timeout })", () => {
     render(<Late />);
     await createSession({ timeout: 4000 }).assertText("Arrived");
   });
+
+  it("a step's own timeout wins over the session's", async () => {
+    render(<Late />);
+    await createSession({ timeout: 100 }).assertText("Arrived", { timeout: 4000 });
+  });
+
+  it("a session timeout of 0 means no limit", async () => {
+    render(<Late />);
+    await createSession({ timeout: 0 }).assertText("Arrived");
+  });
 });
 
 describe("unsupported verbs name the adapter, the verb and what to use instead", () => {
