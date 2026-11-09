@@ -6,6 +6,7 @@ import type {
   AssertHasOptions,
   AssertPathOptions,
   AssertionOptions,
+  StepOptions,
   DownloadOptions,
   FieldState,
   LayoutAssertionOptions,
@@ -922,7 +923,7 @@ export class RequestDriver
   async refuteText(text: string): Promise<void> {
     if (this.textAppears(text)) {
       throw new Error(
-        `refuteText('${text}'): expected no text matching '${text}', but found it on ${this.browser.describe()}.`,
+        `refuteText('${text}'): expected no text matching '${text}', but it is still present on ${this.browser.describe()}.`,
       );
     }
   }
@@ -1248,8 +1249,11 @@ export class RequestDriver
 
   // --- Scoping ---
 
+  /** Resolved now, with no wait (the page never changes on its own), and
+   * again at every step; `opts.timeout` is accepted and ignored. */
   async within(
     selector: string,
+    _opts?: StepOptions,
   ): Promise<TestDriver<RequestStepContext, RequestPage>> {
     const selectors = [...this.scopeSelectors, selector];
     // Resolve now so a scope that matches nothing fails at within(), not at

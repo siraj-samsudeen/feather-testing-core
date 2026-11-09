@@ -1027,10 +1027,22 @@ export class PlaywrightDriver
     });
   }
 
+  /** Eventually absent: retries until no element shows the text. */
   async refuteText(text: string, opts?: StepOptions): Promise<void> {
-    await expect(this.scope.getByText(text)).toHaveCount(0, {
-      timeout: this.budget(opts),
-    });
+    const matches = this.scope.getByText(text);
+    const timeout = this.budget(opts);
+    try {
+      await expect(matches).toHaveCount(0, { timeout });
+    } catch (error) {
+      const present = await matches.allTextContents().catch(() => [] as string[]);
+      throw new Error(
+        `refuteText('${text}'): still present after ` +
+          `${timeout === undefined ? "the assertion timeout" : `${timeout} ms`}, in ` +
+          `${present.length} element${present.length === 1 ? "" : "s"}: ` +
+          present.map((t) => `'${t.trim()}'`).join(", "),
+        { cause: error },
+      );
+    }
   }
 
   async assertAttribute(
@@ -1263,12 +1275,13 @@ export class PlaywrightDriver
 
   async within(
     selector: string,
+    opts?: StepOptions,
   ): Promise<TestDriver<PlaywrightStepContext, Page>> {
     const scopedLocator = this.scope.locator(selector);
     // Exactly one element, as in the request adapter: wait for the first,
     // then count. Several would leave every step inside ambiguous.
     const appeared = await expect(scopedLocator.first())
-      .toBeAttached({ timeout: this.timeout })
+      .toBeAttached({ timeout: this.budget(opts) })
       .then(
         () => true,
         () => false,

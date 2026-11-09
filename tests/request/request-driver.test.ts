@@ -91,7 +91,7 @@ describe("RequestDriver", () => {
       const { driver } = driverFor({ "/": page });
       await driver.visit("/");
       await expect(driver.refuteText("oat milk")).rejects.toThrow(
-        "refuteText('oat milk'): expected no text matching 'oat milk', but found it",
+        "refuteText('oat milk'): expected no text matching 'oat milk', but it is still present",
       );
     });
 

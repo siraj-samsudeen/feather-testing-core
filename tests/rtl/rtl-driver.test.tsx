@@ -948,9 +948,9 @@ describe("RTLDriver", () => {
 
     it("throws when text is present", async () => {
       render(<LinksApp />);
-      const driver = new RTLDriver();
+      const driver = new RTLDriver(undefined, undefined, 50);
       await expect(driver.refuteText("You are here")).rejects.toThrow(
-        "Expected NOT to find text 'You are here', but it was present.",
+        "refuteText('You are here'): still present after 50 ms",
       );
     });
 
@@ -989,10 +989,10 @@ describe("RTLDriver", () => {
 
     it("throws when selector matches nothing", async () => {
       render(<ScopedApp />);
-      const driver = new RTLDriver();
+      const driver = new RTLDriver(undefined, undefined, 50);
 
       await expect(driver.within(".nonexistent")).rejects.toThrow(
-        "within('.nonexistent'): element not found",
+        "within('.nonexistent'): the selector matched 0 elements",
       );
     });
   });

@@ -283,7 +283,13 @@ export interface TestDriver<TContext = unknown, TNative = unknown> {
   step(fn: (context: TContext) => Promise<unknown>): Promise<void>;
   /** Hand the caller the adapter's own driving handle, untyped by the DSL. */
   raw(fn: (native: TNative) => unknown | Promise<unknown>): Promise<void>;
-  within(selector: string): Promise<TestDriver<TContext, TNative>>;
+  /**
+   * Scope to the one element `selector` matches. A driver that waits waits
+   * for a match within the step's budget, then fails unless exactly one
+   * element matches; the scoped driver looks the selector up again at every
+   * step.
+   */
+  within(selector: string, opts?: StepOptions): Promise<TestDriver<TContext, TNative>>;
   debug(): Promise<void>;
   /**
    * Optional hook: wrap a queued step's execution (e.g. in Playwright's
